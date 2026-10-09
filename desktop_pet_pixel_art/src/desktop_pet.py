@@ -73,6 +73,13 @@ TICK_MS = 16
 LOGIC_STEP_MS = 40
 ANIMATION_FRAME_MS = 96
 WALK_SPEED = 24.0
+WALK_DIRECTION_CHANGE_MIN_SECONDS = 2.0
+WALK_DIRECTION_CHANGE_MAX_SECONDS = 5.0
+WALK_DIRECTION_VECTORS = (
+    (-1, -1), (0, -1), (1, -1),
+    (-1, 0),             (1, 0),
+    (-1, 1),  (0, 1),   (1, 1),
+)
 
 # ---------------------------------------------------------------------------
 # Personagem em pixel art
@@ -336,11 +343,19 @@ class DesktopPet:
         self.label = tk.Label(self.root, bd=0, highlightthickness=0, bg="#1c1830")
         self.label.pack(fill="both", expand=True)
         self._window_x = int(round(self.x))
+        self._window_y = int(round(self.y))
         self.root.geometry(f"{WIDTH}x{self.cur_height}+{self._window_x}+{int(self.y)}")
 
         self.tk_image = None
 
-        self.direction = random.choice([-1, 1])
+        self.walk_dx, self.walk_dy = random.choice(WALK_DIRECTION_VECTORS)
+        self._next_walk_direction_change_at = (
+            time.monotonic()
+            + random.uniform(
+                WALK_DIRECTION_CHANGE_MIN_SECONDS,
+                WALK_DIRECTION_CHANGE_MAX_SECONDS,
+            )
+        )
         self.step = 0
         self.animation_time_ms = 0.0
         self._logic_accumulator = 0.0
@@ -358,21 +373,56 @@ class DesktopPet:
         self._last_shape_update = 0
         self._hidden = False
 
-        self.walk_frames = self._load_sprite_sheet_frames(
+        side_frames = self._load_sprite_sheet_frames(
             "Folha de sprites_ caminhada em pixel art.png",
             4, 2, row_end_fractions=(0.86, 0.81),
         )
+        side_frames.extend(
+            self._load_directional_sheet_frames(
+                "ChatGPT Image 8 de out. de 2026, 14_06_59.png",
+                8, ((55, 445), (545, 930)),
+            )
+        )
+        side_frames.extend(
+            self._load_directional_sheet_frames(
+                "ChatGPT Image 8 de out. de 2026, 14_39_09.png",
+                6, ((200, 680),),
+            )
+        )
+        self.walk_frames = {
+            "side": side_frames,
+            "front": self._load_directional_sheet_frames(
+                "ChatGPT Image 9 de out. de 2026, 14_45_38.png",
+                6, ((120, 490), (560, 930)),
+            ),
+            "back": self._load_directional_sheet_frames(
+                "ChatGPT Image 9 de out. de 2026, 14_47_07.png",
+                6, ((120, 490), (560, 930)),
+            ),
+            "diagonal": self._load_directional_sheet_frames(
+                "ChatGPT Image 9 de out. de 2026, 14_48_36.png",
+                6, ((120, 490), (560, 930)),
+            ),
+        }
         self.balance_frames = self._load_sprite_sheet_frames(
             "Folha de sprites_ garota balançando.png",
             4, 2, row_end_fractions=(0.86, 0.81),
+        )
+        self.sway_frames = self._load_directional_sheet_frames(
+            "ChatGPT Image 8 de out. de 2026, 14_41_23.png",
+            6, ((260, 740),),
         )
         self.blink_frames = self._load_sprite_sheet_frames(
             "Folha de Sprites_ Animação de Piscada.png",
             3, 3, row_end_fractions=(0.87, 0.84, 0.82),
             cells=((0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, 2)),
         )
-        self.scaled_walk_frames = self._scale_frames(self.walk_frames)
+        self.scaled_walk_frames = {
+            direction: self._scale_frames(frames)
+            for direction, frames in self.walk_frames.items()
+        }
         self.scaled_balance_frames = self._scale_frames(self.balance_frames)
+        self.scaled_sway_frames = self._scale_frames(self.sway_frames)
         self.scaled_blink_frames = self._scale_frames(self.blink_frames)
         self._walk_frame_cache = {}
         self.drag_tilt = 0.0
@@ -426,8 +476,13 @@ class DesktopPet:
     def set_window_height(self, new_height):
         old_bottom = self.y + self.cur_height
         self.cur_height = new_height
-        self.y = old_bottom - new_height
-        self.root.geometry(f"{WIDTH}x{new_height}+{int(self.x)}+{int(self.y)}")
+        max_y = max(0, self.screen_h - new_height)
+        self.y = max(0, min(old_bottom - new_height, max_y))
+        self._window_x = int(round(self.x))
+        self._window_y = int(round(self.y))
+        self.root.geometry(
+            f"{WIDTH}x{new_height}+{self._window_x}+{self._window_y}"
+        )
 
     # ---------- sprites pixel art ----------
     def _load_sprite_sheet_frames(
@@ -452,20 +507,46 @@ class DesktopPet:
             top = round(row * cell_height)
             bottom = top + round(cell_height * row_end_fractions[row])
             frame = sheet.crop((left, top, right, bottom))
-            frame = self._remove_sheet_background(frame)
-            bounds = frame.getchannel("A").getbbox()
-            if bounds is None:
-                raise ValueError(
-                    f"Nenhum personagem encontrado no quadro {filename} "
-                    f"(coluna {column + 1}, linha {row + 1})."
+            frames.append(
+                self._prepare_sprite_frame(
+                    frame,
+                    f"{filename} (coluna {column + 1}, linha {row + 1})",
                 )
-            frame = frame.crop(bounds)
-            frame.thumbnail((SPRITE_MAX_W, SPRITE_MAX_H), SPRITE_RESAMPLE)
-            canvas = Image.new("RGBA", (SPRITE_MAX_W, SPRITE_MAX_H), (0, 0, 0, 0))
-            position = ((SPRITE_MAX_W - frame.width) // 2, SPRITE_MAX_H - frame.height)
-            canvas.alpha_composite(frame, position)
-            frames.append(canvas)
+            )
         return frames
+
+    def _load_directional_sheet_frames(self, filename, columns, row_bounds):
+        """Recorta quadros de uma folha direcional sem incluir legendas."""
+        sheet_path = MOVEMENTS_DIR / filename
+        with Image.open(sheet_path) as source:
+            sheet = source.convert("RGBA")
+
+        cell_width = sheet.width / columns
+        frames = []
+        for row, (top, bottom) in enumerate(row_bounds):
+            for column in range(columns):
+                left = round(column * cell_width)
+                right = round((column + 1) * cell_width)
+                frame = sheet.crop((left, top, right, bottom))
+                frames.append(
+                    self._prepare_sprite_frame(
+                        frame,
+                        f"{filename} (coluna {column + 1}, linha {row + 1})",
+                    )
+                )
+        return frames
+
+    def _prepare_sprite_frame(self, frame, description):
+        frame = self._remove_sheet_background(frame)
+        bounds = frame.getchannel("A").getbbox()
+        if bounds is None:
+            raise ValueError(f"Nenhum personagem encontrado no quadro {description}.")
+        frame = frame.crop(bounds)
+        frame.thumbnail((SPRITE_MAX_W, SPRITE_MAX_H), SPRITE_RESAMPLE)
+        canvas = Image.new("RGBA", (SPRITE_MAX_W, SPRITE_MAX_H), (0, 0, 0, 0))
+        position = ((SPRITE_MAX_W - frame.width) // 2, SPRITE_MAX_H - frame.height)
+        canvas.alpha_composite(frame, position)
+        return canvas
 
     @staticmethod
     def _remove_sheet_background(frame):
@@ -556,6 +637,13 @@ class DesktopPet:
                 self.blink_frame_index = None
                 self.next_blink_step = self.step + random.randint(75, 150)
 
+    def _walk_animation_for_direction(self):
+        if self.walk_dx and self.walk_dy:
+            return "diagonal", self.walk_dx < 0
+        if self.walk_dx:
+            return "side", self.walk_dx < 0
+        return ("front" if self.walk_dy > 0 else "back"), False
+
     def _sprite_for_current_pose(self):
         if self.state == "held":
             angle = max(-18, min(18, int(round(self.drag_tilt))))
@@ -567,16 +655,23 @@ class DesktopPet:
             return self.scaled_balance_frames[frame_index]
 
         if self.state == "walk" and not self.busy:
+            animation, flip = self._walk_animation_for_direction()
+            frames = self.scaled_walk_frames[animation]
             frame_index = int(self.animation_time_ms // ANIMATION_FRAME_MS) % len(
-                self.scaled_walk_frames
+                frames
             )
-            sprite = self.scaled_walk_frames[frame_index]
-            if self.direction < 0:
+            sprite = frames[frame_index]
+            if flip:
                 sprite = sprite.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
             return sprite
 
         if self.blink_frame_index is not None:
             return self.scaled_blink_frames[self.blink_frame_index]
+        if self.state == "thinking":
+            frame_index = int(self.animation_time_ms // ANIMATION_FRAME_MS) % len(
+                self.scaled_sway_frames
+            )
+            return self.scaled_sway_frames[frame_index]
         return self.scaled_blink_frames[0]
 
     def render_frame(self):
@@ -691,11 +786,13 @@ class DesktopPet:
     def _walk_frame_cache_key(self):
         if self.state != "walk" or self.busy or self.dragging or self.bubble_text:
             return None
+        animation, flip = self._walk_animation_for_direction()
+        frames = self.scaled_walk_frames[animation]
         frame_index = int(self.animation_time_ms // ANIMATION_FRAME_MS) % len(
-            self.scaled_walk_frames
+            frames
         )
         bob = int(abs(math.sin(self.animation_time_ms / 1000 * 3.75)) * 2 * SCALE)
-        return frame_index, self.direction, bob
+        return animation, frame_index, flip, bob
 
     def _needed_height(self):
         if not self.bubble_text:
@@ -729,14 +826,32 @@ class DesktopPet:
             self.drag_target_tilt = 0.0
 
         if self.state == "walk" and not self.dragging and not self.busy:
-            self.x += self.direction * WALK_SPEED * elapsed
-            if self.x < 0 or self.x > self.screen_w - WIDTH:
-                self.direction *= -1
-                self.x = max(0, min(self.x, self.screen_w - WIDTH))
+            if now >= self._next_walk_direction_change_at:
+                self._choose_walk_direction(now)
+
+            speed = WALK_SPEED
+            if self.walk_dx and self.walk_dy:
+                speed /= math.sqrt(2)
+            next_x = self.x + self.walk_dx * speed * elapsed
+            next_y = self.y + self.walk_dy * speed * elapsed
+            max_x = max(0, self.screen_w - WIDTH)
+            max_y = max(0, self.screen_h - self.cur_height)
+
+            if next_x < 0 or next_x > max_x:
+                self.walk_dx *= -1
+                next_x = max(0, min(next_x, max_x))
+            if next_y < 0 or next_y > max_y:
+                self.walk_dy *= -1
+                next_y = max(0, min(next_y, max_y))
+
+            self.x = next_x
+            self.y = next_y
             window_x = int(round(self.x))
-            if window_x != self._window_x:
+            window_y = int(round(self.y))
+            if window_x != self._window_x or window_y != self._window_y:
                 self._window_x = window_x
-                self.root.geometry(f"+{window_x}+{int(self.y)}")
+                self._window_y = window_y
+                self.root.geometry(f"+{window_x}+{window_y}")
 
         if self.state == "sitting" and self.sit_win_id is not None:
             if not self.x11.window_exists(self.sit_win_id):
@@ -755,6 +870,20 @@ class DesktopPet:
             self._next_tick_at += TICK_MS / 1000
         delay = max(1, round((self._next_tick_at - schedule_now) * 1000))
         self.root.after(delay, self.tick)
+
+    def _choose_walk_direction(self, now=None):
+        directions = [
+            direction
+            for direction in WALK_DIRECTION_VECTORS
+            if direction != (self.walk_dx, self.walk_dy)
+        ]
+        self.walk_dx, self.walk_dy = random.choice(directions)
+        if now is None:
+            now = time.monotonic()
+        self._next_walk_direction_change_at = now + random.uniform(
+            WALK_DIRECTION_CHANGE_MIN_SECONDS,
+            WALK_DIRECTION_CHANGE_MAX_SECONDS,
+        )
 
     def random_speech(self):
         if self.auto_speech_var.get() and not self.busy and not self.is_covered():
