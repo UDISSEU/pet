@@ -5,7 +5,8 @@ Estrutura:
   docs/
 
 Observações:
-  - Os quadros de caminhada, balanço e piscada vêm das folhas de sprites
-    em ../movimento 2.0, fora da pasta do projeto.
-  - Os quadros são recortados e recebem transparência durante a inicialização.
+  - Os vídeos de caminhada, aceno, sono, irritação e parada ficam em
+    ../movimentos em vídeos, fora da pasta do projeto.
+  - O OpenCV decodifica os vídeos durante a inicialização; os quadros são
+    redimensionados e recebem transparência antes de serem exibidos.
   - Para rodar a IA local, instale o Ollama e use o modelo configurado no código.

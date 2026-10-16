@@ -2,7 +2,7 @@
 """
 Bichinho de Desktop em pixel art + IA local (Ollama)
 ----------------------------------------------------
-Personagem animada com ciclos de caminhada, balanço ao arrastar e piscada.
+Personagem animada com vídeos de caminhada, aceno, descanso e sono.
 
 Ela observa (sem mexer em nada) os apps que você tem aberto, comenta
 quando percebe que você tá no YouTube, senta cansada em cima de
@@ -11,10 +11,10 @@ movimento quando você arrasta ela com o mouse, e levanta se a janela
 em que estava sentada for fechada.
 
 DEPENDÊNCIAS:
-    pip install --break-system-packages Pillow python-xlib
+    pip install -r requirements.txt
     sudo apt install python3-tk
 
-- Pillow: obrigatório.
+- Pillow e OpenCV: obrigatórios para exibir e decodificar os vídeos.
 - python-xlib: opcional. Sem ela, ela ainda funciona (anda, fala,
   responde), só perde a transparência real, observar apps e sentar
   em janelas — cai tudo graciosamente sem travar.
@@ -30,292 +30,54 @@ Como usar:
     Clique direito             -> menu (perguntar / falar algo / esquecer conversa / fechar)
 """
 
-import json
 import math
 import os
 import random
-import re
 import threading
 import time
 import tkinter as tk
-import urllib.error
-import urllib.request
 import webbrowser
 from collections import deque
-from io import BytesIO
-from pathlib import Path
 from tkinter import messagebox, simpledialog
 
+from config import (
+    APP_COMMENTS,
+    BASE_HEIGHT,
+    FONT_BUBBLE,
+    FONT_SMALL,
+    GENERIC_COMMENTS,
+    LOGIC_STEP_MS,
+    MAX_HISTORY_MESSAGES,
+    SCALE,
+    SCREEN_MARGIN,
+    SIT_DOWN_LINES,
+    SPEECH_LINES,
+    STAND_CLOSED_LINES,
+    STAND_TIMEOUT_LINES,
+    TICK_MS,
+    VIDEO_FRAME_INTERVAL_MS,
+    VIDEO_FRAME_RATE,
+    VIDEO_MAX_H,
+    VIDEO_MAX_W,
+    VIDEO_REACTION_SECONDS,
+    MOVEMENT_VIDEOS,
+    resolve_movement_path,
+    WALK_DIRECTION_VECTORS,
+    WALK_SPEED,
+    WALK_DIRECTION_CHANGE_MAX_SECONDS,
+    WALK_DIRECTION_CHANGE_MIN_SECONDS,
+    WIDTH,
+)
+from ollama_client import ask_local_ai, load_history, save_history
+from x11_helper import X11Helper
+
 try:
-    from PIL import Image, ImageDraw, ImageFont, ImageTk
+    from PIL import Image, ImageDraw, ImageTk
 except ImportError:
     import sys
     print("Falta a biblioteca Pillow. Instale com:\n"
           "    pip install --break-system-packages Pillow", file=sys.stderr)
     sys.exit(1)
-
-try:
-    from Xlib import X, display as xlib_display
-    from Xlib.ext import shape as xlib_shape
-    XLIB_AVAILABLE = True
-except ImportError:
-    XLIB_AVAILABLE = False
-
-
-# ---------------------------------------------------------------------------
-# Configuração
-# ---------------------------------------------------------------------------
-WIDTH = 140
-BASE_HEIGHT = 190
-SCREEN_MARGIN = 40
-SCALE = 3
-TICK_MS = 16
-LOGIC_STEP_MS = 40
-ANIMATION_FRAME_MS = 96
-WALK_SPEED = 24.0
-WALK_DIRECTION_CHANGE_MIN_SECONDS = 2.0
-WALK_DIRECTION_CHANGE_MAX_SECONDS = 5.0
-WALK_DIRECTION_VECTORS = (
-    (-1, -1), (0, -1), (1, -1),
-    (-1, 0),             (1, 0),
-    (-1, 1),  (0, 1),   (1, 1),
-)
-
-# ---------------------------------------------------------------------------
-# Personagem em pixel art
-# ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MOVEMENTS_DIR = PROJECT_ROOT.parent / "movimento 2.0"
-SPRITE_MAX_W = 124
-SPRITE_MAX_H = 176
-SPRITE_RESAMPLE = Image.Resampling.NEAREST
-
-SPEECH_LINES = [
-    "Oi!",
-    "Precisa de algo?",
-    "Bora codar?",
-    "Estudando hoje?",
-    "Clica com o botão direito pra me perguntar algo",
-    "Analista de dados on!",
-    ":)",
-]
-
-APP_COMMENTS = {
-    "youtube": [
-        "Rindo do vídeo ou é sério isso?",
-        "Mais um vídeo pra 'só um rapidinho', né?",
-        "O algoritmo te pegou de novo",
-        "Assistindo ou trabalhando? 👀",
-    ],
-    "firefox": ["Navegando por aí?", "Achou algo legal?"],
-    "chrome": ["Navegando por aí?", "Muitas abas hein"],
-    "chromium": ["Navegando por aí?"],
-    "code": ["Bora codar!", "Código novo?"],
-    "sublime": ["Editando código?"],
-    "terminal": ["Modo terminal ativado", "Linha de comando é vida"],
-    "xterm": ["Modo terminal ativado"],
-    "thunar": ["Organizando arquivos?"],
-    "nautilus": ["Organizando arquivos?"],
-    "files": ["Vendo seus arquivos?"],
-    "libreoffice": ["Trabalhando em documento?"],
-    "gimp": ["Editando imagem, bonito!"],
-    "spotify": ["Boa música?"],
-}
-GENERIC_COMMENTS = ["Vendo o que você tá fazendo", "Te acompanhando por aqui", ":)"]
-SIT_DOWN_LINES = ["Ufa... só um descansinho", "Cansei de andar por aí", "Cadeira improvisada, hihi"]
-STAND_CLOSED_LINES = ["Ei, sumiu minha cadeira!", "A janela fechou, levantando!"]
-STAND_TIMEOUT_LINES = ["Descanso acabou, vamo lá de novo"]
-
-OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "llama3.2:1b"
-
-HISTORY_PATH = Path.home() / ".desktop_pet_history.json"
-MAX_HISTORY_MESSAGES = 12
-
-SYSTEM_PROMPT = (
-    "Você é a companheira de desktop do Ulisses. Responda de forma curta, "
-    "calorosa e direta, sem enrolação. Se não souber algo, diga isso "
-    "abertamente em vez de inventar. Respostas de no máximo 3 ou 4 frases."
-)
-
-# Paleta anime/cartoon (personagem original, estilo "boneca pixel art" com
-# sombreado em camadas, inspirada em cabelo longo ondulado + jaqueta oversized)
-COL_HAIR = (94, 62, 45, 255)            # castanho
-COL_HAIR_LIGHT = (128, 88, 62, 255)     # mecha clara (volume)
-COL_HAIR_DARK = (64, 40, 28, 255)       # sombra do cabelo
-COL_SKIN = (255, 219, 191, 255)
-COL_SKIN_SHADOW = (232, 190, 160, 255)
-COL_JACKET = (40, 38, 46, 255)          # jaqueta preta oversized
-COL_JACKET_DARK = (24, 22, 28, 255)
-COL_SHIRT = (215, 215, 220, 255)        # blusa cinza-clara por baixo
-COL_JEANS = (150, 176, 205, 255)        # calça jeans larga
-COL_JEANS_DARK = (110, 135, 165, 255)
-COL_BLUSH = (255, 150, 170, 170)
-COL_EYE = (35, 28, 24, 255)             # olhos bem escuros
-COL_SHOE = (35, 33, 38, 255)            # tênis preto
-
-
-def get_font(size):
-    for path in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ):
-        try:
-            return ImageFont.truetype(path, size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
-
-
-FONT_BUBBLE = get_font(13 * SCALE)
-FONT_SMALL = get_font(9 * SCALE)
-
-
-# ---------------------------------------------------------------------------
-# IA local (Ollama)
-# ---------------------------------------------------------------------------
-def load_history():
-    if HISTORY_PATH.exists():
-        try:
-            return json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return []
-    return []
-
-
-def save_history(history):
-    try:
-        HISTORY_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError:
-        pass
-
-
-def ask_local_ai(history):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
-    payload = json.dumps({"model": OLLAMA_MODEL, "messages": messages, "stream": False}).encode("utf-8")
-    req = urllib.request.Request(OLLAMA_URL, data=payload,
-                                  headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        return f"Erro {e.code} do Ollama: {e.read().decode('utf-8', errors='ignore')[:200]}"
-    except urllib.error.URLError:
-        return ("Não consegui falar com o Ollama. Confirme que ele está rodando "
-                f"e que o modelo '{OLLAMA_MODEL}' foi baixado (ollama pull {OLLAMA_MODEL}).")
-    return data.get("message", {}).get("content", "").strip() or "(resposta vazia)"
-
-
-# ---------------------------------------------------------------------------
-# Integração opcional com X11
-# ---------------------------------------------------------------------------
-class X11Helper:
-    def __init__(self):
-        self.ok = False
-        self.last_shape_error = None
-        self.dpy = None
-        self.root_win = None
-        if not XLIB_AVAILABLE:
-            return
-        try:
-            self.dpy = xlib_display.Display()
-            self.root_win = self.dpy.screen().root
-            self.ok = True
-        except Exception:
-            self.ok = False
-
-    def get_active_window_info(self):
-        if not self.ok:
-            return None
-        try:
-            NET_ACTIVE = self.dpy.intern_atom("_NET_ACTIVE_WINDOW")
-            prop = self.root_win.get_full_property(NET_ACTIVE, X.AnyPropertyType)
-            if not prop or not prop.value or not prop.value[0]:
-                return None
-            win = self.dpy.create_resource_object("window", prop.value[0])
-            wm_class = win.get_wm_class()
-            klass = wm_class[1].lower() if wm_class else ""
-            name = (win.get_wm_name() or "")
-            return klass, name
-        except Exception:
-            return None
-
-    def get_open_windows(self, exclude_win_id=None):
-        """Lista janelas 'de verdade' abertas, com posição/tamanho na tela."""
-        if not self.ok:
-            return []
-        try:
-            NET_LIST = self.dpy.intern_atom("_NET_CLIENT_LIST")
-            prop = self.root_win.get_full_property(NET_LIST, X.AnyPropertyType)
-            if not prop or not prop.value:
-                return []
-            results = []
-            for win_id in prop.value:
-                if win_id == exclude_win_id:
-                    continue
-                try:
-                    win = self.dpy.create_resource_object("window", win_id)
-                    geom = win.get_geometry()
-                    coords = win.translate_coords(self.root_win, 0, 0)
-                    rx = -coords.x
-                    ry = -coords.y
-                    w, h = geom.width, geom.height
-                    if w < 200 or h < 150:
-                        continue  # ignora painéis, docks, coisas pequenas
-                    results.append({"id": win_id, "x": rx, "y": ry, "w": w, "h": h})
-                except Exception:
-                    continue
-            return results
-        except Exception:
-            return []
-
-    def window_exists(self, win_id):
-        if not self.ok:
-            return False
-        try:
-            NET_LIST = self.dpy.intern_atom("_NET_CLIENT_LIST")
-            prop = self.root_win.get_full_property(NET_LIST, X.AnyPropertyType)
-            return bool(prop and prop.value and win_id in list(prop.value))
-        except Exception:
-            return False
-
-    def apply_shape_mask(self, tk_window_id, pil_rgba_image):
-        if not self.ok:
-            return False
-        try:
-            bit_order = self.dpy.info.bitmap_format_bit_order
-
-            alpha = pil_rgba_image.split()[3]
-            mask_img = alpha.point(lambda p: 255 if p > 20 else 0).convert("1")
-
-            buf = BytesIO()
-            mask_img.save(buf, format="XBM")  # XBM já usa ordem LSBFirst por padrão
-            xbm_text = buf.getvalue().decode("ascii", errors="ignore")
-            hex_bytes = re.findall(r"0x([0-9a-fA-F]{2})", xbm_text)
-            if not hex_bytes:
-                return False
-            raw = [int(h, 16) for h in hex_bytes]
-            if bit_order != X.LSBFirst:
-                raw = [int(f"{b:08b}"[::-1], 2) for b in raw]  # servidor usa MSBFirst
-            data = bytes(raw)
-
-            width, height = mask_img.size
-            win = self.dpy.create_resource_object("window", tk_window_id)
-            pixmap = win.create_pixmap(width, height, 1)
-            gc = pixmap.create_gc(foreground=1, background=0)
-            pixmap.put_image(gc, 0, 0, width, height, X.XYBitmap, 1, 0, data)
-
-            xlib_shape.combine(win, xlib_shape.SO.Set, xlib_shape.SK.Bounding, 0, 0, pixmap)
-            xlib_shape.combine(win, xlib_shape.SO.Set, xlib_shape.SK.Input, 0, 0, pixmap)
-
-            gc.free()
-            pixmap.free()
-            self.dpy.sync()
-            return True
-        except Exception as exc:
-            self.last_shape_error = f"{type(exc).__name__}: {exc}"
-            return False
-
 
 # ---------------------------------------------------------------------------
 # Personagem
@@ -372,68 +134,18 @@ class DesktopPet:
         self._shape_counter = 0
         self._last_shape_update = 0
         self._hidden = False
-
-        side_frames = self._load_sprite_sheet_frames(
-            "Folha de sprites_ caminhada em pixel art.png",
-            4, 2, row_end_fractions=(0.86, 0.81),
-        )
-        side_frames.extend(
-            self._load_directional_sheet_frames(
-                "ChatGPT Image 8 de out. de 2026, 14_06_59.png",
-                8, ((55, 445), (545, 930)),
-            )
-        )
-        side_frames.extend(
-            self._load_directional_sheet_frames(
-                "ChatGPT Image 8 de out. de 2026, 14_39_09.png",
-                6, ((200, 680),),
-            )
-        )
-        self.walk_frames = {
-            "side": side_frames,
-            "front": self._load_directional_sheet_frames(
-                "ChatGPT Image 9 de out. de 2026, 14_45_38.png",
-                6, ((120, 490), (560, 930)),
-            ),
-            "back": self._load_directional_sheet_frames(
-                "ChatGPT Image 9 de out. de 2026, 14_47_07.png",
-                6, ((120, 490), (560, 930)),
-            ),
-            "diagonal": self._load_directional_sheet_frames(
-                "ChatGPT Image 9 de out. de 2026, 14_48_36.png",
-                6, ((120, 490), (560, 930)),
-            ),
+        self.video_frames = {
+            name: self._load_video_frames(filename)
+            for name, filename in MOVEMENT_VIDEOS.items()
         }
-        self.balance_frames = self._load_sprite_sheet_frames(
-            "Folha de sprites_ garota balançando.png",
-            4, 2, row_end_fractions=(0.86, 0.81),
-        )
-        self.sway_frames = self._load_directional_sheet_frames(
-            "ChatGPT Image 8 de out. de 2026, 14_41_23.png",
-            6, ((260, 740),),
-        )
-        self.blink_frames = self._load_sprite_sheet_frames(
-            "Folha de Sprites_ Animação de Piscada.png",
-            3, 3, row_end_fractions=(0.87, 0.84, 0.82),
-            cells=((0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, 2)),
-        )
-        self.scaled_walk_frames = {
-            direction: self._scale_frames(frames)
-            for direction, frames in self.walk_frames.items()
-        }
-        self.scaled_balance_frames = self._scale_frames(self.balance_frames)
-        self.scaled_sway_frames = self._scale_frames(self.sway_frames)
-        self.scaled_blink_frames = self._scale_frames(self.blink_frames)
-        self._walk_frame_cache = {}
+        self._video_frame_cache = {}
         self.drag_tilt = 0.0
         self.drag_target_tilt = 0.0
         self._last_drag_pointer_x = None
         self._last_drag_event_at = 0.0
         self._last_drag_motion_at = 0.0
-        self.balance_tilt_frames = self._build_balance_tilt_frames()
-        self.blink_frame_index = None
-        self._blink_frame_step = 0
-        self.next_blink_step = random.randint(30, 100)
+        self._irritated_until = 0.0
+        self._irritated_started_at = 0.0
 
         self.label.bind("<Button-1>", self.start_drag)
         self.label.bind("<B1-Motion>", self.do_drag)
@@ -484,72 +196,64 @@ class DesktopPet:
             f"{WIDTH}x{new_height}+{self._window_x}+{self._window_y}"
         )
 
-    # ---------- sprites pixel art ----------
-    def _load_sprite_sheet_frames(
-        self, filename, columns, rows, row_end_fractions, cells=None
-    ):
-        """Recorta quadros de uma folha e remove o fundo claro conectado às bordas."""
-        sheet_path = MOVEMENTS_DIR / filename
-        with Image.open(sheet_path) as source:
-            sheet = source.convert("RGBA")
-        cell_width = sheet.width / columns
-        cell_height = sheet.height / rows
+    # ---------- reprodução dos movimentos em vídeo ----------
+    def _load_video_frames(self, filename):
+        try:
+            import cv2
+        except ImportError as exc:
+            raise RuntimeError(
+                "Falta o OpenCV para reproduzir os movimentos em vídeo. "
+                "Instale as dependências com: pip install -r requirements.txt"
+            ) from exc
+
+        path = resolve_movement_path(filename)
+        capture = cv2.VideoCapture(str(path))
+        if not capture.isOpened():
+            capture.release()
+            raise OSError(f"Não foi possível abrir o vídeo de movimento: {path}")
+
+        fps = capture.get(cv2.CAP_PROP_FPS)
+        if not math.isfinite(fps) or fps <= 0:
+            fps = VIDEO_FRAME_RATE
         frames = []
-        frame_cells = cells or tuple(
-            (column, row)
-            for row in range(rows)
-            for column in range(columns)
+        source_frame = 0
+        next_sample_at_ms = 0.0
+        try:
+            while True:
+                success, frame = capture.read()
+                if not success:
+                    break
+                source_frame_at_ms = source_frame * 1000 / fps
+                if source_frame_at_ms >= next_sample_at_ms:
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    image = Image.fromarray(rgb)
+                    frames.append(self._prepare_video_frame(image, path.name))
+                    next_sample_at_ms += VIDEO_FRAME_INTERVAL_MS
+                source_frame += 1
+        finally:
+            capture.release()
+
+        if not frames:
+            raise ValueError(f"O vídeo de movimento não contém quadros: {path}")
+        return frames
+
+    def _prepare_video_frame(self, frame, description):
+        frame.thumbnail(
+            (VIDEO_MAX_W, VIDEO_MAX_H),
+            Image.Resampling.LANCZOS,
         )
-
-        for column, row in frame_cells:
-            left = round(column * cell_width)
-            right = round((column + 1) * cell_width)
-            top = round(row * cell_height)
-            bottom = top + round(cell_height * row_end_fractions[row])
-            frame = sheet.crop((left, top, right, bottom))
-            frames.append(
-                self._prepare_sprite_frame(
-                    frame,
-                    f"{filename} (coluna {column + 1}, linha {row + 1})",
-                )
-            )
-        return frames
-
-    def _load_directional_sheet_frames(self, filename, columns, row_bounds):
-        """Recorta quadros de uma folha direcional sem incluir legendas."""
-        sheet_path = MOVEMENTS_DIR / filename
-        with Image.open(sheet_path) as source:
-            sheet = source.convert("RGBA")
-
-        cell_width = sheet.width / columns
-        frames = []
-        for row, (top, bottom) in enumerate(row_bounds):
-            for column in range(columns):
-                left = round(column * cell_width)
-                right = round((column + 1) * cell_width)
-                frame = sheet.crop((left, top, right, bottom))
-                frames.append(
-                    self._prepare_sprite_frame(
-                        frame,
-                        f"{filename} (coluna {column + 1}, linha {row + 1})",
-                    )
-                )
-        return frames
-
-    def _prepare_sprite_frame(self, frame, description):
-        frame = self._remove_sheet_background(frame)
+        frame = self._remove_video_background(frame.convert("RGBA"))
         bounds = frame.getchannel("A").getbbox()
         if bounds is None:
-            raise ValueError(f"Nenhum personagem encontrado no quadro {description}.")
+            raise ValueError(f"Nenhum personagem encontrado no vídeo {description}.")
         frame = frame.crop(bounds)
-        frame.thumbnail((SPRITE_MAX_W, SPRITE_MAX_H), SPRITE_RESAMPLE)
-        canvas = Image.new("RGBA", (SPRITE_MAX_W, SPRITE_MAX_H), (0, 0, 0, 0))
-        position = ((SPRITE_MAX_W - frame.width) // 2, SPRITE_MAX_H - frame.height)
+        canvas = Image.new("RGBA", (VIDEO_MAX_W, VIDEO_MAX_H), (0, 0, 0, 0))
+        position = ((VIDEO_MAX_W - frame.width) // 2, VIDEO_MAX_H - frame.height)
         canvas.alpha_composite(frame, position)
         return canvas
 
     @staticmethod
-    def _remove_sheet_background(frame):
+    def _remove_video_background(frame):
         width, height = frame.size
         pixels = list(frame.getdata())
         background = bytearray(
@@ -594,88 +298,35 @@ class DesktopPet:
         frame.putalpha(alpha)
         return frame
 
-    @staticmethod
-    def _scale_frames(frames):
-        return [
-            frame.resize((frame.width * SCALE, frame.height * SCALE), Image.Resampling.NEAREST)
-            for frame in frames
-        ]
+    def _video_for_current_pose(self, now=None):
+        if self.state == "sitting":
+            return "sleep"
+        if self.state in ("held", "thinking"):
+            return "idle"
+        if self.state == "walk":
+            if now is None:
+                now = time.monotonic()
+            if now < self._irritated_until:
+                return "angry"
+            if self.busy:
+                return "wave"
+            return "walk_left" if self.walk_dx < 0 else "walk_right"
+        return "idle"
 
-    def _build_balance_tilt_frames(self):
-        """Precalcula inclinações suaves, girando ao redor dos pés."""
-        sprite = self.scaled_balance_frames[0]
-        max_angle = 18
-        padding = math.ceil(sprite.height * math.sin(math.radians(max_angle))) + 4
-        canvas = Image.new("RGBA", (sprite.width + padding * 2, sprite.height), (0, 0, 0, 0))
-        canvas.alpha_composite(sprite, (padding, 0))
-        center = (padding + sprite.width / 2, sprite.height - 1)
-        frames = {0: sprite}
-
-        for angle in range(-max_angle, max_angle + 1):
-            if angle == 0:
-                continue
-            rotated = canvas.rotate(
-                angle, resample=Image.Resampling.NEAREST, expand=False, center=center
-            )
-            frames[angle] = rotated.crop((padding, 0, padding + sprite.width, sprite.height))
-        return frames
-
-    def _advance_blink(self):
-        is_idle = self.state != "held" and (self.state != "walk" or self.busy)
-        if not is_idle:
-            self.blink_frame_index = None
-            return
-
-        if self.blink_frame_index is None:
-            if self.step >= self.next_blink_step:
-                self.blink_frame_index = 0
-                self._blink_frame_step = self.step
-        elif self.step - self._blink_frame_step >= 1:
-            self.blink_frame_index += 1
-            self._blink_frame_step = self.step
-            if self.blink_frame_index >= len(self.scaled_blink_frames):
-                self.blink_frame_index = None
-                self.next_blink_step = self.step + random.randint(75, 150)
-
-    def _walk_animation_for_direction(self):
-        if self.walk_dx and self.walk_dy:
-            return "diagonal", self.walk_dx < 0
-        if self.walk_dx:
-            return "side", self.walk_dx < 0
-        return ("front" if self.walk_dy > 0 else "back"), False
-
-    def _sprite_for_current_pose(self):
-        if self.state == "held":
-            angle = max(-18, min(18, int(round(self.drag_tilt))))
-            if angle:
-                return self.balance_tilt_frames[angle]
-            frame_index = int(self.animation_time_ms // ANIMATION_FRAME_MS) % len(
-                self.scaled_balance_frames
-            )
-            return self.scaled_balance_frames[frame_index]
-
-        if self.state == "walk" and not self.busy:
-            animation, flip = self._walk_animation_for_direction()
-            frames = self.scaled_walk_frames[animation]
-            frame_index = int(self.animation_time_ms // ANIMATION_FRAME_MS) % len(
-                frames
-            )
-            sprite = frames[frame_index]
-            if flip:
-                sprite = sprite.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            return sprite
-
-        if self.blink_frame_index is not None:
-            return self.scaled_blink_frames[self.blink_frame_index]
-        if self.state == "thinking":
-            frame_index = int(self.animation_time_ms // ANIMATION_FRAME_MS) % len(
-                self.scaled_sway_frames
-            )
-            return self.scaled_sway_frames[frame_index]
-        return self.scaled_blink_frames[0]
+    def _current_video_frame(self, now=None):
+        if now is None:
+            now = time.monotonic()
+        video = self._video_for_current_pose(now)
+        frames = self.video_frames[video]
+        if video == "angry":
+            elapsed_ms = (now - self._irritated_started_at) * 1000
+        else:
+            elapsed_ms = self.animation_time_ms
+        frame_index = int(elapsed_ms / VIDEO_FRAME_INTERVAL_MS) % len(frames)
+        return video, frame_index, frames[frame_index]
 
     def render_frame(self):
-        """Renderiza a personagem usando os sprites pixel art gerados para ela."""
+        """Renderiza a personagem com o quadro atual do movimento em vídeo."""
         w, h = WIDTH * SCALE, self.cur_height * SCALE
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
 
@@ -684,7 +335,17 @@ class DesktopPet:
             draw = ImageDraw.Draw(img, "RGBA")
             bubble_h = self.draw_bubble(draw, self.bubble_text, w)
 
-        sprite = self._sprite_for_current_pose()
+        _, _, sprite = self._current_video_frame()
+        sprite = sprite.resize(
+            (sprite.width * SCALE, sprite.height * SCALE),
+            Image.Resampling.NEAREST,
+        )
+        if self.state == "held" and self.drag_tilt:
+            sprite = sprite.rotate(
+                self.drag_tilt,
+                resample=Image.Resampling.NEAREST,
+                center=(sprite.width / 2, sprite.height - 1),
+            )
         # Renderiza em alta resolução e volta para o tamanho da janela com
         # NEAREST para conservar os blocos de pixel.
         # Pequeno movimento vertical para dar sensação de vida durante a caminhada.
@@ -701,15 +362,9 @@ class DesktopPet:
 
         img.alpha_composite(sprite, (x, y))
 
-        # O sprite já contém a sombra de chão; o restante do canvas fica transparente.
+        # O vídeo já contém a sombra de chão; o restante do canvas fica transparente.
         img = img.resize((WIDTH, self.cur_height), Image.Resampling.NEAREST)
         return img
-
-    def capsule_line(self, draw, x1, y1, x2, y2, width, fill):
-        r = width / 2
-        draw.line([x1, y1, x2, y2], fill=fill, width=int(width))
-        draw.ellipse([x1 - r, y1 - r, x1 + r, y1 + r], fill=fill)
-        draw.ellipse([x2 - r, y2 - r, x2 + r, y2 + r], fill=fill)
 
     def draw_bubble(self, draw, text, canvas_w):
         max_text_w = canvas_w - 20 * SCALE
@@ -754,13 +409,13 @@ class DesktopPet:
         if needed_h != self.cur_height:
             self.set_window_height(needed_h)
 
-        cache_key = self._walk_frame_cache_key()
-        cached_frame = self._walk_frame_cache.get(cache_key) if cache_key is not None else None
+        cache_key = self._video_frame_cache_key()
+        cached_frame = self._video_frame_cache.get(cache_key) if cache_key is not None else None
         if cached_frame is None:
             frame = self.render_frame()
             self.tk_image = ImageTk.PhotoImage(frame)
             if cache_key is not None:
-                self._walk_frame_cache[cache_key] = (frame, self.tk_image)
+                self._video_frame_cache[cache_key] = (frame, self.tk_image)
         else:
             frame, self.tk_image = cached_frame
         self.label.configure(image=self.tk_image)
@@ -783,16 +438,12 @@ class DesktopPet:
                           "usando fundo sólido como alternativa.")
                     self.label.configure(bg="#f4f4f4")
 
-    def _walk_frame_cache_key(self):
+    def _video_frame_cache_key(self):
         if self.state != "walk" or self.busy or self.dragging or self.bubble_text:
             return None
-        animation, flip = self._walk_animation_for_direction()
-        frames = self.scaled_walk_frames[animation]
-        frame_index = int(self.animation_time_ms // ANIMATION_FRAME_MS) % len(
-            frames
-        )
+        video, frame_index, _ = self._current_video_frame()
         bob = int(abs(math.sin(self.animation_time_ms / 1000 * 3.75)) * 2 * SCALE)
-        return animation, frame_index, flip, bob
+        return video, frame_index, bob
 
     def _needed_height(self):
         if not self.bubble_text:
@@ -815,8 +466,6 @@ class DesktopPet:
         while self._logic_accumulator >= LOGIC_STEP_MS:
             self.step += 1
             self._logic_accumulator -= LOGIC_STEP_MS
-        self._advance_blink()
-
         if self.dragging:
             if time.monotonic() - self._last_drag_motion_at > 0.12:
                 self.drag_target_tilt = 0.0
@@ -837,7 +486,8 @@ class DesktopPet:
             max_x = max(0, self.screen_w - WIDTH)
             max_y = max(0, self.screen_h - self.cur_height)
 
-            if next_x < 0 or next_x > max_x:
+            hit_horizontal_boundary = next_x < 0 or next_x > max_x
+            if hit_horizontal_boundary:
                 self.walk_dx *= -1
                 next_x = max(0, min(next_x, max_x))
             if next_y < 0 or next_y > max_y:
@@ -852,6 +502,9 @@ class DesktopPet:
                 self._window_x = window_x
                 self._window_y = window_y
                 self.root.geometry(f"+{window_x}+{window_y}")
+            if hit_horizontal_boundary:
+                self._irritated_started_at = now
+                self._irritated_until = now + VIDEO_REACTION_SECONDS
 
         if self.state == "sitting" and self.sit_win_id is not None:
             if not self.x11.window_exists(self.sit_win_id):
