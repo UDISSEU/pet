@@ -1,28 +1,64 @@
 import json
+import logging
+import os
+import tempfile
 import urllib.error
 import urllib.request
 
+from assistant_actions import current_datetime_context
 from config import HISTORY_PATH, OLLAMA_MODEL, OLLAMA_URL, SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 def load_history(path=HISTORY_PATH):
     if path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            history = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return []
+        if not isinstance(history, list):
+            return []
+        return [
+            message
+            for message in history
+            if isinstance(message, dict)
+            and message.get("role") in ("user", "assistant")
+            and isinstance(message.get("content"), str)
+        ]
     return []
 
 
 def save_history(history, path=HISTORY_PATH):
+    temporary_path = None
     try:
-        path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = temporary_file.name
+            json.dump(history, temporary_file, ensure_ascii=False, indent=2)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, path)
+    except (OSError, TypeError, ValueError) as exc:
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+        logger.warning("Não foi possível salvar o histórico em %s: %s", path, exc)
+        return False
+    return True
 
 
 def ask_local_ai(history, model_name=OLLAMA_MODEL, url=OLLAMA_URL):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+    system_message = f"{SYSTEM_PROMPT}\n\n{current_datetime_context()}"
+    messages = [{"role": "system", "content": system_message}] + history
     payload = json.dumps({"model": model_name, "messages": messages, "stream": False}).encode("utf-8")
     request = urllib.request.Request(
         url,

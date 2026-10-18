@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bichinho de Desktop em pixel art + IA local (Ollama)
+Nova — mascote de desktop em pixel art com IA local (Ollama)
 ----------------------------------------------------
 Personagem animada com vídeos de caminhada, aceno, descanso e sono.
 
@@ -30,22 +30,25 @@ Como usar:
     Clique direito             -> menu (perguntar / falar algo / esquecer conversa / fechar)
 """
 
+import logging
 import math
-import os
+import queue
 import random
 import threading
 import time
 import tkinter as tk
 import webbrowser
-from collections import deque
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox
 
+from animation import load_video_frames
+from assistant_actions import current_date_answer, is_open_calendar_request
+from calendar_view import open_calendar_window
 from config import (
     APP_COMMENTS,
     BASE_HEIGHT,
     FONT_BUBBLE,
-    FONT_SMALL,
     GENERIC_COMMENTS,
+    ICONS_DIR,
     LOGIC_STEP_MS,
     MAX_HISTORY_MESSAGES,
     SCALE,
@@ -56,12 +59,9 @@ from config import (
     STAND_TIMEOUT_LINES,
     TICK_MS,
     VIDEO_FRAME_INTERVAL_MS,
-    VIDEO_FRAME_RATE,
-    VIDEO_MAX_H,
-    VIDEO_MAX_W,
     VIDEO_REACTION_SECONDS,
     MOVEMENT_VIDEOS,
-    resolve_movement_path,
+    WALK_ACCELERATION,
     WALK_DIRECTION_VECTORS,
     WALK_SPEED,
     WALK_DIRECTION_CHANGE_MAX_SECONDS,
@@ -89,8 +89,14 @@ class DesktopPet:
         self.shape_supported = None
 
         self.root = tk.Tk()
+        self._closing = False
+        self._ai_results = queue.Queue()
+        self._last_render_key = None
+        self.root.protocol("WM_DELETE_WINDOW", self.close_app)
         self.root.overrideredirect(True)
         self.root.wm_attributes("-topmost", True)
+        self._window_background = "#f4f4f4"
+        self.root.configure(bg=self._window_background)
         try:
             self.root.wm_attributes("-type", "splash")
         except tk.TclError:
@@ -102,15 +108,21 @@ class DesktopPet:
         self.x = float(random.randint(100, max(101, self.screen_w - 200)))
         self.y = float(self.screen_h - BASE_HEIGHT - SCREEN_MARGIN)
         self.cur_height = BASE_HEIGHT
-        self.label = tk.Label(self.root, bd=0, highlightthickness=0, bg="#1c1830")
+        self.label = tk.Label(
+            self.root, bd=0, highlightthickness=0, bg=self._window_background
+        )
         self.label.pack(fill="both", expand=True)
         self._window_x = int(round(self.x))
         self._window_y = int(round(self.y))
         self.root.geometry(f"{WIDTH}x{self.cur_height}+{self._window_x}+{int(self.y)}")
 
         self.tk_image = None
+        self.idea_icon = self._load_status_icon(ICONS_DIR / "icon de lampada.png")
+        self._show_idea_icon = False
+        self._thinking_started_at = 0.0
 
         self.walk_dx, self.walk_dy = random.choice(WALK_DIRECTION_VECTORS)
+        self._walk_velocity_x = 0.0
         self._next_walk_direction_change_at = (
             time.monotonic()
             + random.uniform(
@@ -131,11 +143,9 @@ class DesktopPet:
         self.behind_mode = False  # true = ela fica sempre atrás das janelas
         self.ai_request_active = False
         self._dismiss_job = None
-        self._shape_counter = 0
-        self._last_shape_update = 0
         self._hidden = False
         self.video_frames = {
-            name: self._load_video_frames(filename)
+            name: load_video_frames(filename)
             for name, filename in MOVEMENT_VIDEOS.items()
         }
         self._video_frame_cache = {}
@@ -154,26 +164,13 @@ class DesktopPet:
         self.label.bind("<Button-3>", self.show_menu)
 
         self.behind_var = tk.BooleanVar(value=False)
+        self.stay_in_place_var = tk.BooleanVar(value=False)
         self.auto_speech_var = tk.BooleanVar(value=True)
         self.observe_apps_var = tk.BooleanVar(value=True)
-        self.peekaboo_var = tk.BooleanVar(value=True)
+        self.peekaboo_var = tk.BooleanVar(value=False)
         self.auto_sit_var = tk.BooleanVar(value=True)
 
-        self.menu = tk.Menu(self.root, tearoff=0)
-        self.menu.add_command(label="Perguntar", command=self.ask_menu)
-        self.menu.add_command(label="Falar algo", command=self.say_something)
-        self.menu.add_command(label="Abrir Claude no navegador", command=self.open_chat)
-        self.menu.add_separator()
-        self.menu.add_checkbutton(label="Andar atrás das janelas", variable=self.behind_var,
-                                   command=self.toggle_behind_mode)
-        self.menu.add_checkbutton(label="Falas espontâneas", variable=self.auto_speech_var)
-        self.menu.add_checkbutton(label="Comentários sobre apps", variable=self.observe_apps_var)
-        self.menu.add_checkbutton(label="Sumir atrás das janelas", variable=self.peekaboo_var,
-                      command=self.toggle_peekaboo)
-        self.menu.add_checkbutton(label="Sentar em janelas", variable=self.auto_sit_var,
-                      command=self.toggle_auto_sit)
-        self.menu.add_command(label="Esquecer conversa", command=self.forget_history)
-        self.menu.add_command(label="Fechar", command=self.root.destroy)
+        self._context_popup = None
 
         self.render_and_show()
         self._last_tick_at = time.monotonic()
@@ -197,120 +194,32 @@ class DesktopPet:
         )
 
     # ---------- reprodução dos movimentos em vídeo ----------
-    def _load_video_frames(self, filename):
-        try:
-            import cv2
-        except ImportError as exc:
-            raise RuntimeError(
-                "Falta o OpenCV para reproduzir os movimentos em vídeo. "
-                "Instale as dependências com: pip install -r requirements.txt"
-            ) from exc
-
-        path = resolve_movement_path(filename)
-        capture = cv2.VideoCapture(str(path))
-        if not capture.isOpened():
-            capture.release()
-            raise OSError(f"Não foi possível abrir o vídeo de movimento: {path}")
-
-        fps = capture.get(cv2.CAP_PROP_FPS)
-        if not math.isfinite(fps) or fps <= 0:
-            fps = VIDEO_FRAME_RATE
-        frames = []
-        source_frame = 0
-        next_sample_at_ms = 0.0
-        try:
-            while True:
-                success, frame = capture.read()
-                if not success:
-                    break
-                source_frame_at_ms = source_frame * 1000 / fps
-                if source_frame_at_ms >= next_sample_at_ms:
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    image = Image.fromarray(rgb)
-                    frames.append(self._prepare_video_frame(image, path.name))
-                    next_sample_at_ms += VIDEO_FRAME_INTERVAL_MS
-                source_frame += 1
-        finally:
-            capture.release()
-
-        if not frames:
-            raise ValueError(f"O vídeo de movimento não contém quadros: {path}")
-        return frames
-
-    def _prepare_video_frame(self, frame, description):
-        frame.thumbnail(
-            (VIDEO_MAX_W, VIDEO_MAX_H),
-            Image.Resampling.LANCZOS,
-        )
-        frame = self._remove_video_background(frame.convert("RGBA"))
-        bounds = frame.getchannel("A").getbbox()
-        if bounds is None:
-            raise ValueError(f"Nenhum personagem encontrado no vídeo {description}.")
-        frame = frame.crop(bounds)
-        canvas = Image.new("RGBA", (VIDEO_MAX_W, VIDEO_MAX_H), (0, 0, 0, 0))
-        position = ((VIDEO_MAX_W - frame.width) // 2, VIDEO_MAX_H - frame.height)
-        canvas.alpha_composite(frame, position)
-        return canvas
-
     @staticmethod
-    def _remove_video_background(frame):
-        width, height = frame.size
-        pixels = list(frame.getdata())
-        background = bytearray(
-            int(
-                min(red, green, blue) >= 220
-                and max(red, green, blue) - min(red, green, blue) <= 24
-            )
-            for red, green, blue, _ in pixels
-        )
-        transparent = bytearray(width * height)
-        pending = deque()
-
-        def enqueue(index):
-            if background[index] and not transparent[index]:
-                transparent[index] = 1
-                pending.append(index)
-
-        for x in range(width):
-            enqueue(x)
-            enqueue((height - 1) * width + x)
-        for y in range(1, height - 1):
-            enqueue(y * width)
-            enqueue(y * width + width - 1)
-
-        while pending:
-            index = pending.popleft()
-            x = index % width
-            if x:
-                enqueue(index - 1)
-            if x + 1 < width:
-                enqueue(index + 1)
-            if index >= width:
-                enqueue(index - width)
-            if index + width < width * height:
-                enqueue(index + width)
-
-        alpha = Image.new("L", frame.size)
-        alpha.putdata([
-            0 if is_background else pixel[3]
-            for is_background, pixel in zip(transparent, pixels)
-        ])
-        frame.putalpha(alpha)
-        return frame
+    def _load_status_icon(path):
+        try:
+            return Image.open(path).convert("RGBA")
+        except OSError:
+            return None
 
     def _video_for_current_pose(self, now=None):
         if self.state == "sitting":
             return "sleep"
-        if self.state in ("held", "thinking"):
+        if self.state == "thinking":
+            return "thinking"
+        if self.state == "held":
             return "idle"
         if self.state == "walk":
+            if self.stay_in_place_var.get():
+                return "idle"
             if now is None:
                 now = time.monotonic()
             if now < self._irritated_until:
                 return "angry"
             if self.busy:
                 return "wave"
-            return "walk_left" if self.walk_dx < 0 else "walk_right"
+            walk_velocity_x = getattr(self, "_walk_velocity_x", 0.0)
+            direction = walk_velocity_x if abs(walk_velocity_x) > 0.5 else self.walk_dx
+            return "walk_left" if direction < 0 else "walk_right"
         return "idle"
 
     def _current_video_frame(self, now=None):
@@ -320,6 +229,8 @@ class DesktopPet:
         frames = self.video_frames[video]
         if video == "angry":
             elapsed_ms = (now - self._irritated_started_at) * 1000
+        elif video == "thinking":
+            elapsed_ms = (now - self._thinking_started_at) * 1000
         else:
             elapsed_ms = self.animation_time_ms
         frame_index = int(elapsed_ms / VIDEO_FRAME_INTERVAL_MS) % len(frames)
@@ -331,7 +242,7 @@ class DesktopPet:
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
 
         bubble_h = 0
-        if self.bubble_text:
+        if self.bubble_text and self.state != "thinking":
             draw = ImageDraw.Draw(img, "RGBA")
             bubble_h = self.draw_bubble(draw, self.bubble_text, w)
 
@@ -350,7 +261,7 @@ class DesktopPet:
         # NEAREST para conservar os blocos de pixel.
         # Pequeno movimento vertical para dar sensação de vida durante a caminhada.
         bob = 0
-        if self.state == "walk" and not self.busy:
+        if self.state == "walk" and not self.busy and not self.stay_in_place_var.get():
             bob = int(abs(math.sin(self.animation_time_ms / 1000 * 3.75)) * 2 * SCALE)
         elif self.state == "held":
             bob = int(math.sin(self.animation_time_ms / 1000 * 5) * 2 * SCALE)
@@ -361,6 +272,17 @@ class DesktopPet:
             y = int(bubble_h)
 
         img.alpha_composite(sprite, (x, y))
+
+        # A animação de pensamento já inclui o balão; a lâmpada acompanha
+        # temporariamente a resposta da IA.
+        status_icon = self.idea_icon if self._show_idea_icon else None
+        if status_icon is not None:
+            icon_size = 32 * SCALE
+            status_icon = status_icon.copy()
+            status_icon.thumbnail((icon_size, icon_size), Image.Resampling.LANCZOS)
+            icon_x = min(w - status_icon.width - 4 * SCALE, x + sprite.width - status_icon.width // 2)
+            icon_y = max(2 * SCALE, y + 8 * SCALE)
+            img.alpha_composite(status_icon, (icon_x, icon_y))
 
         # O vídeo já contém a sombra de chão; o restante do canvas fica transparente.
         img = img.resize((WIDTH, self.cur_height), Image.Resampling.NEAREST)
@@ -419,24 +341,25 @@ class DesktopPet:
         else:
             frame, self.tk_image = cached_frame
         self.label.configure(image=self.tk_image)
+        self._last_render_key = self._render_state_key()
 
-        self._shape_counter += 1
-        if self._shape_counter % 15 == 0:
-            self.root.update_idletasks()
-            win_id = self.root.winfo_id()
-            ok = self.x11.apply_shape_mask(win_id, frame)
-            if self.shape_supported is None:
-                self.shape_supported = ok
-                if ok:
-                    print("[bichinho] transparência real ativada — fundo recortado com sucesso.")
-                else:
-                    if not self.x11.ok:
-                        reason = "python-xlib indisponível"
-                    else:
-                        reason = self.x11.last_shape_error or "motivo desconhecido"
-                    print(f"[bichinho] transparência real NÃO disponível ({reason}); "
-                          "usando fundo sólido como alternativa.")
-                    self.label.configure(bg="#f4f4f4")
+        self.shape_supported = False
+        self.root.configure(bg=self._window_background)
+        self.label.configure(bg=self._window_background)
+
+    def _render_state_key(self):
+        now = time.monotonic()
+        video, frame_index, _ = self._current_video_frame(now)
+        bob = 0
+        if self.state == "walk" and not self.busy and not self.stay_in_place_var.get():
+            bob = int(abs(math.sin(self.animation_time_ms / 1000 * 3.75)) * 2 * SCALE)
+        elif self.state == "held":
+            bob = int(math.sin(self.animation_time_ms / 1000 * 5) * 2 * SCALE)
+        return (
+            self._needed_height(), self.state, self.bubble_text, self.busy,
+            self.dragging, video, frame_index, bob, round(self.drag_tilt, 1),
+            self._show_idea_icon,
+        )
 
     def _video_frame_cache_key(self):
         if self.state != "walk" or self.busy or self.dragging or self.bubble_text:
@@ -446,6 +369,8 @@ class DesktopPet:
         return video, frame_index, bob
 
     def _needed_height(self):
+        if self.state == "thinking":
+            return BASE_HEIGHT + 32
         if not self.bubble_text:
             return BASE_HEIGHT
         dummy = Image.new("RGBA", (WIDTH * SCALE, 10))
@@ -458,6 +383,8 @@ class DesktopPet:
     # ---------- laço principal ----------
     def tick(self):
         now = time.monotonic()
+        if hasattr(self, "_ai_results"):
+            self._drain_ai_results()
         elapsed = min(now - self._last_tick_at, 0.1)
         self._last_tick_at = now
         self.animation_time_ms += elapsed * 1000
@@ -474,21 +401,30 @@ class DesktopPet:
             self.drag_tilt = 0.0
             self.drag_target_tilt = 0.0
 
-        if self.state == "walk" and not self.dragging and not self.busy:
-            if now >= self._next_walk_direction_change_at:
+        can_walk = (
+            self.state == "walk"
+            and not self.dragging
+            and not self.stay_in_place_var.get()
+        )
+        if can_walk:
+            if not self.busy and now >= self._next_walk_direction_change_at:
                 self._choose_walk_direction(now)
 
-            speed = WALK_SPEED
-            if self.walk_dx and self.walk_dy:
-                speed /= math.sqrt(2)
-            next_x = self.x + self.walk_dx * speed * elapsed
-            next_y = self.y + self.walk_dy * speed * elapsed
+            target_velocity = 0.0 if self.busy else self.walk_dx * WALK_SPEED
+            velocity_change = WALK_ACCELERATION * elapsed
+            velocity_delta = target_velocity - self._walk_velocity_x
+            self._walk_velocity_x += max(
+                -velocity_change, min(velocity_change, velocity_delta)
+            )
+            next_x = self.x + self._walk_velocity_x * elapsed
+            next_y = self.y + self.walk_dy * WALK_SPEED * elapsed
             max_x = max(0, self.screen_w - WIDTH)
             max_y = max(0, self.screen_h - self.cur_height)
 
             hit_horizontal_boundary = next_x < 0 or next_x > max_x
             if hit_horizontal_boundary:
                 self.walk_dx *= -1
+                self._walk_velocity_x = 0.0
                 next_x = max(0, min(next_x, max_x))
             if next_y < 0 or next_y > max_y:
                 self.walk_dy *= -1
@@ -505,6 +441,8 @@ class DesktopPet:
             if hit_horizontal_boundary:
                 self._irritated_started_at = now
                 self._irritated_until = now + VIDEO_REACTION_SECONDS
+        else:
+            self._walk_velocity_x = 0.0
 
         if self.state == "sitting" and self.sit_win_id is not None:
             if not self.x11.window_exists(self.sit_win_id):
@@ -516,7 +454,8 @@ class DesktopPet:
             except tk.TclError:
                 pass
 
-        self.render_and_show()
+        if hasattr(self, "_last_render_key") and self._render_state_key() != self._last_render_key:
+            self.render_and_show()
         self._next_tick_at += TICK_MS / 1000
         schedule_now = time.monotonic()
         while self._next_tick_at <= schedule_now:
@@ -623,7 +562,8 @@ class DesktopPet:
 
     # ---------- sentar cansada em cima de uma janela ----------
     def maybe_sit(self):
-        if (self.auto_sit_var.get() and not self.dragging and not self.busy and self.state == "walk"
+        if (self.auto_sit_var.get() and not self.stay_in_place_var.get()
+                and not self.dragging and not self.busy and self.state == "walk"
                 and self.x11.ok and random.random() < 0.7):
             windows = self.x11.get_open_windows(exclude_win_id=self.root.winfo_id())
             if windows:
@@ -667,6 +607,7 @@ class DesktopPet:
         self._dismiss_job = None
         self.bubble_text = None
         self.busy = False
+        self._show_idea_icon = False
         if self.state == "thinking":
             self.state = "walk"
 
@@ -714,48 +655,359 @@ class DesktopPet:
         webbrowser.open("https://claude.ai/new")
 
     def show_menu(self, event):
-        self.menu.tk_popup(event.x_root, event.y_root)
+        if self._context_popup is not None:
+            try:
+                self._context_popup.destroy()
+            except tk.TclError:
+                pass
+
+        popup = tk.Toplevel(self.root)
+        self._context_popup = popup
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+        popup.configure(bg="#D8DEEA")
+        popup.bind("<Escape>", lambda _event: popup.destroy())
+        popup.bind("<FocusOut>", lambda _event: popup.after_idle(
+            lambda: popup.destroy() if popup.winfo_exists() and
+            popup.focus_displayof() is None else None
+        ))
+
+        panel = tk.Frame(popup, bg="#F5F6FA", padx=8, pady=8,
+                         highlightthickness=1, highlightbackground="#D8DEEA")
+        panel.pack(fill="both", expand=True)
+        title_bar = tk.Frame(panel, bg="#F5F6FA")
+        title_bar.pack(fill="x", padx=4, pady=(1, 5))
+        title_label = tk.Label(
+            title_bar, text="Nova", font=("TkDefaultFont", 10, "bold"),
+            fg="#202B45", bg="#F5F6FA", anchor="w", cursor="fleur",
+        )
+        title_label.pack(side="left", fill="x", expand=True, padx=3, pady=3)
+        tk.Button(
+            title_bar, text="×", command=lambda: popup.destroy(),
+            relief="flat", bd=0, padx=7, pady=1, cursor="hand2",
+            font=("TkDefaultFont", 12, "bold"), fg="#68738A",
+            bg="#F5F6FA", activebackground="#E7EAF1",
+        ).pack(side="right")
+
+        drag_offset = {"x": 0, "y": 0}
+
+        def start_popup_drag(drag_event):
+            drag_offset["x"] = drag_event.x_root - popup.winfo_x()
+            drag_offset["y"] = drag_event.y_root - popup.winfo_y()
+
+        def move_popup(drag_event):
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            x = drag_event.x_root - drag_offset["x"]
+            y = drag_event.y_root - drag_offset["y"]
+            x = max(0, min(x, screen_width - popup.winfo_width()))
+            y = max(0, min(y, screen_height - popup.winfo_height()))
+            popup.geometry(f"+{x}+{y}")
+
+        for drag_handle in (title_bar, title_label):
+            drag_handle.bind("<ButtonPress-1>", start_popup_drag)
+            drag_handle.bind("<B1-Motion>", move_popup)
+
+        def close_popup():
+            if popup.winfo_exists():
+                popup.destroy()
+
+        def action_button(label, command, primary=False):
+            bg = "#5269C8" if primary else "#FFFFFF"
+            fg = "#FFFFFF" if primary else "#28334D"
+            hover = "#4056B2" if primary else "#E9EDF5"
+            button = tk.Button(
+                panel, text=label, anchor="w", command=lambda: (close_popup(), command()),
+                relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+                bg=bg, fg=fg, activebackground=hover, activeforeground=fg,
+                font=("TkDefaultFont", 9, "bold" if primary else "normal"),
+            )
+            button.pack(fill="x", pady=2)
+            return button
+
+        action_button("✦  Perguntar", self.ask_menu, primary=True)
+        action_button("▦  Calendário", self.show_calendar)
+
+        more = tk.Frame(panel, bg="#F5F6FA")
+        expanded = {"value": False}
+
+        def toggle_more():
+            if expanded["value"]:
+                more.pack_forget()
+                more_button.configure(text="Mostrar mais  ▾")
+            else:
+                more.pack(fill="x", pady=(5, 0))
+                more_button.configure(text="Mostrar menos  ▴")
+            expanded["value"] = not expanded["value"]
+
+        more_button = tk.Button(
+            panel, text="Mostrar mais  ▾", command=toggle_more, anchor="w",
+            relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+            bg="#E9EDF5", fg="#536078", activebackground="#DDE3EF",
+        )
+        more_button.pack(fill="x", pady=(5, 0))
+
+        def more_action(label, command):
+            tk.Button(
+                more, text=label, anchor="w",
+                command=lambda: (close_popup(), command()), relief="flat", bd=0,
+                padx=10, pady=6, cursor="hand2", bg="#FFFFFF", fg="#28334D",
+                activebackground="#E9EDF5",
+            ).pack(fill="x", pady=2)
+
+        more_action("Falar algo", self.say_something)
+        more_action("Abrir Claude no navegador", self.open_chat)
+        tk.Frame(more, height=1, bg="#D8DEEA").pack(fill="x", pady=5)
+
+        def check_option(label, variable, command=None):
+            tk.Checkbutton(
+                more, text=label, variable=variable, command=command,
+                anchor="w", padx=8, pady=4, bg="#F5F6FA", fg="#39445C",
+                activebackground="#F5F6FA", selectcolor="#FFFFFF",
+                font=("TkDefaultFont", 9),
+            ).pack(fill="x")
+
+        check_option("Andar atrás das janelas", self.behind_var, self.toggle_behind_mode)
+        check_option("Ficar parada aqui", self.stay_in_place_var)
+        check_option("Falas espontâneas", self.auto_speech_var)
+        check_option("Comentários sobre apps", self.observe_apps_var)
+        check_option("Sumir atrás das janelas", self.peekaboo_var, self.toggle_peekaboo)
+        check_option("Sentar em janelas", self.auto_sit_var, self.toggle_auto_sit)
+        more_action("Esquecer conversa", self.forget_history)
+        more_action("Fechar Nova", self.close_app)
+
+        popup.update_idletasks()
+        screen_w = popup.winfo_screenwidth()
+        screen_h = popup.winfo_screenheight()
+        x = min(event.x_root, max(0, screen_w - popup.winfo_reqwidth()))
+        y = min(event.y_root, max(0, screen_h - popup.winfo_reqheight()))
+        popup.geometry(f"+{x}+{y}")
+        popup.focus_force()
+        try:
+            popup.attributes("-alpha", 0.0)
+
+            def fade_in(step=0):
+                if not popup.winfo_exists():
+                    return
+                alpha = min(1.0, (step + 1) / 7)
+                try:
+                    popup.attributes("-alpha", alpha)
+                except tk.TclError:
+                    return
+                if alpha < 1.0:
+                    popup.after(14, lambda: fade_in(step + 1))
+
+            popup.after(14, fade_in)
+        except tk.TclError:
+            # Alguns gerenciadores de janelas não oferecem transparência gradual.
+            pass
+        return "break"
+
+    def show_calendar(self):
+        open_calendar_window(self.root)
+
+    def close_app(self):
+        self._closing = True
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
     def forget_history(self):
         self.history = []
-        save_history(self.history)
-        self.show_bubble("Memória limpa!", duration=2500)
+        if save_history(self.history):
+            self.show_bubble("Memória limpa!", duration=2500)
+        else:
+            self.show_bubble(
+                "Memória limpa nesta sessão, mas não consegui salvar.",
+                duration=4000,
+            )
 
     # ---------- integração com a IA local ----------
     def ask_menu(self, event=None):
         if self.ai_request_active:
             self.show_bubble("Já estou respondendo sua pergunta!", duration=2500)
             return
-        question = simpledialog.askstring("Perguntar", "O que você quer perguntar?", parent=self.root)
+        question = self._ask_question()
         if not question:
+            return
+        date_answer = current_date_answer(question)
+        if date_answer:
+            answer = self._record_local_interaction(question, date_answer)
+            self.show_bubble(answer)
+            return
+        if is_open_calendar_request(question):
+            answer = self._record_local_interaction(
+                question, "Abri o calendário para você."
+            )
+            self.show_calendar()
+            self.show_bubble(answer)
             return
         self.history.append({"role": "user", "content": question})
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
         request_history = list(self.history)
         self.ai_request_active = True
         self.state = "thinking"
+        self._show_idea_icon = False
+        self._thinking_started_at = time.monotonic()
         self.show_bubble("pensando...", duration=999999)
         threading.Thread(target=self._ask_worker, args=(request_history,), daemon=True).start()
 
+    def _record_local_interaction(self, question, answer):
+        self.history.extend((
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": answer},
+        ))
+        self.history = self.history[-MAX_HISTORY_MESSAGES:]
+        if not save_history(self.history):
+            return f"{answer}\nNão consegui salvar o histórico."
+        return answer
+
+    def _question_dialog_geometry(self, dialog_width=420, dialog_height=230):
+        gap = 8
+        pet_left = int(round(self.x))
+        pet_right = pet_left + WIDTH
+        available_left = max(0, pet_left - gap)
+        available_right = max(0, self.screen_w - pet_right - gap)
+        place_right = available_right >= dialog_width or available_right >= available_left
+        available_width = available_right if place_right else available_left
+        width = min(dialog_width, max(1, available_width))
+        x = pet_right + gap if place_right else pet_left - gap - width
+
+        height = min(dialog_height, self.screen_h)
+        y = int(round(self.y + (self.cur_height - height) / 2))
+        y = max(0, min(y, self.screen_h - height))
+        return x, y, width, height
+
+    def _ask_question(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Perguntar à Nova")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.attributes("-topmost", True)
+        x, y, width, height = self._question_dialog_geometry()
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+        result = {"question": None}
+        background = "#F3F5F9"
+        content = tk.Frame(dialog, bg=background, padx=18, pady=16)
+        content.pack(fill="both", expand=True)
+        tk.Label(
+            content,
+            text="Converse com a Nova",
+            font=("TkDefaultFont", 13, "bold"),
+            fg="#202B45",
+            bg=background,
+        ).pack(anchor="w")
+        tk.Label(
+            content,
+            text="Escreva sua pergunta abaixo",
+            font=("TkDefaultFont", 9),
+            fg="#68738A",
+            bg=background,
+        ).pack(anchor="w", pady=(3, 10))
+
+        editor_border = tk.Frame(content, bg="#D8DEEA", padx=1, pady=1)
+        editor_border.pack(fill="both", expand=True)
+        answer = tk.Text(
+            editor_border,
+            height=4,
+            wrap="word",
+            undo=True,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=8,
+            font=("TkDefaultFont", 10),
+            fg="#202B45",
+            bg="#FFFFFF",
+            insertbackground="#5269C8",
+        )
+        answer.pack(fill="both", expand=True)
+
+        buttons = tk.Frame(content, bg=background)
+        buttons.pack(fill="x", pady=(12, 0))
+
+        def finish():
+            question = answer.get("1.0", "end-1c").strip()
+            if not question:
+                answer.focus_set()
+                return
+            result["question"] = question
+            dialog.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        tk.Button(
+            buttons,
+            text="Cancelar",
+            command=cancel,
+            relief="flat",
+            bd=0,
+            padx=12,
+            pady=7,
+            fg="#536078",
+            bg=background,
+            activebackground="#E6EAF2",
+            cursor="hand2",
+        ).pack(side="right")
+        tk.Button(
+            buttons,
+            text="Perguntar",
+            command=finish,
+            relief="flat",
+            bd=0,
+            padx=16,
+            pady=7,
+            fg="#FFFFFF",
+            bg="#5269C8",
+            activebackground="#4056B2",
+            activeforeground="#FFFFFF",
+            cursor="hand2",
+        ).pack(side="right", padx=(0, 6))
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        dialog.bind("<Control-Return>", lambda _event: finish())
+        dialog.bind("<Escape>", lambda _event: cancel())
+        dialog.grab_set()
+        answer.focus_set()
+        self.root.wait_window(dialog)
+        return result["question"]
+
     def _ask_worker(self, history):
-        answer = ask_local_ai(history)
-        self.root.after(0, self._show_answer, answer)
+        try:
+            answer = ask_local_ai(history)
+        except Exception:
+            logging.getLogger(__name__).exception("Falha inesperada ao consultar o Ollama")
+            answer = "Tive um problema ao consultar a IA. Tente novamente daqui a pouco."
+        self._ai_results.put(answer)
+
+    def _drain_ai_results(self):
+        try:
+            answer = self._ai_results.get_nowait()
+        except queue.Empty:
+            return
+        if not self._closing:
+            self._show_answer(answer)
 
     def _show_answer(self, answer):
+        if self._closing:
+            return
         self.ai_request_active = False
         self.history.append({"role": "assistant", "content": answer})
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
-        save_history(self.history)
+        history_saved = save_history(self.history)
         self.state = "walk"
+        self._show_idea_icon = True
         words = max(len(answer.split()), 1)
         duration = min(max(6000, words * 400), 30000)
-        self.show_bubble(answer, duration=duration)
-
-    def _safe_call_later(self, callback, delay_ms, *args):
-        try:
-            self.root.after(delay_ms, callback, *args)
-        except tk.TclError:
-            pass
+        if history_saved:
+            self.show_bubble(answer, duration=duration)
+        else:
+            self.show_bubble(
+                f"{answer}\n\nNão consegui salvar o histórico.",
+                duration=duration,
+            )
 
     def run(self):
         self.root.mainloop()
@@ -769,7 +1021,7 @@ if __name__ == "__main__":
         try:
             root = tk.Tk()
             root.withdraw()
-            messagebox.showerror("Erro no bichinho", str(exc))
+            messagebox.showerror("Erro na Nova", str(exc))
         except Exception:
             pass
         raise

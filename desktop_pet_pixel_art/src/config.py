@@ -3,12 +3,14 @@ from pathlib import Path
 from PIL import ImageFont
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MOVEMENTS_DIR = PROJECT_ROOT.parent / "movimentos em vídeos"
+ASSETS_DIR = PROJECT_ROOT / "assets"
+MOVEMENTS_DIR = ASSETS_DIR / "movements"
+ICONS_DIR = ASSETS_DIR / "icons"
 ASSET_DIRS = [
     PROJECT_ROOT,
-    PROJECT_ROOT / "assets",
-    PROJECT_ROOT / "assets" / "personagem",
-    PROJECT_ROOT / "assets" / "personagem" / "animacoes",
+    ASSETS_DIR,
+    ASSETS_DIR / "personagem",
+    ASSETS_DIR / "personagem" / "animacoes",
     MOVEMENTS_DIR,
 ]
 
@@ -25,7 +27,7 @@ def resolve_movement_path(filename):
         if path.exists():
             return path
 
-    return MOVEMENTS_DIR / filename
+    return MOVEMENTS_DIR / candidate.name
 
 
 MOVEMENT_VIDEOS = {
@@ -35,6 +37,7 @@ MOVEMENT_VIDEOS = {
     "wave": "acenando.mp4",
     "sleep": "dormindo.mp4",
     "angry": "irritada.mp4",
+    "thinking": "Vídeo com balão pensamento.mp4",
 }
 
 WIDTH = 140
@@ -44,10 +47,11 @@ SCALE = 3
 TICK_MS = 16
 LOGIC_STEP_MS = 40
 WALK_SPEED = 24.0
+WALK_ACCELERATION = 90.0
 WALK_DIRECTION_CHANGE_MIN_SECONDS = 2.0
 WALK_DIRECTION_CHANGE_MAX_SECONDS = 5.0
 WALK_DIRECTION_VECTORS = ((-1, 0), (1, 0))
-VIDEO_FRAME_RATE = 15
+VIDEO_FRAME_RATE = 24
 VIDEO_FRAME_INTERVAL_MS = 1000 / VIDEO_FRAME_RATE
 VIDEO_MAX_W = 124
 VIDEO_MAX_H = 176
@@ -96,7 +100,7 @@ HISTORY_PATH = Path.home() / ".desktop_pet_history.json"
 MAX_HISTORY_MESSAGES = 12
 
 SYSTEM_PROMPT = (
-    "Você é a companheira de desktop do Ulisses. Responda de forma curta, "
+    "Você é Nova, a companheira de desktop do Ulisses. Responda de forma curta, "
     "calorosa e direta, sem enrolação. Se não souber algo, diga isso "
     "abertamente em vez de inventar. Respostas de no máximo 3 ou 4 frases."
 )

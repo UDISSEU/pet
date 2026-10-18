@@ -89,7 +89,7 @@ class X11Helper:
         if not self.ok:
             return False
         try:
-            bit_order = self.dpy.info.bitmap_format_bit_order
+            bit_order = self.dpy.display.info.bitmap_format_bit_order
 
             alpha = pil_rgba_image.split()[3]
             mask_img = alpha.point(lambda p: 255 if p > 20 else 0).convert("1")
@@ -100,23 +100,33 @@ class X11Helper:
             hex_bytes = re.findall(r"0x([0-9a-fA-F]{2})", xbm_text)
             if not hex_bytes:
                 return False
+            width, height = mask_img.size
             raw = [int(h, 16) for h in hex_bytes]
             if bit_order != X.LSBFirst:
                 raw = [int(f"{b:08b}"[::-1], 2) for b in raw]
-            data = bytes(raw)
-
-            width, height = mask_img.size
+            # O X11 exige cada linha alinhada a bitmap_format_scanline_pad bits.
+            pad_bits = self.dpy.display.info.bitmap_format_scanline_pad
+            src_stride = (width + 7) // 8
+            dst_stride = ((width + pad_bits - 1) // pad_bits) * (pad_bits // 8)
+            rows = []
+            for y in range(height):
+                row = bytes(raw[y * src_stride:(y + 1) * src_stride])
+                rows.append(row + b"\x00" * (dst_stride - src_stride))
+            data = b"".join(rows)
             win = self.dpy.create_resource_object("window", tk_window_id)
             pixmap = win.create_pixmap(width, height, 1)
             gc = pixmap.create_gc(foreground=1, background=0)
             pixmap.put_image(gc, 0, 0, width, height, X.XYBitmap, 1, 0, data)
 
-            xlib_shape.combine(win, xlib_shape.SO.Set, xlib_shape.SK.Bounding, 0, 0, pixmap)
-            xlib_shape.combine(win, xlib_shape.SO.Set, xlib_shape.SK.Input, 0, 0, pixmap)
+            win.shape_mask(xlib_shape.SO.Set, xlib_shape.SK.Bounding, 0, 0, pixmap)
+            win.shape_mask(xlib_shape.SO.Set, xlib_shape.SK.Input, 0, 0, pixmap)
+            self.dpy.sync()
+            extents = win.shape_query_extents()
 
             gc.free()
             pixmap.free()
-            self.dpy.sync()
+            if not extents.bounding_shaped:
+                raise RuntimeError("o servidor X11 não ativou a máscara da janela")
             return True
         except Exception as exc:
             self.last_shape_error = f"{type(exc).__name__}: {exc}"
