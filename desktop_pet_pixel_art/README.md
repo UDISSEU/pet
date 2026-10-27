@@ -28,6 +28,7 @@ sudo apt install python3-tk
 - Arraste a Nova para movê-la.
 - Dê um duplo clique ou abra o menu com o botão direito e escolha **Perguntar** para conversar.
 - No menu, escolha **Calendário** para abrir o calendário local.
+- Em **Foco e rotina**, escolha uma prioridade e a duração da sessão. Ao terminar, a Nova descansa e avisa quando a pausa acabar.
 - Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps.
 - Na aba **Aplicativos**, pesquise apps Linux instalados ou cadastre um comando manualmente. Selecione um item cadastrado para editá-lo.
 - **Testar comando** inicia o app imediatamente. Quando a Nova abrir um app a pedido, ela mostra o comando e pede confirmação.
@@ -41,7 +42,7 @@ Para usar a conversa, instale o [Ollama](https://ollama.com/), inicie o serviço
 ## Arquivos de dados
 
 - Histórico da conversa: `~/.desktop_pet_history.json`.
-- Preferências, memórias, lembretes e apps cadastrados: `~/.config/desktop_pet/settings.json`.
+- Preferências, memórias, lembretes, sessões de foco e apps cadastrados: `~/.config/desktop_pet/settings.json`.
 - As memórias são incluídas no contexto enviado ao Ollama local. Elas podem ser removidas pela interface.
 
 ## Estrutura do projeto

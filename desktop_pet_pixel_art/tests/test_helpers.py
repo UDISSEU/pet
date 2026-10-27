@@ -43,6 +43,18 @@ class TestHelperModules(unittest.TestCase):
             path.write_text("not json", encoding="utf-8")
             self.assertEqual(load_settings(path)["mode"], "companhia")
 
+    def test_focus_and_routine_settings_are_sanitized(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            path.write_text(
+                json.dumps({"focus_minutes": 999, "break_minutes": 0, "evening_time": "25:99"}),
+                encoding="utf-8",
+            )
+            settings = load_settings(path)
+        self.assertEqual(settings["focus_minutes"], 180)
+        self.assertEqual(settings["break_minutes"], 1)
+        self.assertEqual(settings["evening_time"], "20:30")
+
     def test_quiet_hours_support_daytime_and_overnight_ranges(self):
         self.assertTrue(is_quiet_now("09:00", "17:00", datetime(2026, 1, 1, 12, 0)))
         self.assertFalse(is_quiet_now("09:00", "17:00", datetime(2026, 1, 1, 18, 0)))
@@ -203,6 +215,28 @@ class TestHelperModules(unittest.TestCase):
 
         self.assertEqual((pet.x, pet.y), (50.0, 75.0))
         pet.root.geometry.assert_not_called()
+
+    def test_focus_cycle_uses_rest_pose_then_returns_to_walking(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.focus_mode = "idle"
+        pet.focus_goal = ""
+        pet.focus_minutes = 25
+        pet.break_minutes = 5
+        pet._focus_job = None
+        pet._closing = False
+        pet.ai_request_active = False
+        pet.dragging = False
+        pet.state = "walk"
+        pet.sit_win_id = 123
+        pet.root = mock.Mock()
+        pet.show_bubble = mock.Mock()
+
+        self.assertTrue(pet.start_focus("Estudar Python", 5, 1))
+        self.assertEqual((pet.focus_mode, pet.state, pet.sit_win_id), ("focus", "focused", None))
+        pet.finish_focus()
+        self.assertEqual((pet.focus_mode, pet.state), ("break", "sitting"))
+        pet.finish_break()
+        self.assertEqual((pet.focus_mode, pet.state, pet.focus_goal), ("idle", "walk", ""))
 
     def test_history_handles_invalid_and_valid_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:

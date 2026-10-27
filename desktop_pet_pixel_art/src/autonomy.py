@@ -17,6 +17,12 @@ DEFAULT_SETTINGS = {
     "memories": [],
     "reminders": [],
     "apps": [],
+    "focus_minutes": 25,
+    "break_minutes": 5,
+    "routine_greeting": False,
+    "routine_evening": False,
+    "evening_time": "20:30",
+    "last_evening_date": "",
 }
 
 
@@ -56,6 +62,24 @@ def load_settings(path=SETTINGS_PATH):
     ]
     if result.get("mode") not in ("quietinha", "companhia", "proativa"):
         result["mode"] = "companhia"
+    for key, default, minimum, maximum in (
+        ("focus_minutes", 25, 5, 180),
+        ("break_minutes", 5, 1, 60),
+    ):
+        try:
+            value = int(result.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        result[key] = min(maximum, max(minimum, value))
+    for key in ("routine_greeting", "routine_evening"):
+        if not isinstance(result.get(key), bool):
+            result[key] = False
+    try:
+        datetime.strptime(result.get("evening_time", "20:30"), "%H:%M")
+    except (TypeError, ValueError):
+        result["evening_time"] = "20:30"
+    if not isinstance(result.get("last_evening_date"), str):
+        result["last_evening_date"] = ""
     return result
 
 

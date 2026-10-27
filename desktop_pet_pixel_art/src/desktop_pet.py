@@ -39,7 +39,7 @@ import subprocess
 import threading
 import time
 import tkinter as tk
-import webbrowser
+from datetime import datetime
 from tkinter import messagebox
 from tkinter import ttk
 
@@ -151,6 +151,12 @@ class DesktopPet:
         self.drag_offset = (0, 0)
         self.state = "walk"  # walk | held | thinking | sitting
         self.busy = False
+        self.focus_mode = "idle"  # idle | focus | break
+        self.focus_goal = ""
+        self.focus_minutes = 25
+        self.break_minutes = 5
+        self._focus_job = None
+        self._routine_greeted = False
         self.sit_win_id = None
         self.behind_mode = False  # true = ela fica sempre atrás das janelas
         self.ai_request_active = False
@@ -200,6 +206,9 @@ class DesktopPet:
         self.root.after(random.randint(30000, 60000), self.peekaboo)
         self.root.after(random.randint(20000, 40000), self.maybe_sit)
         self.root.after(15000, self.check_reminders)
+        self.root.after(30000, self.check_daily_routine)
+        if self.settings.get("routine_greeting"):
+            self.root.after(2500, self.show_start_greeting)
 
     # ---------- geometria ----------
     def set_window_height(self, new_height):
@@ -222,6 +231,8 @@ class DesktopPet:
             return None
 
     def _video_for_current_pose(self, now=None):
+        if self.state == "focused":
+            return "idle"
         if self.state == "sitting":
             return "sleep"
         if self.state == "thinking":
@@ -499,7 +510,7 @@ class DesktopPet:
 
     def random_speech(self):
         if (self.auto_speech_var.get() and not self._is_quiet_time()
-                and not self.busy and not self.is_covered()):
+                and self.focus_mode == "idle" and not self.busy and not self.is_covered()):
             self.show_bubble(random.choice(SPEECH_LINES), duration=3000)
         interval = (30000, 60000) if self.settings["mode"] == "proativa" else (90000, 150000)
         self.root.after(random.randint(*interval), self.random_speech)
@@ -509,7 +520,8 @@ class DesktopPet:
 
     # ---------- observar apps abertos ----------
     def observe_apps(self):
-        if (self.observe_apps_var.get() and not self._is_quiet_time() and not self.busy and self.x11.ok
+        if (self.observe_apps_var.get() and not self._is_quiet_time()
+            and self.focus_mode == "idle" and not self.busy and self.x11.ok
             and self.state != "sitting" and not self.is_covered()):
             info = self.x11.get_active_window_info()
             if info:
@@ -569,7 +581,8 @@ class DesktopPet:
 
     # ---------- sumir atrás das janelas (peekaboo temporário) ----------
     def peekaboo(self):
-        if (self.peekaboo_var.get() and not self._is_quiet_time() and not self.behind_mode and not self.dragging and not self.busy
+        if (self.peekaboo_var.get() and not self._is_quiet_time() and self.focus_mode == "idle"
+                and not self.behind_mode and not self.dragging and not self.busy
                 and not self._hidden and self.state != "sitting"):
             self._hidden = True
             try:
@@ -592,7 +605,8 @@ class DesktopPet:
 
     # ---------- sentar cansada em cima de uma janela ----------
     def maybe_sit(self):
-        if (self.auto_sit_var.get() and not self._is_quiet_time() and not self.stay_in_place_var.get()
+        if (self.auto_sit_var.get() and not self._is_quiet_time() and self.focus_mode == "idle"
+                and not self.stay_in_place_var.get()
                 and not self.dragging and not self.busy and self.state == "walk"
                 and self.x11.ok and random.random() < 0.7):
             windows = self.x11.get_open_windows(exclude_win_id=self.root.winfo_id())
@@ -681,9 +695,6 @@ class DesktopPet:
     def say_something(self):
         self.show_bubble(random.choice(SPEECH_LINES), duration=3000)
 
-    def open_chat(self, event=None):
-        webbrowser.open("https://claude.ai/new")
-
     def show_menu(self, event):
         if self._context_popup is not None:
             try:
@@ -755,9 +766,10 @@ class DesktopPet:
             button.pack(fill="x", pady=2)
             return button
 
-        action_button("✦  Perguntar", self.ask_menu, primary=True)
+        action_button("✦  Conversar", self.ask_menu, primary=True)
         action_button("▦  Calendário", self.show_calendar)
-        action_button("⚙  Autonomia e preferências", self.open_autonomy_settings)
+        action_button("⏱  Foco e rotina", lambda: self.open_autonomy_settings("routine"))
+        action_button("⚙  Preferências", self.open_autonomy_settings)
 
         more = tk.Frame(panel, bg="#F5F6FA")
         expanded = {"value": False}
@@ -778,6 +790,13 @@ class DesktopPet:
         )
         more_button.pack(fill="x", pady=(5, 0))
 
+        def section_label(parent, label):
+            tk.Label(
+                parent, text=label.upper(), anchor="w", padx=7, pady=5,
+                bg="#F5F6FA", fg="#758099",
+                font=("TkDefaultFont", 8, "bold"),
+            ).pack(fill="x", pady=(4, 0))
+
         def more_action(label, command):
             tk.Button(
                 more, text=label, anchor="w",
@@ -786,13 +805,33 @@ class DesktopPet:
                 activebackground="#E9EDF5",
             ).pack(fill="x", pady=2)
 
+        section_label(more, "Interação")
         more_action("Falar algo", self.say_something)
-        more_action("Abrir Claude no navegador", self.open_chat)
-        tk.Frame(more, height=1, bg="#D8DEEA").pack(fill="x", pady=5)
+
+        behavior_group = tk.Frame(more, bg="#F5F6FA")
+        behavior_group.pack(fill="x", pady=(5, 0))
+        behavior_section = tk.Frame(behavior_group, bg="#F5F6FA")
+        behavior_expanded = {"value": False}
+
+        def toggle_behavior():
+            if behavior_expanded["value"]:
+                behavior_section.pack_forget()
+                behavior_button.configure(text="Comportamento  ▾")
+            else:
+                behavior_section.pack(fill="x", pady=(1, 2))
+                behavior_button.configure(text="Comportamento  ▴")
+            behavior_expanded["value"] = not behavior_expanded["value"]
+
+        behavior_button = tk.Button(
+            behavior_group, text="Comportamento  ▾", command=toggle_behavior, anchor="w",
+            relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+            bg="#E9EDF5", fg="#536078", activebackground="#DDE3EF",
+        )
+        behavior_button.pack(fill="x")
 
         def check_option(label, variable, command=None):
             tk.Checkbutton(
-                more, text=label, variable=variable, command=command,
+                behavior_section, text=label, variable=variable, command=command,
                 anchor="w", padx=8, pady=4, bg="#F5F6FA", fg="#39445C",
                 activebackground="#F5F6FA", selectcolor="#FFFFFF",
                 font=("TkDefaultFont", 9),
@@ -804,6 +843,7 @@ class DesktopPet:
         check_option("Comentários sobre apps", self.observe_apps_var, self.persist_preferences)
         check_option("Sumir atrás das janelas", self.peekaboo_var, self.toggle_peekaboo)
         check_option("Sentar em janelas", self.auto_sit_var, self.toggle_auto_sit)
+        section_label(more, "Manutenção")
         more_action("Esquecer conversa", self.forget_history)
         more_action("Apagar memórias salvas", self.forget_memories)
         more_action("Fechar Nova", self.close_app)
@@ -850,7 +890,7 @@ class DesktopPet:
         )
         save_settings(self.settings)
 
-    def open_autonomy_settings(self):
+    def open_autonomy_settings(self, selected_tab="behavior"):
         window = tk.Toplevel(self.root)
         window.title("Autonomia da Nova")
         window.transient(self.root)
@@ -886,10 +926,12 @@ class DesktopPet:
         notebook = ttk.Notebook(outer)
         notebook.pack(fill="both", expand=True)
         behavior_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
+        routine_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
         memory_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
         reminder_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
         apps_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
         notebook.add(behavior_tab, text="Comportamento")
+        notebook.add(routine_tab, text="Foco e rotina")
         notebook.add(memory_tab, text="Memórias")
         notebook.add(reminder_tab, text="Lembretes")
         notebook.add(apps_tab, text="Aplicativos")
@@ -897,6 +939,12 @@ class DesktopPet:
         mode = tk.StringVar(value=self.settings.get("mode", "companhia"))
         quiet_start = tk.StringVar(value=self.settings.get("quiet_start", "22:00"))
         quiet_end = tk.StringVar(value=self.settings.get("quiet_end", "08:00"))
+        focus_goal = tk.StringVar()
+        focus_minutes = tk.StringVar(value=str(self.settings.get("focus_minutes", 25)))
+        break_minutes = tk.StringVar(value=str(self.settings.get("break_minutes", 5)))
+        routine_greeting = tk.BooleanVar(value=self.settings.get("routine_greeting", False))
+        routine_evening = tk.BooleanVar(value=self.settings.get("routine_evening", False))
+        evening_time = tk.StringVar(value=self.settings.get("evening_time", "20:30"))
         speech = tk.BooleanVar(value=self.auto_speech_var.get())
         observe = tk.BooleanVar(value=self.observe_apps_var.get())
         auto_sit = tk.BooleanVar(value=self.auto_sit_var.get())
@@ -955,6 +1003,56 @@ class DesktopPet:
         ttk.Label(quiet_row, text="às").pack(side="left")
         ttk.Entry(quiet_row, textvariable=quiet_end, width=8, justify="center", style="Autonomy.TEntry").pack(side="left", padx=8, ipady=4)
         ttk.Label(quiet_row, text="HH:MM").pack(side="left", padx=(4, 0))
+
+        focus_card = card(
+            routine_tab,
+            "Sessão de foco",
+            "Escolha no que vai trabalhar. A Nova fica quieta até a pausa e usa a animação de descanso.",
+        )
+        ttk.Label(focus_card, text="Sua prioridade", style="CardTitle.TLabel").pack(anchor="w", pady=(2, 3))
+        ttk.Entry(focus_card, textvariable=focus_goal, style="Autonomy.TEntry").pack(fill="x", ipady=5)
+        duration_row = ttk.Frame(focus_card, style="Card.TFrame")
+        duration_row.pack(fill="x", pady=(12, 4))
+        ttk.Label(duration_row, text="Foco (min)").pack(side="left")
+        ttk.Spinbox(duration_row, from_=5, to=180, increment=5, textvariable=focus_minutes, width=7).pack(side="left", padx=(8, 18), ipady=3)
+        ttk.Label(duration_row, text="Pausa (min)").pack(side="left")
+        ttk.Spinbox(duration_row, from_=1, to=60, increment=1, textvariable=break_minutes, width=7).pack(side="left", padx=8, ipady=3)
+        if self.focus_mode == "focus":
+            focus_status_text = f"Foco em andamento: {self.focus_goal}"
+        elif self.focus_mode == "break":
+            focus_status_text = "Você está no intervalo. A Nova também está descansando."
+        else:
+            focus_status_text = "Ao terminar, ela avisa para você fazer uma pausa."
+        focus_status = tk.StringVar(value=focus_status_text)
+        ttk.Label(focus_card, textvariable=focus_status, style="Hint.TLabel", wraplength=500).pack(anchor="w", pady=(6, 8))
+        focus_actions = ttk.Frame(focus_card, style="Card.TFrame")
+        focus_actions.pack(fill="x")
+        ttk.Button(
+            focus_actions, text="Iniciar foco", style="Primary.TButton",
+            command=lambda: start_focus_from_settings(),
+        ).pack(side="left")
+        ttk.Button(
+            focus_actions, text="Encerrar sessão", style="Secondary.TButton",
+            command=self.stop_focus,
+        ).pack(side="left", padx=(8, 0))
+
+        routine_card = card(
+            routine_tab,
+            "Pequenas rotinas",
+            "As mensagens aparecem apenas enquanto a Nova estiver aberta e fora do horário de silêncio.",
+        )
+        ttk.Checkbutton(
+            routine_card, text="Dar boas-vindas quando eu iniciar a Nova",
+            variable=routine_greeting,
+        ).pack(anchor="w", pady=4)
+        evening_row = ttk.Frame(routine_card, style="Card.TFrame")
+        evening_row.pack(fill="x", pady=(5, 0))
+        ttk.Checkbutton(
+            evening_row, text="Lembrar de encerrar o dia às",
+            variable=routine_evening,
+        ).pack(side="left")
+        ttk.Entry(evening_row, textvariable=evening_time, width=8, justify="center", style="Autonomy.TEntry").pack(side="left", padx=8, ipady=3)
+        ttk.Label(evening_row, text="(HH:MM)", style="Hint.TLabel").pack(side="left")
 
         def setup_list(parent, items, format_item, empty_text):
             ttk.Label(parent, text=empty_text, style="PageHint.TLabel").pack(anchor="w", pady=(0, 8))
@@ -1235,10 +1333,27 @@ class DesktopPet:
         ttk.Button(app_buttons, text="Novo app", style="Secondary.TButton", command=clear_app_form).pack(side="left")
         ttk.Button(apps_tab, text="Remover selecionado", style="Secondary.TButton", command=remove_selected_app).pack(anchor="e", pady=(10, 0))
 
+        def start_focus_from_settings():
+            if self.focus_mode != "idle" or self.ai_request_active or self.dragging:
+                focus_status.set("Não consigo iniciar outra sessão enquanto estou ocupada.")
+                return
+            try:
+                duration = int(focus_minutes.get())
+                pause = int(break_minutes.get())
+            except ValueError:
+                notebook.select(routine_tab)
+                messagebox.showerror("Duração inválida", "Informe durações em minutos.", parent=window)
+                return
+            if not 5 <= duration <= 180 or not 1 <= pause <= 60:
+                notebook.select(routine_tab)
+                messagebox.showerror("Duração inválida", "Foco: 5–180 minutos. Pausa: 1–60 minutos.", parent=window)
+                return
+            save_and_close((focus_goal.get(), duration, pause))
+
         footer = ttk.Frame(outer, style="Autonomy.TFrame")
         footer.pack(fill="x", pady=(14, 0))
 
-        def save_and_close():
+        def save_and_close(focus_params=None):
             try:
                 for value in (quiet_start.get(), quiet_end.get()):
                     time.strptime(value, "%H:%M")
@@ -1246,12 +1361,27 @@ class DesktopPet:
                 notebook.select(behavior_tab)
                 messagebox.showerror("Horário inválido", "Use HH:MM nos horários de silêncio.", parent=window)
                 return
+            try:
+                duration = int(focus_minutes.get())
+                pause = int(break_minutes.get())
+                time.strptime(evening_time.get(), "%H:%M")
+            except ValueError:
+                notebook.select(routine_tab)
+                messagebox.showerror("Valor inválido", "Confira as durações e use HH:MM no horário de encerramento.", parent=window)
+                return
+            if not 5 <= duration <= 180 or not 1 <= pause <= 60:
+                notebook.select(routine_tab)
+                messagebox.showerror("Duração inválida", "Foco: 5–180 minutos. Pausa: 1–60 minutos.", parent=window)
+                return
             updated = dict(self.settings)
             updated.update(
                 mode=mode.get(), quiet_start=quiet_start.get(), quiet_end=quiet_end.get(),
                 memories=memory_items, reminders=reminder_items, apps=app_items,
                 auto_speech=speech.get(), observe_apps=observe.get(), auto_sit=auto_sit.get(),
                 peekaboo=peekaboo.get(),
+                focus_minutes=duration, break_minutes=pause,
+                routine_greeting=routine_greeting.get(),
+                routine_evening=routine_evening.get(), evening_time=evening_time.get(),
             )
             if not save_settings(updated):
                 messagebox.showerror("Erro ao salvar", "Não consegui salvar as preferências.", parent=window)
@@ -1262,10 +1392,21 @@ class DesktopPet:
             self.auto_sit_var.set(auto_sit.get())
             self.peekaboo_var.set(peekaboo.get())
             window.destroy()
-            self.show_bubble("Preferências atualizadas.", duration=2500)
+            if focus_params:
+                self.start_focus(*focus_params)
+            else:
+                self.show_bubble("Preferências atualizadas.", duration=2500)
 
         ttk.Button(footer, text="Cancelar", style="Secondary.TButton", command=window.destroy).pack(side="right")
         ttk.Button(footer, text="Salvar alterações", style="Primary.TButton", command=save_and_close).pack(side="right", padx=(0, 8))
+        if selected_tab == "routine":
+            notebook.select(routine_tab)
+        elif selected_tab == "memory":
+            notebook.select(memory_tab)
+        elif selected_tab == "reminder":
+            notebook.select(reminder_tab)
+        elif selected_tab == "apps":
+            notebook.select(apps_tab)
         window.bind("<Escape>", lambda _event: window.destroy())
         window.bind("<Control-Return>", lambda _event: save_and_close())
 
@@ -1282,13 +1423,95 @@ class DesktopPet:
         due = []
         for item in self.settings.get("reminders", []):
             parsed = valid_reminder_time(item.get("at")) if isinstance(item, dict) else None
-            if parsed and not item.get("done") and parsed.timestamp() <= now and not self._is_quiet_time():
+            if (parsed and not item.get("done") and parsed.timestamp() <= now
+                    and not self._is_quiet_time() and self.focus_mode == "idle"):
                 item["done"] = True
                 due.append(item.get("text", "Você tem um lembrete."))
         if due:
             save_settings(self.settings)
             self.show_bubble("Lembrete: " + "; ".join(due), duration=12000)
         self.root.after(15000, self.check_reminders)
+
+    def show_start_greeting(self):
+        if self._closing or self._routine_greeted or self._is_quiet_time():
+            return
+        self._routine_greeted = True
+        hour = datetime.now().astimezone().hour
+        if hour < 12:
+            greeting = "Bom dia! Qual é sua prioridade de hoje?"
+        elif hour < 18:
+            greeting = "Oi! Quer escolher uma prioridade para hoje?"
+        else:
+            greeting = "Boa noite! Espero que seu dia tenha ido bem."
+        self.show_bubble(greeting, duration=7000)
+
+    def check_daily_routine(self):
+        if self._closing:
+            return
+        now = datetime.now().astimezone()
+        today = now.date().isoformat()
+        if (self.settings.get("routine_evening")
+                and self.settings.get("last_evening_date") != today
+                and now.strftime("%H:%M") >= self.settings.get("evening_time", "20:30")
+                and not self._is_quiet_time() and self.focus_mode == "idle"):
+            self.settings["last_evening_date"] = today
+            save_settings(self.settings)
+            self.show_bubble("Hora de encerrar: confira seus lembretes e descanse um pouco.", duration=9000)
+        self.root.after(30000, self.check_daily_routine)
+
+    def start_focus(self, goal, focus_minutes, break_minutes):
+        if self.focus_mode != "idle":
+            self.show_bubble("Já estamos em uma sessão de foco ou pausa.", duration=3500)
+            return False
+        if self.ai_request_active or self.dragging:
+            self.show_bubble("Termino o que estou fazendo e já começamos.", duration=3500)
+            return False
+        self.focus_goal = goal.strip() or "sua prioridade"
+        self.focus_minutes = int(focus_minutes)
+        self.break_minutes = int(break_minutes)
+        self.focus_mode = "focus"
+        self.state = "focused"
+        self.sit_win_id = None
+        self.show_bubble(
+            f"Foco por {self.focus_minutes} min: {self.focus_goal}", duration=6500
+        )
+        self._focus_job = self.root.after(self.focus_minutes * 60_000, self.finish_focus)
+        return True
+
+    def finish_focus(self):
+        self._focus_job = None
+        if self._closing or self.focus_mode != "focus":
+            return
+        self.focus_mode = "break"
+        self.state = "sitting"  # Usa a animação de descanso que já existe.
+        self.show_bubble(
+            f"Boa! Foco concluído. Descanse por {self.break_minutes} min: olhe para longe e se alongue.",
+            duration=12_000,
+        )
+        self._focus_job = self.root.after(self.break_minutes * 60_000, self.finish_break)
+
+    def finish_break(self):
+        self._focus_job = None
+        if self._closing or self.focus_mode != "break":
+            return
+        self.focus_mode = "idle"
+        self.state = "walk"
+        self.show_bubble("Pausa encerrada! Mandou bem — quando quiser, começamos outra sessão.", duration=7000)
+        self.focus_goal = ""
+
+    def stop_focus(self):
+        if self.focus_mode == "idle":
+            return
+        if self._focus_job is not None:
+            try:
+                self.root.after_cancel(self._focus_job)
+            except tk.TclError:
+                pass
+            self._focus_job = None
+        self.focus_mode = "idle"
+        self.focus_goal = ""
+        self.state = "walk"
+        self.show_bubble("Sessão encerrada. Vamos no seu ritmo.", duration=4500)
 
     def _matching_app(self, question):
         normalized = question.lower()

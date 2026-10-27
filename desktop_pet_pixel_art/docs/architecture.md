@@ -24,10 +24,12 @@
 
 As memórias explícitas são adicionadas ao contexto enviado ao modelo local. O seletor de apps lê lançadores `*.desktop` dos diretórios XDG de aplicações; comandos são divididos em argumentos e executados sem shell.
 
+O modo de foco usa temporizadores Tkinter: enquanto a sessão ou a pausa está ativa, as falas espontâneas, observações de apps e lembretes aguardam. A pausa reaproveita a animação de descanso existente. As rotinas de boas-vindas e encerramento são opcionais e dependem de a aplicação estar aberta.
+
 ## Dados do usuário
 
 - `~/.desktop_pet_history.json`: histórico curto de conversa.
-- `~/.config/desktop_pet/settings.json`: modo, preferências, horários, memórias, lembretes e apps cadastrados.
+- `~/.config/desktop_pet/settings.json`: modo, preferências, horários, rotinas, foco, memórias, lembretes e apps cadastrados.
 
 Os lembretes são verificados pelo próprio processo da Nova. Eles são mostrados quando o app está em execução e não estão no horário silencioso.
 
