@@ -34,13 +34,24 @@ import logging
 import math
 import queue
 import random
+import shlex
+import subprocess
 import threading
 import time
 import tkinter as tk
 import webbrowser
 from tkinter import messagebox
+from tkinter import ttk
 
 from animation import load_video_frames
+from autonomy import (
+    is_quiet_now,
+    find_installed_apps,
+    load_settings,
+    resolve_app_command,
+    save_settings,
+    valid_reminder_time,
+)
 from assistant_actions import current_date_answer, is_open_calendar_request
 from calendar_view import open_calendar_window
 from config import (
@@ -85,6 +96,7 @@ except ImportError:
 class DesktopPet:
     def __init__(self):
         self.history = load_history()
+        self.settings = load_settings()
         self.x11 = X11Helper()
         self.shape_supported = None
 
@@ -163,12 +175,19 @@ class DesktopPet:
         self.label.bind("<Double-Button-1>", self.ask_menu)
         self.label.bind("<Button-3>", self.show_menu)
 
-        self.behind_var = tk.BooleanVar(value=False)
-        self.stay_in_place_var = tk.BooleanVar(value=False)
-        self.auto_speech_var = tk.BooleanVar(value=True)
-        self.observe_apps_var = tk.BooleanVar(value=True)
-        self.peekaboo_var = tk.BooleanVar(value=False)
-        self.auto_sit_var = tk.BooleanVar(value=True)
+        self.behind_var = tk.BooleanVar(value=self.settings.get("behind", False))
+        self.stay_in_place_var = tk.BooleanVar(value=self.settings.get("stay_in_place", False))
+        defaults = {
+            "quietinha": (False, False, False, False),
+            "companhia": (True, True, False, True),
+            "proativa": (True, True, True, True),
+        }[self.settings["mode"]]
+        self.auto_speech_var = tk.BooleanVar(value=self.settings.get("auto_speech", defaults[0]))
+        self.observe_apps_var = tk.BooleanVar(value=self.settings.get("observe_apps", defaults[1]))
+        self.peekaboo_var = tk.BooleanVar(value=self.settings.get("peekaboo", defaults[2]))
+        self.auto_sit_var = tk.BooleanVar(value=self.settings.get("auto_sit", defaults[3]))
+        if self.behind_var.get():
+            self.toggle_behind_mode()
 
         self._context_popup = None
 
@@ -180,6 +199,7 @@ class DesktopPet:
         self.root.after(random.randint(15000, 30000), self.observe_apps)
         self.root.after(random.randint(30000, 60000), self.peekaboo)
         self.root.after(random.randint(20000, 40000), self.maybe_sit)
+        self.root.after(15000, self.check_reminders)
 
     # ---------- geometria ----------
     def set_window_height(self, new_height):
@@ -478,13 +498,18 @@ class DesktopPet:
         )
 
     def random_speech(self):
-        if self.auto_speech_var.get() and not self.busy and not self.is_covered():
+        if (self.auto_speech_var.get() and not self._is_quiet_time()
+                and not self.busy and not self.is_covered()):
             self.show_bubble(random.choice(SPEECH_LINES), duration=3000)
-        self.root.after(random.randint(15000, 30000), self.random_speech)
+        interval = (30000, 60000) if self.settings["mode"] == "proativa" else (90000, 150000)
+        self.root.after(random.randint(*interval), self.random_speech)
+
+    def _is_quiet_time(self):
+        return is_quiet_now(self.settings.get("quiet_start"), self.settings.get("quiet_end"))
 
     # ---------- observar apps abertos ----------
     def observe_apps(self):
-        if (self.observe_apps_var.get() and not self.busy and self.x11.ok
+        if (self.observe_apps_var.get() and not self._is_quiet_time() and not self.busy and self.x11.ok
             and self.state != "sitting" and not self.is_covered()):
             info = self.x11.get_active_window_info()
             if info:
@@ -499,11 +524,14 @@ class DesktopPet:
                     comment = random.choice(GENERIC_COMMENTS)
                 if comment:
                     self.show_bubble(comment, duration=2800)
-        self.root.after(random.randint(25000, 50000), self.observe_apps)
+        interval = (45000, 90000) if self.settings["mode"] == "proativa" else (90000, 180000)
+        self.root.after(random.randint(*interval), self.observe_apps)
 
     # ---------- modo permanente "atrás das janelas" ----------
     def toggle_behind_mode(self):
         self.behind_mode = self.behind_var.get()
+        if hasattr(self, "settings"):
+            self.persist_preferences()
         try:
             if self.behind_mode:
                 self.root.attributes("-topmost", False)
@@ -516,10 +544,12 @@ class DesktopPet:
             pass
 
     def toggle_peekaboo(self):
+        self.persist_preferences()
         if not self.peekaboo_var.get() and self._hidden:
             self._reappear()
 
     def toggle_auto_sit(self):
+        self.persist_preferences()
         if not self.auto_sit_var.get() and self.state == "sitting":
             self._stand_up("Vou deixar as janelas em paz!")
 
@@ -539,7 +569,7 @@ class DesktopPet:
 
     # ---------- sumir atrás das janelas (peekaboo temporário) ----------
     def peekaboo(self):
-        if (self.peekaboo_var.get() and not self.behind_mode and not self.dragging and not self.busy
+        if (self.peekaboo_var.get() and not self._is_quiet_time() and not self.behind_mode and not self.dragging and not self.busy
                 and not self._hidden and self.state != "sitting"):
             self._hidden = True
             try:
@@ -562,7 +592,7 @@ class DesktopPet:
 
     # ---------- sentar cansada em cima de uma janela ----------
     def maybe_sit(self):
-        if (self.auto_sit_var.get() and not self.stay_in_place_var.get()
+        if (self.auto_sit_var.get() and not self._is_quiet_time() and not self.stay_in_place_var.get()
                 and not self.dragging and not self.busy and self.state == "walk"
                 and self.x11.ok and random.random() < 0.7):
             windows = self.x11.get_open_windows(exclude_win_id=self.root.winfo_id())
@@ -727,6 +757,7 @@ class DesktopPet:
 
         action_button("✦  Perguntar", self.ask_menu, primary=True)
         action_button("▦  Calendário", self.show_calendar)
+        action_button("⚙  Autonomia e preferências", self.open_autonomy_settings)
 
         more = tk.Frame(panel, bg="#F5F6FA")
         expanded = {"value": False}
@@ -768,12 +799,13 @@ class DesktopPet:
             ).pack(fill="x")
 
         check_option("Andar atrás das janelas", self.behind_var, self.toggle_behind_mode)
-        check_option("Ficar parada aqui", self.stay_in_place_var)
-        check_option("Falas espontâneas", self.auto_speech_var)
-        check_option("Comentários sobre apps", self.observe_apps_var)
+        check_option("Ficar parada aqui", self.stay_in_place_var, self.persist_preferences)
+        check_option("Falas espontâneas", self.auto_speech_var, self.persist_preferences)
+        check_option("Comentários sobre apps", self.observe_apps_var, self.persist_preferences)
         check_option("Sumir atrás das janelas", self.peekaboo_var, self.toggle_peekaboo)
         check_option("Sentar em janelas", self.auto_sit_var, self.toggle_auto_sit)
         more_action("Esquecer conversa", self.forget_history)
+        more_action("Apagar memórias salvas", self.forget_memories)
         more_action("Fechar Nova", self.close_app)
 
         popup.update_idletasks()
@@ -805,6 +837,484 @@ class DesktopPet:
 
     def show_calendar(self):
         open_calendar_window(self.root)
+
+    def persist_preferences(self):
+        self.settings.update(
+            mode=self.settings.get("mode", "companhia"),
+            behind=self.behind_var.get(),
+            stay_in_place=self.stay_in_place_var.get(),
+            auto_speech=self.auto_speech_var.get(),
+            observe_apps=self.observe_apps_var.get(),
+            peekaboo=self.peekaboo_var.get(),
+            auto_sit=self.auto_sit_var.get(),
+        )
+        save_settings(self.settings)
+
+    def open_autonomy_settings(self):
+        window = tk.Toplevel(self.root)
+        window.title("Autonomia da Nova")
+        window.transient(self.root)
+        window.attributes("-topmost", True)
+        window.geometry("620x640")
+        window.minsize(560, 580)
+        window.configure(bg="#E3E8F0")
+
+        style = ttk.Style(window)
+        style.configure("Autonomy.TFrame", background="#E3E8F0")
+        style.configure("Card.TFrame", background="#F5F7FA")
+        style.configure("Title.TLabel", background="#E3E8F0", foreground="#202B45", font=("TkDefaultFont", 16, "bold"))
+        style.configure("Subtitle.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
+        style.configure("CardTitle.TLabel", background="#F5F7FA", foreground="#26344A", font=("TkDefaultFont", 10, "bold"))
+        style.configure("Hint.TLabel", background="#F5F7FA", foreground="#58667C", font=("TkDefaultFont", 9))
+        style.configure("PageHint.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
+        style.configure("ModeHint.TLabel", background="#F5F7FA", foreground="#58667C", font=("TkDefaultFont", 8))
+        style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
+        style.configure("Secondary.TButton", padding=(12, 8))
+        style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
+        style.configure("TNotebook", background="#E3E8F0", borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(14, 8), font=("TkDefaultFont", 9))
+
+        outer = ttk.Frame(window, style="Autonomy.TFrame", padding=(22, 18, 22, 14))
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, text="Autonomia da Nova", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            outer,
+            text="Ajuste o ritmo, a rotina e o que ela pode lembrar ou fazer.",
+            style="Subtitle.TLabel",
+        ).pack(anchor="w", pady=(3, 14))
+
+        notebook = ttk.Notebook(outer)
+        notebook.pack(fill="both", expand=True)
+        behavior_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
+        memory_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
+        reminder_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
+        apps_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
+        notebook.add(behavior_tab, text="Comportamento")
+        notebook.add(memory_tab, text="Memórias")
+        notebook.add(reminder_tab, text="Lembretes")
+        notebook.add(apps_tab, text="Aplicativos")
+
+        mode = tk.StringVar(value=self.settings.get("mode", "companhia"))
+        quiet_start = tk.StringVar(value=self.settings.get("quiet_start", "22:00"))
+        quiet_end = tk.StringVar(value=self.settings.get("quiet_end", "08:00"))
+        speech = tk.BooleanVar(value=self.auto_speech_var.get())
+        observe = tk.BooleanVar(value=self.observe_apps_var.get())
+        auto_sit = tk.BooleanVar(value=self.auto_sit_var.get())
+        peekaboo = tk.BooleanVar(value=self.peekaboo_var.get())
+        memory_items = list(self.settings.get("memories", []))
+        reminder_items = list(self.settings.get("reminders", []))
+        app_items = list(self.settings.get("apps", []))
+
+        def card(parent, title, hint=None):
+            frame = ttk.Frame(parent, style="Card.TFrame", padding=14)
+            frame.pack(fill="x", pady=(0, 12))
+            ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor="w")
+            if hint:
+                ttk.Label(frame, text=hint, style="Hint.TLabel", wraplength=500).pack(anchor="w", pady=(3, 8))
+            return frame
+
+        mode_card = card(behavior_tab, "Como a Nova deve se comportar?", "Você pode personalizar as opções abaixo depois de escolher um modo.")
+        mode_row = ttk.Frame(mode_card, style="Card.TFrame")
+        mode_row.pack(fill="x", pady=(2, 0))
+        modes = (
+            ("quietinha", "Quietinha", "Fica mais discreta"),
+            ("companhia", "Companhia", "Interage de vez em quando"),
+            ("proativa", "Proativa", "Toma mais iniciativas"),
+        )
+        def choose_mode(value):
+            presets = {
+                "quietinha": (False, False, False, False),
+                "companhia": (True, True, True, False),
+                "proativa": (True, True, True, True),
+            }
+            speech.set(presets[value][0])
+            observe.set(presets[value][1])
+            auto_sit.set(presets[value][2])
+            peekaboo.set(presets[value][3])
+
+        for column, (value, label, description) in enumerate(modes):
+            option = ttk.Frame(mode_row, style="Card.TFrame", padding=(0, 2))
+            option.grid(row=0, column=column, sticky="w", padx=(0, 18))
+            ttk.Radiobutton(
+                option, text=label, value=value, variable=mode,
+                command=lambda selected=value: choose_mode(selected),
+            ).pack(anchor="w")
+            ttk.Label(option, text=description, style="ModeHint.TLabel").pack(anchor="w", padx=(22, 0))
+
+        behavior_card = card(behavior_tab, "Iniciativas", "As iniciativas automáticas respeitam o horário de silêncio.")
+        ttk.Checkbutton(behavior_card, text="Falas espontâneas", variable=speech).pack(anchor="w", pady=3)
+        ttk.Checkbutton(behavior_card, text="Comentários sobre o app ativo", variable=observe).pack(anchor="w", pady=3)
+        ttk.Checkbutton(behavior_card, text="Sentar em janelas", variable=auto_sit).pack(anchor="w", pady=3)
+        ttk.Checkbutton(behavior_card, text="Brincar de sumir atrás das janelas", variable=peekaboo).pack(anchor="w", pady=3)
+
+        quiet_card = card(behavior_tab, "Horário de silêncio", "A Nova pausa falas, observações e lembretes durante esse período.")
+        quiet_row = ttk.Frame(quiet_card, style="Card.TFrame")
+        quiet_row.pack(anchor="w")
+        ttk.Label(quiet_row, text="Das").pack(side="left")
+        ttk.Entry(quiet_row, textvariable=quiet_start, width=8, justify="center", style="Autonomy.TEntry").pack(side="left", padx=(8, 16), ipady=4)
+        ttk.Label(quiet_row, text="às").pack(side="left")
+        ttk.Entry(quiet_row, textvariable=quiet_end, width=8, justify="center", style="Autonomy.TEntry").pack(side="left", padx=8, ipady=4)
+        ttk.Label(quiet_row, text="HH:MM").pack(side="left", padx=(4, 0))
+
+        def setup_list(parent, items, format_item, empty_text):
+            ttk.Label(parent, text=empty_text, style="PageHint.TLabel").pack(anchor="w", pady=(0, 8))
+            list_frame = ttk.Frame(parent, style="Card.TFrame", padding=1)
+            list_frame.pack(fill="both", expand=True)
+            listing = tk.Listbox(
+                list_frame, height=10, activestyle="none", relief="flat", bd=0,
+                highlightthickness=0, selectforeground="#202B45",
+                bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 10),
+                selectbackground="#C7D2EE", selectmode="browse",
+            )
+            listing.pack(fill="both", expand=True, padx=8, pady=7)
+            def refresh():
+                listing.delete(0, "end")
+                for item in items:
+                    listing.insert("end", format_item(item))
+            def remove_selected():
+                selected = listing.curselection()
+                if selected:
+                    del items[selected[0]]
+                    refresh()
+            refresh()
+            return listing, refresh, remove_selected
+
+        memory_card = card(memory_tab, "O que a Nova deve lembrar?", "Só use informações que você queira manter. Elas entram no contexto da IA local.")
+        memory_entry = tk.StringVar()
+        memory_form = ttk.Frame(memory_card, style="Card.TFrame")
+        memory_form.pack(fill="x")
+        memory_input = ttk.Entry(memory_form, textvariable=memory_entry, style="Autonomy.TEntry")
+        memory_input.pack(side="left", fill="x", expand=True, ipady=5)
+        memory_list, refresh_memories, remove_memory = setup_list(
+            memory_tab, memory_items, lambda item: item,
+            "Suas memórias ficam neste computador e você pode removê-las quando quiser.",
+        )
+        def add_memory():
+            value = memory_entry.get().strip()
+            if value:
+                memory_items.append(value)
+                memory_entry.set("")
+                refresh_memories()
+        ttk.Button(memory_form, text="Adicionar", style="Primary.TButton", command=add_memory).pack(side="left", padx=(8, 0))
+        memory_input.bind("<Return>", lambda _event: add_memory())
+        ttk.Button(memory_tab, text="Remover selecionada", style="Secondary.TButton", command=remove_memory).pack(anchor="e", pady=(10, 0))
+
+        reminder_card = card(reminder_tab, "Criar lembrete", "A data e hora seguem o relógio local deste computador.")
+        reminder_form = ttk.Frame(reminder_card, style="Card.TFrame")
+        reminder_form.pack(fill="x")
+        reminder_date = tk.StringVar()
+        reminder_time = tk.StringVar()
+        reminder_text = tk.StringVar()
+        ttk.Label(reminder_form, text="Data").grid(row=0, column=0, sticky="w")
+        ttk.Entry(reminder_form, textvariable=reminder_date, width=14, style="Autonomy.TEntry").grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(3, 8), ipady=4)
+        ttk.Label(reminder_form, text="Hora").grid(row=0, column=1, sticky="w")
+        ttk.Entry(reminder_form, textvariable=reminder_time, width=9, style="Autonomy.TEntry").grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(3, 8), ipady=4)
+        ttk.Label(reminder_form, text="Lembrete").grid(row=0, column=2, sticky="w")
+        ttk.Entry(reminder_form, textvariable=reminder_text, style="Autonomy.TEntry").grid(row=1, column=2, sticky="ew", pady=(3, 8), ipady=4)
+        reminder_form.columnconfigure(2, weight=1)
+        reminder_list, refresh_reminders, remove_reminder = setup_list(
+            reminder_tab, reminder_items,
+            lambda item: f"{item.get('at', '')[:16].replace('T', ' ')}   ·   {item.get('text', '')}",
+            "Quando vencer, a Nova mostra o lembrete em um balão.",
+        )
+        def add_reminder():
+            value = f"{reminder_date.get().strip()}T{reminder_time.get().strip()}"
+            parsed = valid_reminder_time(value)
+            text = reminder_text.get().strip()
+            if not parsed or not text:
+                messagebox.showerror("Confira o lembrete", "Informe uma data AAAA-MM-DD, horário HH:MM e texto.", parent=window)
+                return
+            reminder_items.append({"at": parsed.isoformat(timespec="minutes"), "text": text, "done": False})
+            reminder_date.set("")
+            reminder_time.set("")
+            reminder_text.set("")
+            refresh_reminders()
+        ttk.Button(reminder_form, text="Adicionar", style="Primary.TButton", command=add_reminder).grid(row=2, column=0, columnspan=3, sticky="e")
+        ttk.Button(reminder_tab, text="Remover selecionado", style="Secondary.TButton", command=remove_reminder).pack(anchor="e", pady=(10, 0))
+
+        app_card = card(
+            apps_tab,
+            "Permitir que a Nova abra um app",
+            "Cadastre apenas apps que você reconhece. A Nova pede confirmação antes de abrir.",
+        )
+        picker_row = ttk.Frame(app_card, style="Card.TFrame")
+        picker_row.pack(fill="x", pady=(0, 10))
+        app_picker_button = ttk.Button(
+            picker_row, text="Buscar app instalado…", style="Secondary.TButton"
+        )
+        app_picker_button.pack(side="left")
+        ttk.Label(
+            picker_row, text="ou preencha os dados manualmente abaixo",
+            style="Hint.TLabel",
+        ).pack(side="left", padx=(10, 0))
+        app_form = ttk.Frame(app_card, style="Card.TFrame")
+        app_form.pack(fill="x")
+        app_name = tk.StringVar()
+        app_command = tk.StringVar()
+        ttk.Label(app_form, text="Nome").grid(row=0, column=0, sticky="w")
+        ttk.Entry(app_form, textvariable=app_name, width=18, style="Autonomy.TEntry").grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(3, 7), ipady=4)
+        ttk.Label(app_form, text="Comando executável").grid(row=0, column=1, sticky="w")
+        ttk.Entry(app_form, textvariable=app_command, style="Autonomy.TEntry").grid(row=1, column=1, sticky="ew", pady=(3, 7), ipady=4)
+        app_form.columnconfigure(1, weight=1)
+        ttk.Label(
+            app_form,
+            text="Exemplos: firefox --new-window  ·  code .  ·  /usr/bin/gimp",
+            style="Hint.TLabel",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        app_error = tk.StringVar()
+        app_error_label = ttk.Label(
+            app_form, textvariable=app_error, foreground="#B42318",
+            background="#F5F7FA", wraplength=440,
+        )
+        app_error_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        app_buttons = ttk.Frame(app_form, style="Card.TFrame")
+        app_buttons.grid(row=4, column=0, columnspan=2, sticky="ew")
+        editing_app = {"index": None}
+        app_list, refresh_apps, remove_app = setup_list(
+            apps_tab, app_items,
+            lambda item: f"{item.get('name', '')}   ·   {item.get('command', '')}",
+            "Selecione um app para editar ou remover. Testar comando abre o app imediatamente.",
+        )
+        def clear_app_form():
+            editing_app["index"] = None
+            app_name.set("")
+            app_command.set("")
+            app_error.set("")
+            app_error_label.configure(foreground="#B42318")
+            save_app_button.configure(text="Adicionar app")
+            app_list.selection_clear(0, "end")
+
+        def select_app(_event=None):
+            selected = app_list.curselection()
+            if not selected:
+                return
+            index = selected[0]
+            editing_app["index"] = index
+            app_name.set(app_items[index]["name"])
+            app_command.set(app_items[index]["command"])
+            app_error.set("")
+            save_app_button.configure(text="Salvar edição")
+
+        def open_app_picker():
+            picker = tk.Toplevel(window)
+            picker.title("Selecionar aplicativo instalado")
+            picker.transient(window)
+            picker.attributes("-topmost", True)
+            picker.geometry("460x500")
+            picker.minsize(380, 360)
+            picker.configure(bg="#E3E8F0")
+            content = ttk.Frame(picker, style="Autonomy.TFrame", padding=18)
+            content.pack(fill="both", expand=True)
+            ttk.Label(content, text="Selecionar aplicativo", style="Title.TLabel").pack(anchor="w")
+            ttk.Label(
+                content,
+                text="Pesquise entre os aplicativos instalados neste computador.",
+                style="Subtitle.TLabel",
+            ).pack(anchor="w", pady=(3, 12))
+            query = tk.StringVar()
+            search_entry = ttk.Entry(content, textvariable=query, style="Autonomy.TEntry")
+            search_entry.pack(fill="x", ipady=5, pady=(0, 10))
+            result_frame = ttk.Frame(content, style="Card.TFrame", padding=1)
+            result_frame.pack(fill="both", expand=True)
+            result_list = tk.Listbox(
+                result_frame, activestyle="none", relief="flat", bd=0,
+                highlightthickness=0, selectforeground="#202B45",
+                bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 10),
+                selectbackground="#C7D2EE", selectmode="browse",
+            )
+            scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=result_list.yview)
+            result_list.configure(yscrollcommand=scrollbar.set)
+            result_list.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=7)
+            scrollbar.pack(side="right", fill="y", padx=(0, 5), pady=7)
+            feedback = tk.StringVar()
+            ttk.Label(content, textvariable=feedback, style="PageHint.TLabel").pack(anchor="w", pady=(8, 0))
+            installed_apps = find_installed_apps()
+            visible_apps = []
+
+            def filter_results(*_args):
+                needle = query.get().casefold().strip()
+                visible_apps.clear()
+                visible_apps.extend(
+                    item for item in installed_apps
+                    if not needle or needle in f"{item['name']} {item['generic_name']}".casefold()
+                )
+                result_list.delete(0, "end")
+                for item in visible_apps:
+                    suffix = f"  ·  {item['generic_name']}" if item["generic_name"] else ""
+                    result_list.insert("end", item["name"] + suffix)
+                if visible_apps:
+                    feedback.set(f"{len(visible_apps)} aplicativo(s) encontrado(s).")
+                else:
+                    feedback.set("Nenhum app encontrado. Você ainda pode preencher o formulário manualmente.")
+
+            def use_selected_app(_event=None):
+                selected = result_list.curselection()
+                if not selected:
+                    feedback.set("Selecione um aplicativo da lista.")
+                    return
+                app = visible_apps[selected[0]]
+                app_name.set(app["name"])
+                app_command.set(app["command"])
+                app_error.set("")
+                editing_app["index"] = None
+                save_app_button.configure(text="Adicionar app")
+                app_list.selection_clear(0, "end")
+                picker.destroy()
+
+            query.trace_add("write", filter_results)
+            filter_results()
+            result_list.bind("<Double-Button-1>", use_selected_app)
+            picker_buttons = ttk.Frame(content, style="Autonomy.TFrame")
+            picker_buttons.pack(fill="x", pady=(12, 0))
+            ttk.Button(picker_buttons, text="Cancelar", style="Secondary.TButton", command=picker.destroy).pack(side="right")
+            ttk.Button(picker_buttons, text="Usar selecionado", style="Primary.TButton", command=use_selected_app).pack(side="right", padx=(0, 8))
+            picker.bind("<Return>", use_selected_app)
+            picker.bind("<Escape>", lambda _event: picker.destroy())
+            picker.grab_set()
+            search_entry.focus_set()
+
+        app_picker_button.configure(command=open_app_picker)
+
+        def validate_app_form():
+            name = app_name.get().strip()
+            command = app_command.get().strip()
+            try:
+                argv = resolve_app_command(command)
+            except ValueError as exc:
+                app_error_label.configure(foreground="#B42318")
+                app_error.set(str(exc))
+                return None
+            if not name:
+                app_error_label.configure(foreground="#B42318")
+                app_error.set("Informe um nome para identificar este aplicativo.")
+                return None
+            for index, item in enumerate(app_items):
+                if index != editing_app["index"] and item["name"].casefold() == name.casefold():
+                    app_error_label.configure(foreground="#B42318")
+                    app_error.set("Já existe um app com esse nome. Escolha outro nome.")
+                    return None
+            app_error_label.configure(foreground="#B42318")
+            app_error.set("")
+            return name, command, argv
+
+        def save_app():
+            values = validate_app_form()
+            if not values:
+                return
+            name, command, _argv = values
+            index = editing_app["index"]
+            if index is None:
+                app_items.append({"name": name, "command": command})
+            else:
+                app_items[index] = {"name": name, "command": command}
+            refresh_apps()
+            clear_app_form()
+
+        def test_app_command():
+            values = validate_app_form()
+            if not values:
+                return
+            name, _command, argv = values
+            try:
+                subprocess.Popen(argv, close_fds=True)
+            except (OSError, ValueError) as exc:
+                app_error_label.configure(foreground="#B42318")
+                app_error.set(f"Não consegui iniciar {name}: {exc}")
+                return
+            app_error_label.configure(foreground="#287247")
+            app_error.set(f"Comando enviado ao sistema para abrir {name}.")
+
+        def remove_selected_app():
+            remove_app()
+            clear_app_form()
+
+        app_list.bind("<<ListboxSelect>>", select_app)
+        save_app_button = ttk.Button(app_buttons, text="Adicionar app", style="Primary.TButton", command=save_app)
+        save_app_button.pack(side="right")
+        ttk.Button(app_buttons, text="Testar comando", style="Secondary.TButton", command=test_app_command).pack(side="right", padx=(0, 8))
+        ttk.Button(app_buttons, text="Novo app", style="Secondary.TButton", command=clear_app_form).pack(side="left")
+        ttk.Button(apps_tab, text="Remover selecionado", style="Secondary.TButton", command=remove_selected_app).pack(anchor="e", pady=(10, 0))
+
+        footer = ttk.Frame(outer, style="Autonomy.TFrame")
+        footer.pack(fill="x", pady=(14, 0))
+
+        def save_and_close():
+            try:
+                for value in (quiet_start.get(), quiet_end.get()):
+                    time.strptime(value, "%H:%M")
+            except ValueError:
+                notebook.select(behavior_tab)
+                messagebox.showerror("Horário inválido", "Use HH:MM nos horários de silêncio.", parent=window)
+                return
+            updated = dict(self.settings)
+            updated.update(
+                mode=mode.get(), quiet_start=quiet_start.get(), quiet_end=quiet_end.get(),
+                memories=memory_items, reminders=reminder_items, apps=app_items,
+                auto_speech=speech.get(), observe_apps=observe.get(), auto_sit=auto_sit.get(),
+                peekaboo=peekaboo.get(),
+            )
+            if not save_settings(updated):
+                messagebox.showerror("Erro ao salvar", "Não consegui salvar as preferências.", parent=window)
+                return
+            self.settings = updated
+            self.auto_speech_var.set(speech.get())
+            self.observe_apps_var.set(observe.get())
+            self.auto_sit_var.set(auto_sit.get())
+            self.peekaboo_var.set(peekaboo.get())
+            window.destroy()
+            self.show_bubble("Preferências atualizadas.", duration=2500)
+
+        ttk.Button(footer, text="Cancelar", style="Secondary.TButton", command=window.destroy).pack(side="right")
+        ttk.Button(footer, text="Salvar alterações", style="Primary.TButton", command=save_and_close).pack(side="right", padx=(0, 8))
+        window.bind("<Escape>", lambda _event: window.destroy())
+        window.bind("<Control-Return>", lambda _event: save_and_close())
+
+    def forget_memories(self):
+        if messagebox.askyesno("Apagar memórias", "Apagar todas as memórias que você salvou?", parent=self.root):
+            self.settings["memories"] = []
+            save_settings(self.settings)
+            self.show_bubble("Apaguei as memórias salvas.", duration=2500)
+
+    def check_reminders(self):
+        if self._closing:
+            return
+        now = time.time()
+        due = []
+        for item in self.settings.get("reminders", []):
+            parsed = valid_reminder_time(item.get("at")) if isinstance(item, dict) else None
+            if parsed and not item.get("done") and parsed.timestamp() <= now and not self._is_quiet_time():
+                item["done"] = True
+                due.append(item.get("text", "Você tem um lembrete."))
+        if due:
+            save_settings(self.settings)
+            self.show_bubble("Lembrete: " + "; ".join(due), duration=12000)
+        self.root.after(15000, self.check_reminders)
+
+    def _matching_app(self, question):
+        normalized = question.lower()
+        if not any(token in normalized for token in ("abrir ", "abra ", "abre ", "iniciar ", "inicie ", "executar ")):
+            return None
+        for app in self.settings.get("apps", []):
+            name = app.get("name", "").strip()
+            if name and name.lower() in normalized:
+                return app
+        return None
+
+    def _confirm_open_app(self, question, app):
+        confirmation = (
+            f"A Nova vai executar este comando:\n\n{app['command']}\n\n"
+            f"Abrir {app['name']} agora?"
+        )
+        if not messagebox.askyesno("Confirmar abertura", confirmation, parent=self.root):
+            return
+        try:
+            argv = resolve_app_command(app["command"])
+            subprocess.Popen(argv, close_fds=True)
+            answer = f"Abri {app['name']}."
+        except (OSError, ValueError) as exc:
+            answer = f"Não consegui abrir {app['name']}: {exc}"
+        self._record_local_interaction(question, answer)
+        self.show_bubble(answer)
 
     def close_app(self):
         self._closing = True
@@ -843,6 +1353,10 @@ class DesktopPet:
             self.show_calendar()
             self.show_bubble(answer)
             return
+        app = self._matching_app(question)
+        if app:
+            self._confirm_open_app(question, app)
+            return
         self.history.append({"role": "user", "content": question})
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
         request_history = list(self.history)
@@ -851,7 +1365,8 @@ class DesktopPet:
         self._show_idea_icon = False
         self._thinking_started_at = time.monotonic()
         self.show_bubble("pensando...", duration=999999)
-        threading.Thread(target=self._ask_worker, args=(request_history,), daemon=True).start()
+        memories = list(self.settings.get("memories", []))
+        threading.Thread(target=self._ask_worker, args=(request_history, memories), daemon=True).start()
 
     def _record_local_interaction(self, question, answer):
         self.history.extend((
@@ -974,9 +1489,9 @@ class DesktopPet:
         self.root.wait_window(dialog)
         return result["question"]
 
-    def _ask_worker(self, history):
+    def _ask_worker(self, history, memories=None):
         try:
-            answer = ask_local_ai(history)
+            answer = ask_local_ai(history, memories=memories)
         except Exception:
             logging.getLogger(__name__).exception("Falha inesperada ao consultar o Ollama")
             answer = "Tive um problema ao consultar a IA. Tente novamente daqui a pouco."

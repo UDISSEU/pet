@@ -56,8 +56,11 @@ def save_history(history, path=HISTORY_PATH):
     return True
 
 
-def ask_local_ai(history, model_name=OLLAMA_MODEL, url=OLLAMA_URL):
+def ask_local_ai(history, model_name=OLLAMA_MODEL, url=OLLAMA_URL, memories=None):
     system_message = f"{SYSTEM_PROMPT}\n\n{current_datetime_context()}"
+    memories = [item.strip() for item in (memories or []) if isinstance(item, str) and item.strip()]
+    if memories:
+        system_message += "\n\nMemórias escolhidas pelo usuário (use apenas quando forem relevantes):\n- " + "\n- ".join(memories)
     messages = [{"role": "system", "content": system_message}] + history
     payload = json.dumps({"model": model_name, "messages": messages, "stream": False}).encode("utf-8")
     request = urllib.request.Request(

@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -11,6 +12,14 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from config import MOVEMENTS_DIR, MOVEMENT_VIDEOS, SYSTEM_PROMPT, resolve_movement_path
+from autonomy import (
+    find_installed_apps,
+    is_quiet_now,
+    load_settings,
+    resolve_app_command,
+    save_settings,
+    valid_reminder_time,
+)
 from desktop_pet import DesktopPet
 import ollama_client
 from ollama_client import ask_local_ai, load_history, save_history
@@ -18,6 +27,70 @@ from x11_helper import X11Helper
 
 
 class TestHelperModules(unittest.TestCase):
+    def test_autonomy_settings_round_trip_and_recover_invalid_data(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            settings = load_settings(path)
+            settings["mode"] = "proativa"
+            settings["memories"] = ["Prefere respostas curtas"]
+            settings["apps"] = [
+                {"name": "Editor", "command": "editor"},
+                {"name": 42, "command": ""},
+            ]
+            self.assertTrue(save_settings(settings, path))
+            self.assertEqual(load_settings(path)["memories"], ["Prefere respostas curtas"])
+            self.assertEqual(load_settings(path)["apps"], [{"name": "Editor", "command": "editor"}])
+            path.write_text("not json", encoding="utf-8")
+            self.assertEqual(load_settings(path)["mode"], "companhia")
+
+    def test_quiet_hours_support_daytime_and_overnight_ranges(self):
+        self.assertTrue(is_quiet_now("09:00", "17:00", datetime(2026, 1, 1, 12, 0)))
+        self.assertFalse(is_quiet_now("09:00", "17:00", datetime(2026, 1, 1, 18, 0)))
+        self.assertTrue(is_quiet_now("22:00", "08:00", datetime(2026, 1, 1, 23, 0)))
+        self.assertTrue(is_quiet_now("22:00", "08:00", datetime(2026, 1, 1, 7, 0)))
+        self.assertFalse(is_quiet_now("22:00", "08:00", datetime(2026, 1, 1, 12, 0)))
+
+    def test_reminder_time_parser_rejects_invalid_dates(self):
+        self.assertIsNotNone(valid_reminder_time("2026-12-31T23:59"))
+        self.assertIsNone(valid_reminder_time("tomorrow"))
+
+    def test_registered_app_matching_requires_an_opening_intent(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {"apps": [{"name": "Editor", "command": "editor"}]}
+        self.assertEqual(pet._matching_app("abrir Editor"), pet.settings["apps"][0])
+        self.assertIsNone(pet._matching_app("o Editor está aberto"))
+
+    def test_app_command_parser_checks_executable_without_using_a_shell(self):
+        command = f'"{sys.executable}" --version'
+        self.assertEqual(resolve_app_command(command), [sys.executable, "--version"])
+        with self.assertRaisesRegex(ValueError, "Não encontrei o executável"):
+            resolve_app_command("aplicativo-que-nao-existe-123")
+        with self.assertRaisesRegex(ValueError, "caractere inválido"):
+            resolve_app_command("programa\x00 --flag")
+
+    def test_installed_app_search_reads_desktop_entries_and_filters_hidden_apps(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            apps_dir = Path(tmpdir) / "applications"
+            apps_dir.mkdir()
+            (apps_dir / "sample.desktop").write_text(
+                "[Desktop Entry]\nType=Application\nName=Sample Editor\n"
+                "GenericName=Text Editor\n"
+                f'Exec="{sys.executable}" --new-window %U\n',
+                encoding="utf-8",
+            )
+            (apps_dir / "hidden.desktop").write_text(
+                "[Desktop Entry]\nType=Application\nName=Hidden App\n"
+                "Exec=python3\nNoDisplay=true\n",
+                encoding="utf-8",
+            )
+
+            results = find_installed_apps("text", [apps_dir])
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["name"], "Sample Editor")
+        self.assertEqual(resolve_app_command(results[0]["command"]), [sys.executable, "--new-window"])
+
+
     def test_system_prompt_uses_nova_name(self):
         self.assertIn("Você é Nova", SYSTEM_PROMPT)
 
@@ -187,6 +260,17 @@ class TestHelperModules(unittest.TestCase):
 
         self.assertEqual(answer, "Olá!")
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 60)
+
+    def test_ask_local_ai_includes_user_selected_memories_in_system_context(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"message": {"content": "Certo."}}
+        ).encode("utf-8")
+        with mock.patch("ollama_client.urllib.request.urlopen", return_value=response) as urlopen:
+            ask_local_ai([], memories=["Prefere respostas curtas"])
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data)
+        self.assertIn("Prefere respostas curtas", payload["messages"][0]["content"])
 
     def test_ask_local_ai_explains_connection_errors(self):
         with mock.patch(
