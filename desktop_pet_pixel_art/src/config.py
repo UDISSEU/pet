@@ -38,6 +38,8 @@ MOVEMENT_VIDEOS = {
     "sleep": "dormindo.mp4",
     "angry": "irritada.mp4",
     "thinking": "Vídeo com balão pensamento.mp4",
+    "curious": "confusa.mp4",
+    "rest": "descansando.mp4",
 }
 
 WIDTH = 140
@@ -55,6 +57,8 @@ VIDEO_FRAME_RATE = 24
 VIDEO_FRAME_INTERVAL_MS = 1000 / VIDEO_FRAME_RATE
 VIDEO_MAX_W = 124
 VIDEO_MAX_H = 176
+VIDEO_DECODE_MAX_W = 248
+VIDEO_DECODE_MAX_H = 352
 VIDEO_REACTION_SECONDS = 2.5
 
 SPEECH_LINES = [

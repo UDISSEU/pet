@@ -209,6 +209,7 @@ class DesktopPet:
         self.root.after(30000, self.check_daily_routine)
         if self.settings.get("routine_greeting"):
             self.root.after(2500, self.show_start_greeting)
+        self.root.after(random.randint(30000, 60000), self.maybe_curious)
 
     # ---------- geometria ----------
     def set_window_height(self, new_height):
@@ -233,6 +234,12 @@ class DesktopPet:
     def _video_for_current_pose(self, now=None):
         if self.state == "focused":
             return "idle"
+        if getattr(self, "focus_mode", "idle") == "break":
+            return "rest"
+        if self.state == "curious":
+            return "curious"
+        if self.state == "celebrating":
+            return "wave"
         if self.state == "sitting":
             return "sleep"
         if self.state == "thinking":
@@ -416,9 +423,12 @@ class DesktopPet:
         now = time.monotonic()
         if hasattr(self, "_ai_results"):
             self._drain_ai_results()
-        elapsed = min(now - self._last_tick_at, 0.1)
+        raw_elapsed = max(0.0, now - self._last_tick_at)
+        elapsed = min(raw_elapsed, 0.1)
         self._last_tick_at = now
-        self.animation_time_ms += elapsed * 1000
+        # O relógio da animação acompanha tempo real para que
+        # os vídeos não fiquem para trás quando um quadro demora a renderizar.
+        self.animation_time_ms += raw_elapsed * 1000
         previous_step = self.step
         self._logic_accumulator += elapsed * 1000
         while self._logic_accumulator >= LOGIC_STEP_MS:
@@ -514,6 +524,19 @@ class DesktopPet:
             self.show_bubble(random.choice(SPEECH_LINES), duration=3000)
         interval = (30000, 60000) if self.settings["mode"] == "proativa" else (90000, 150000)
         self.root.after(random.randint(*interval), self.random_speech)
+
+    def maybe_curious(self):
+        if self._closing:
+            return
+        if (self.state == "walk" and self.focus_mode == "idle" and not self.busy
+                and not self.dragging and not self.bubble_text and random.random() < 0.5):
+            self.state = "curious"
+            self.root.after(3500, self.finish_curious)
+        self.root.after(random.randint(45000, 90000), self.maybe_curious)
+
+    def finish_curious(self):
+        if not self._closing and self.state == "curious":
+            self.state = "walk"
 
     def _is_quiet_time(self):
         return is_quiet_now(self.settings.get("quiet_start"), self.settings.get("quiet_end"))
@@ -1495,9 +1518,14 @@ class DesktopPet:
         if self._closing or self.focus_mode != "break":
             return
         self.focus_mode = "idle"
-        self.state = "walk"
+        self.state = "celebrating"
         self.show_bubble("Pausa encerrada! Mandou bem — quando quiser, começamos outra sessão.", duration=7000)
         self.focus_goal = ""
+        self.root.after(4500, self.finish_celebration)
+
+    def finish_celebration(self):
+        if not self._closing and self.state == "celebrating":
+            self.state = "walk"
 
     def stop_focus(self):
         if self.focus_mode == "idle":

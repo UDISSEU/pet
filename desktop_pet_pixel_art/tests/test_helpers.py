@@ -216,7 +216,7 @@ class TestHelperModules(unittest.TestCase):
         self.assertEqual((pet.x, pet.y), (50.0, 75.0))
         pet.root.geometry.assert_not_called()
 
-    def test_focus_cycle_uses_rest_pose_then_returns_to_walking(self):
+    def test_focus_cycle_uses_rest_pose_then_celebrates_and_returns_to_walking(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet.focus_mode = "idle"
         pet.focus_goal = ""
@@ -236,6 +236,9 @@ class TestHelperModules(unittest.TestCase):
         pet.finish_focus()
         self.assertEqual((pet.focus_mode, pet.state), ("break", "sitting"))
         pet.finish_break()
+        self.assertEqual((pet.focus_mode, pet.state, pet.focus_goal), ("idle", "celebrating", ""))
+        self.assertEqual(pet._video_for_current_pose(), "wave")
+        pet.finish_celebration()
         self.assertEqual((pet.focus_mode, pet.state, pet.focus_goal), ("idle", "walk", ""))
 
     def test_history_handles_invalid_and_valid_json(self):
