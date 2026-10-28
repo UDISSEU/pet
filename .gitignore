@@ -5,3 +5,4 @@ __pycache__/
 *.bak
 *.bak2
 .pytest_cache/
+/desktop_pet_pixel_art.zip
