@@ -1,4 +1,5 @@
 import json
+import queue
 import sys
 import tempfile
 import unittest
@@ -20,10 +21,17 @@ from autonomy import (
     save_settings,
     valid_reminder_time,
 )
+import desktop_pet
 from desktop_pet import DesktopPet
 import ollama_client
 from ollama_client import ask_local_ai, load_history, save_history
 from x11_helper import X11Helper
+
+
+def run_thread_immediately(*, target, args, daemon):
+    thread = mock.Mock()
+    thread.start.side_effect = lambda: target(*args)
+    return thread
 
 
 class TestHelperModules(unittest.TestCase):
@@ -35,11 +43,23 @@ class TestHelperModules(unittest.TestCase):
             settings["memories"] = ["Prefere respostas curtas"]
             settings["apps"] = [
                 {"name": "Editor", "command": "editor"},
+                {
+                    "name": "Google Chrome",
+                    "command": "google-chrome-stable",
+                    "desktop_file": "/usr/share/applications/google-chrome.desktop",
+                },
                 {"name": 42, "command": ""},
             ]
             self.assertTrue(save_settings(settings, path))
             self.assertEqual(load_settings(path)["memories"], ["Prefere respostas curtas"])
-            self.assertEqual(load_settings(path)["apps"], [{"name": "Editor", "command": "editor"}])
+            self.assertEqual(load_settings(path)["apps"], [
+                {"name": "Editor", "command": "editor"},
+                {
+                    "name": "Google Chrome",
+                    "command": "google-chrome-stable",
+                    "desktop_file": "/usr/share/applications/google-chrome.desktop",
+                },
+            ])
             path.write_text("not json", encoding="utf-8")
             self.assertEqual(load_settings(path)["mode"], "companhia")
 
@@ -71,6 +91,253 @@ class TestHelperModules(unittest.TestCase):
         pet.settings = {"apps": [{"name": "Editor", "command": "editor"}]}
         self.assertEqual(pet._matching_app("abrir Editor"), pet.settings["apps"][0])
         self.assertIsNone(pet._matching_app("o Editor está aberto"))
+
+    def test_app_open_intent_recognizes_portuguese_verb_forms_case_insensitively(self):
+        app = {
+            "name": "Sober",
+            "command": "sober",
+            "desktop_file": "/apps/sober.desktop",
+        }
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {"apps": [app]}
+
+        for request in (
+            "abri Sober",
+            "ABRI Sober",
+            "Abra Sober",
+            "ABRA Sober",
+            "execute Sober",
+            "EXECUTE Sober",
+            "executar Sober",
+            "Executa Sober",
+            "executem Sober",
+        ):
+            with self.subTest(request=request):
+                self.assertTrue(DesktopPet._is_app_open_request(request))
+                self.assertEqual(pet._matching_app(request), app)
+
+    def test_registered_app_matching_accepts_google_alias_and_avoids_ambiguity(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        google_chrome = {
+            "name": "Google Chrome",
+            "command": "google-chrome",
+            "desktop_file": "/apps/google-chrome.desktop",
+        }
+        pet.settings = {"apps": [google_chrome]}
+
+        self.assertEqual(pet._matching_app("pode abrir o Google?"), google_chrome)
+        self.assertEqual(pet._matching_app("abra o Chrome"), google_chrome)
+
+        google_drive = {
+            "name": "Google Drive",
+            "command": "google-drive",
+            "desktop_file": "/apps/google-drive.desktop",
+        }
+        pet.settings["apps"].append(google_drive)
+        self.assertIsNone(pet._matching_app("abrir Google"))
+        self.assertEqual(pet._matching_app("abrir Google Chrome"), google_chrome)
+
+    def test_conversation_routes_open_app_request_to_saved_command(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        app = {"name": "Google", "command": "browser --new-window https://google.com"}
+        pet.settings = {"apps": [app]}
+        pet.ai_request_active = False
+        pet._ask_question = mock.Mock(return_value="Quero abrir o Google")
+        pet._confirm_open_app = mock.Mock()
+
+        pet.ask_menu()
+
+        pet._confirm_open_app.assert_called_once_with("Quero abrir o Google", app)
+
+    def test_google_request_runs_saved_command_without_confirmation_when_disabled(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        app = {"name": "Google Chrome", "command": "google-chrome --new-window"}
+        pet.settings = {"apps": [app], "confirm_app_launch": False}
+        pet.ai_request_active = False
+        pet._app_launch_results = queue.Queue()
+        pet._closing = False
+        pet._ask_question = mock.Mock(return_value="Pode abrir o Google?")
+        pet._record_local_interaction = mock.Mock(return_value="Aberto!")
+        pet.show_bubble = mock.Mock()
+
+        with mock.patch.object(desktop_pet, "messagebox") as messagebox, \
+             mock.patch.object(desktop_pet, "find_installed_apps", return_value=[]), \
+             mock.patch.object(desktop_pet, "resolve_app_command", return_value=["fake-browser", "--new-window"]) as resolve, \
+             mock.patch.object(desktop_pet.subprocess, "Popen") as popen, \
+             mock.patch.object(desktop_pet.threading, "Thread", side_effect=run_thread_immediately):
+            pet.ask_menu()
+            pet._drain_app_launch_results()
+
+        messagebox.askyesno.assert_not_called()
+        resolve.assert_called_once_with(app["command"])
+        popen.assert_called_once_with(["fake-browser", "--new-window"], close_fds=True)
+        pet._record_local_interaction.assert_called_once_with(
+            "Pode abrir o Google?", "Aberto!"
+        )
+
+    def test_legacy_saved_app_recovers_its_desktop_launcher_by_exact_name(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {"apps": [{"name": "Calculadora", "command": "old-calculator"}]}
+        pet._installed_apps_cache = None
+        system_app = {
+            "name": "Calculadora",
+            "command": "calculator",
+            "desktop_file": "/apps/calculator.desktop",
+        }
+
+        with mock.patch.object(desktop_pet, "find_installed_apps", return_value=[system_app]):
+            match = pet._matching_app("Abra a Calculadora")
+
+        self.assertEqual(match["command"], "old-calculator")
+        self.assertEqual(match["desktop_file"], "/apps/calculator.desktop")
+
+    def test_conversation_opens_an_installed_app_not_yet_saved(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {
+            "apps": [{"name": "Sober", "command": "sober"}],
+            "confirm_app_launch": False,
+        }
+        pet._installed_apps_cache = None
+        pet.ai_request_active = False
+        pet._app_launch_results = queue.Queue()
+        pet._closing = False
+        pet._ask_question = mock.Mock(return_value="Abra a Calculadora")
+        pet._record_local_interaction = mock.Mock(return_value="Aberto!")
+        pet.show_bubble = mock.Mock()
+        installed_calculator = {
+            "name": "Calculadora",
+            "command": "calculator",
+            "desktop_file": "/apps/calculator.desktop",
+        }
+
+        with mock.patch.object(desktop_pet, "find_installed_apps", return_value=[installed_calculator]), \
+             mock.patch.object(
+                 desktop_pet.subprocess,
+                 "run",
+                 return_value=mock.Mock(returncode=0, stderr="", stdout=""),
+             ) as run, \
+             mock.patch.object(desktop_pet.threading, "Thread", side_effect=run_thread_immediately):
+            pet.ask_menu()
+            pet._drain_app_launch_results()
+
+        run.assert_called_once_with(
+            ["gio", "launch", "/apps/calculator.desktop"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        pet._record_local_interaction.assert_called_once_with(
+            "Abra a Calculadora", "Aberto!"
+        )
+
+    def test_first_person_abri_request_uses_saved_app_instead_of_ai(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        app = {"name": "Sober", "command": "sober"}
+        pet.settings = {"apps": [app], "confirm_app_launch": False}
+        pet._installed_apps_cache = None
+        pet.ai_request_active = False
+        pet._ask_question = mock.Mock(return_value="Abri Sober")
+        pet._app_launch_results = queue.Queue()
+        pet._closing = False
+        pet._record_local_interaction = mock.Mock(return_value="Aberto!")
+        pet.show_bubble = mock.Mock()
+
+        with mock.patch.object(desktop_pet, "find_installed_apps", return_value=[]), \
+             mock.patch.object(desktop_pet, "resolve_app_command", return_value=["fake-sober"]), \
+             mock.patch.object(desktop_pet.subprocess, "Popen") as popen, \
+             mock.patch.object(desktop_pet.threading, "Thread", side_effect=run_thread_immediately) as worker_thread:
+            pet.ask_menu()
+            pet._drain_app_launch_results()
+
+        popen.assert_called_once_with(["fake-sober"], close_fds=True)
+        worker_thread.assert_called_once()
+        self.assertEqual(
+            worker_thread.call_args.kwargs["target"], pet._app_launch_worker
+        )
+
+    def test_google_alias_opens_google_page_through_chrome_desktop_entry(self):
+        app = {
+            "name": "Google Chrome",
+            "command": "/usr/bin/google-chrome-stable",
+            "desktop_file": "/usr/share/applications/google-chrome.desktop",
+        }
+        with mock.patch.object(
+            desktop_pet.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0, stderr="", stdout=""),
+        ) as run:
+            DesktopPet._launch_app(app, "Abra o Google")
+
+        self.assertEqual(run.call_args.args[0], [
+            "gio",
+            "launch",
+            "/usr/share/applications/google-chrome.desktop",
+            "https://www.google.com",
+        ])
+
+    def test_failed_desktop_launch_reports_failure_instead_of_success(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {"confirm_app_launch": False}
+        pet._app_launch_results = queue.Queue()
+        pet._closing = False
+        pet._record_local_interaction = mock.Mock(side_effect=lambda _q, answer: answer)
+        pet.show_bubble = mock.Mock()
+        app = {
+            "name": "Example App",
+            "command": "example-app",
+            "desktop_file": "/apps/example.desktop",
+        }
+
+        with mock.patch.object(
+            desktop_pet.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=1, stderr="launcher failed", stdout=""),
+        ), mock.patch.object(desktop_pet.threading, "Thread", side_effect=run_thread_immediately):
+            pet._confirm_open_app("Abra Example App", app)
+            pet._drain_app_launch_results()
+
+        answer = pet._record_local_interaction.call_args.args[1]
+        self.assertIn("Não consegui abrir Example App", answer)
+        self.assertIn("launcher failed", answer)
+        self.assertEqual(pet.show_bubble.call_args.args[0], answer)
+
+    def test_slow_desktop_launch_is_reported_as_still_in_progress(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._app_launch_results = queue.Queue()
+        app = {"name": "Example App", "command": "example-app"}
+        pet._launch_app = mock.Mock(
+            side_effect=desktop_pet.subprocess.TimeoutExpired("gio launch", 60)
+        )
+
+        pet._app_launch_worker("Abra Example App", app)
+
+        question, answer = pet._app_launch_results.get_nowait()
+        self.assertEqual(question, "Abra Example App")
+        self.assertEqual(answer, "A abertura de Example App ainda está em andamento.")
+
+    def test_unmatched_open_app_request_does_not_fall_through_to_ai(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {"apps": []}
+        pet.ai_request_active = False
+        pet._ask_question = mock.Mock(return_value="Abra o Paint")
+        pet._record_local_interaction = mock.Mock(side_effect=lambda _q, answer: answer)
+        pet.show_bubble = mock.Mock()
+
+        with mock.patch.object(desktop_pet.threading, "Thread") as thread:
+            pet.ask_menu()
+
+        thread.assert_not_called()
+        answer = pet._record_local_interaction.call_args.args[1]
+        self.assertIn("Cadastre-o na aba Aplicativos", answer)
+        pet.show_bubble.assert_called_once_with(answer)
+
+    def test_confirmation_setting_defaults_to_direct_launch_and_is_sanitized(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            self.assertFalse(load_settings(path)["confirm_app_launch"])
+            path.write_text(json.dumps({"confirm_app_launch": "true"}), encoding="utf-8")
+            self.assertFalse(load_settings(path)["confirm_app_launch"])
 
     def test_app_command_parser_checks_executable_without_using_a_shell(self):
         command = f'"{sys.executable}" --version'

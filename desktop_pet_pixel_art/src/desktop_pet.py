@@ -34,11 +34,13 @@ import logging
 import math
 import queue
 import random
+import re
 import shlex
 import subprocess
 import threading
 import time
 import tkinter as tk
+import unicodedata
 from datetime import datetime
 from tkinter import messagebox
 from tkinter import ttk
@@ -97,12 +99,15 @@ class DesktopPet:
     def __init__(self):
         self.history = load_history()
         self.settings = load_settings()
+        self._installed_apps_cache = None
         self.x11 = X11Helper()
         self.shape_supported = None
 
         self.root = tk.Tk()
         self._closing = False
         self._ai_results = queue.Queue()
+        self._app_launch_results = queue.Queue()
+        self.app_launch_active = False
         self._last_render_key = None
         self.root.protocol("WM_DELETE_WINDOW", self.close_app)
         self.root.overrideredirect(True)
@@ -149,6 +154,7 @@ class DesktopPet:
         self.dragging = False
         self.was_drag = False
         self.drag_offset = (0, 0)
+        self._drag_focus_widget = None
         self.state = "walk"  # walk | held | thinking | sitting
         self.busy = False
         self.focus_mode = "idle"  # idle | focus | break
@@ -423,6 +429,8 @@ class DesktopPet:
         now = time.monotonic()
         if hasattr(self, "_ai_results"):
             self._drain_ai_results()
+        if hasattr(self, "_app_launch_results"):
+            self._drain_app_launch_results()
         raw_elapsed = max(0.0, now - self._last_tick_at)
         elapsed = min(raw_elapsed, 0.1)
         self._last_tick_at = now
@@ -680,6 +688,10 @@ class DesktopPet:
 
     # ---------- interação com o mouse ----------
     def start_drag(self, event):
+        try:
+            self._drag_focus_widget = self.root.focus_get()
+        except tk.TclError:
+            self._drag_focus_widget = None
         self.dragging = True
         self.was_drag = False
         self.drag_tilt = 0.0
@@ -712,6 +724,14 @@ class DesktopPet:
         self.drag_target_tilt = 0.0
         self._last_drag_pointer_x = None
         self.state = "walk"
+        focus_widget = self._drag_focus_widget
+        self._drag_focus_widget = None
+        if focus_widget is not None:
+            try:
+                if focus_widget.winfo_exists():
+                    focus_widget.focus_set()
+            except tk.TclError:
+                pass
         if not self.was_drag and self.bubble_text:
             self.hide_bubble()
 
@@ -972,6 +992,9 @@ class DesktopPet:
         observe = tk.BooleanVar(value=self.observe_apps_var.get())
         auto_sit = tk.BooleanVar(value=self.auto_sit_var.get())
         peekaboo = tk.BooleanVar(value=self.peekaboo_var.get())
+        confirm_app_launch = tk.BooleanVar(
+            value=self.settings.get("confirm_app_launch", False)
+        )
         memory_items = list(self.settings.get("memories", []))
         reminder_items = list(self.settings.get("reminders", []))
         app_items = list(self.settings.get("apps", []))
@@ -1156,8 +1179,13 @@ class DesktopPet:
         app_card = card(
             apps_tab,
             "Permitir que a Nova abra um app",
-            "Cadastre apenas apps que você reconhece. A Nova pede confirmação antes de abrir.",
+            "Cadastre apenas apps que você reconhece. Você pode escolher se a Nova confirma cada abertura.",
         )
+        ttk.Checkbutton(
+            app_card,
+            text="Perguntar antes de abrir um app",
+            variable=confirm_app_launch,
+        ).pack(anchor="w", pady=(0, 10))
         picker_row = ttk.Frame(app_card, style="Card.TFrame")
         picker_row.pack(fill="x", pady=(0, 10))
         app_picker_button = ttk.Button(
@@ -1172,10 +1200,13 @@ class DesktopPet:
         app_form.pack(fill="x")
         app_name = tk.StringVar()
         app_command = tk.StringVar()
+        app_desktop_file = tk.StringVar()
         ttk.Label(app_form, text="Nome").grid(row=0, column=0, sticky="w")
         ttk.Entry(app_form, textvariable=app_name, width=18, style="Autonomy.TEntry").grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(3, 7), ipady=4)
         ttk.Label(app_form, text="Comando executável").grid(row=0, column=1, sticky="w")
-        ttk.Entry(app_form, textvariable=app_command, style="Autonomy.TEntry").grid(row=1, column=1, sticky="ew", pady=(3, 7), ipady=4)
+        app_command_input = ttk.Entry(app_form, textvariable=app_command, style="Autonomy.TEntry")
+        app_command_input.grid(row=1, column=1, sticky="ew", pady=(3, 7), ipady=4)
+        app_command_input.bind("<KeyRelease>", lambda _event: app_desktop_file.set(""))
         app_form.columnconfigure(1, weight=1)
         ttk.Label(
             app_form,
@@ -1194,15 +1225,17 @@ class DesktopPet:
         app_list, refresh_apps, remove_app = setup_list(
             apps_tab, app_items,
             lambda item: f"{item.get('name', '')}   ·   {item.get('command', '')}",
-            "Selecione um app para editar ou remover. Testar comando abre o app imediatamente.",
+            "Selecione um app para editar ou remover. As alterações são salvas na hora.",
         )
         def clear_app_form():
             editing_app["index"] = None
             app_name.set("")
             app_command.set("")
+            app_desktop_file.set("")
             app_error.set("")
             app_error_label.configure(foreground="#B42318")
             save_app_button.configure(text="Adicionar app")
+            remove_app_button.configure(state="disabled")
             app_list.selection_clear(0, "end")
 
         def select_app(_event=None):
@@ -1213,8 +1246,10 @@ class DesktopPet:
             editing_app["index"] = index
             app_name.set(app_items[index]["name"])
             app_command.set(app_items[index]["command"])
+            app_desktop_file.set(app_items[index].get("desktop_file", ""))
             app_error.set("")
             save_app_button.configure(text="Salvar edição")
+            remove_app_button.configure(state="normal")
 
         def open_app_picker():
             picker = tk.Toplevel(window)
@@ -1276,9 +1311,11 @@ class DesktopPet:
                 app = visible_apps[selected[0]]
                 app_name.set(app["name"])
                 app_command.set(app["command"])
+                app_desktop_file.set(app.get("desktop_file", ""))
                 app_error.set("")
                 editing_app["index"] = None
                 save_app_button.configure(text="Adicionar app")
+                remove_app_button.configure(state="disabled")
                 app_list.selection_clear(0, "end")
                 picker.destroy()
 
@@ -1291,7 +1328,6 @@ class DesktopPet:
             ttk.Button(picker_buttons, text="Usar selecionado", style="Primary.TButton", command=use_selected_app).pack(side="right", padx=(0, 8))
             picker.bind("<Return>", use_selected_app)
             picker.bind("<Escape>", lambda _event: picker.destroy())
-            picker.grab_set()
             search_entry.focus_set()
 
         app_picker_button.configure(command=open_app_picker)
@@ -1316,29 +1352,51 @@ class DesktopPet:
                     return None
             app_error_label.configure(foreground="#B42318")
             app_error.set("")
-            return name, command, argv
+            return name, command, argv, app_desktop_file.get().strip()
+
+        def persist_app_items():
+            updated = dict(self.settings)
+            updated["apps"] = [dict(item) for item in app_items]
+            if not save_settings(updated):
+                app_error_label.configure(foreground="#B42318")
+                app_error.set("Não consegui salvar os apps. Confira as permissões e tente novamente.")
+                return False
+            self.settings = updated
+            return True
 
         def save_app():
             values = validate_app_form()
             if not values:
                 return
-            name, command, _argv = values
+            name, command, _argv, desktop_file = values
             index = editing_app["index"]
+            previous_items = [dict(item) for item in app_items]
+            saved_app = {"name": name, "command": command}
+            if desktop_file:
+                saved_app["desktop_file"] = desktop_file
             if index is None:
-                app_items.append({"name": name, "command": command})
+                app_items.append(saved_app)
             else:
-                app_items[index] = {"name": name, "command": command}
+                app_items[index] = saved_app
             refresh_apps()
+            if not persist_app_items():
+                app_items[:] = previous_items
+                refresh_apps()
+                clear_app_form()
+                return
             clear_app_form()
 
         def test_app_command():
             values = validate_app_form()
             if not values:
                 return
-            name, _command, argv = values
+            name, command, argv, desktop_file = values
             try:
-                subprocess.Popen(argv, close_fds=True)
-            except (OSError, ValueError) as exc:
+                self._launch_app(
+                    {"name": name, "command": command, "desktop_file": desktop_file},
+                    question="",
+                )
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 app_error_label.configure(foreground="#B42318")
                 app_error.set(f"Não consegui iniciar {name}: {exc}")
                 return
@@ -1346,7 +1404,15 @@ class DesktopPet:
             app_error.set(f"Comando enviado ao sistema para abrir {name}.")
 
         def remove_selected_app():
+            previous_items = [dict(item) for item in app_items]
             remove_app()
+            if previous_items == app_items:
+                return
+            if not persist_app_items():
+                app_items[:] = previous_items
+                refresh_apps()
+                clear_app_form()
+                return
             clear_app_form()
 
         app_list.bind("<<ListboxSelect>>", select_app)
@@ -1354,7 +1420,14 @@ class DesktopPet:
         save_app_button.pack(side="right")
         ttk.Button(app_buttons, text="Testar comando", style="Secondary.TButton", command=test_app_command).pack(side="right", padx=(0, 8))
         ttk.Button(app_buttons, text="Novo app", style="Secondary.TButton", command=clear_app_form).pack(side="left")
-        ttk.Button(apps_tab, text="Remover selecionado", style="Secondary.TButton", command=remove_selected_app).pack(anchor="e", pady=(10, 0))
+        remove_app_button = ttk.Button(
+            app_buttons,
+            text="Remover app",
+            style="Secondary.TButton",
+            command=remove_selected_app,
+            state="disabled",
+        )
+        remove_app_button.pack(side="left", padx=(8, 0))
 
         def start_focus_from_settings():
             if self.focus_mode != "idle" or self.ai_request_active or self.dragging:
@@ -1400,6 +1473,7 @@ class DesktopPet:
             updated.update(
                 mode=mode.get(), quiet_start=quiet_start.get(), quiet_end=quiet_end.get(),
                 memories=memory_items, reminders=reminder_items, apps=app_items,
+                confirm_app_launch=confirm_app_launch.get(),
                 auto_speech=speech.get(), observe_apps=observe.get(), auto_sit=auto_sit.get(),
                 peekaboo=peekaboo.get(),
                 focus_minutes=duration, break_minutes=pause,
@@ -1542,30 +1616,152 @@ class DesktopPet:
         self.show_bubble("Sessão encerrada. Vamos no seu ritmo.", duration=4500)
 
     def _matching_app(self, question):
-        normalized = question.lower()
-        if not any(token in normalized for token in ("abrir ", "abra ", "abre ", "iniciar ", "inicie ", "executar ")):
+        def normalize(value):
+            decomposed = unicodedata.normalize("NFKD", value.casefold())
+            return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+        normalized_question = normalize(question)
+        if not self._is_app_open_request(normalized_question):
             return None
-        for app in self.settings.get("apps", []):
-            name = app.get("name", "").strip()
-            if name and name.lower() in normalized:
-                return app
+
+        def contains_phrase(text, phrase):
+            return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text))
+
+        def match_apps(apps):
+            named_apps = [
+                (app, normalize(app.get("name", "").strip()))
+                for app in apps
+                if isinstance(app, dict)
+                and isinstance(app.get("name"), str)
+                and app["name"].strip()
+            ]
+            exact_matches = [
+                (app, name) for app, name in named_apps
+                if contains_phrase(normalized_question, name)
+            ]
+            if exact_matches:
+                return max(exact_matches, key=lambda item: len(item[1]))[0], True
+
+            # Aceita o nome curto, por exemplo "Google" para "Google Chrome",
+            # desde que não haja mais de um app cadastrado com essa palavra.
+            partial_matches = []
+            for app, name in named_apps:
+                words = re.findall(r"\w+", name)
+                if any(contains_phrase(normalized_question, word) for word in words):
+                    partial_matches.append(app)
+            if len(partial_matches) == 1:
+                return partial_matches[0], True
+            return None, bool(partial_matches)
+
+        def get_installed_apps():
+            if getattr(self, "_installed_apps_cache", None) is None:
+                try:
+                    self._installed_apps_cache = find_installed_apps()
+                except OSError:
+                    self._installed_apps_cache = []
+            return self._installed_apps_cache
+
+        saved_match, has_saved_candidate = match_apps(self.settings.get("apps", []))
+        if saved_match:
+            if not saved_match.get("desktop_file"):
+                saved_name = normalize(saved_match["name"])
+                system_app = next(
+                    (
+                        item for item in get_installed_apps()
+                        if normalize(item.get("name", "")) == saved_name
+                        and item.get("desktop_file")
+                    ),
+                    None,
+                )
+                if system_app:
+                    saved_match = {**saved_match, "desktop_file": system_app["desktop_file"]}
+            return saved_match
+        if has_saved_candidate:
+            return None
+
+        # Se o app ainda não foi cadastrado manualmente, procura entre os .desktop
+        # instalados. O resultado continua validado por resolve_app_command.
+        installed_match, _has_candidate = match_apps(get_installed_apps())
+        if installed_match:
+            return installed_match
         return None
 
+    @staticmethod
+    def _is_app_open_request(question):
+        return bool(re.search(
+            r"\b(abrir|abro|abre|abra|abram|abri|abriu|abrindo|abriria|abririam|"
+            r"iniciar|inicio|inicia|inicie|iniciem|iniciam|iniciando|iniciou|"
+            r"executar|executo|executa|execute|executem|executam|executei|"
+            r"executou|executava|executando|executaria|executariam)\b",
+            question.casefold(),
+        ))
+
     def _confirm_open_app(self, question, app):
-        confirmation = (
-            f"A Nova vai executar este comando:\n\n{app['command']}\n\n"
-            f"Abrir {app['name']} agora?"
-        )
-        if not messagebox.askyesno("Confirmar abertura", confirmation, parent=self.root):
+        if getattr(self, "app_launch_active", False):
+            self.show_bubble("Já estou abrindo um aplicativo.", duration=2500)
             return
+        if self.settings.get("confirm_app_launch", True):
+            confirmation = (
+                f"A Nova vai executar este comando:\n\n{app['command']}\n\n"
+                f"Abrir {app['name']} agora?"
+            )
+            if not messagebox.askyesno("Confirmar abertura", confirmation, parent=self.root):
+                return
+        self.app_launch_active = True
+        self.show_bubble(f"Abrindo {app['name']}…", duration=999999)
+        threading.Thread(
+            target=self._app_launch_worker,
+            args=(question, app),
+            daemon=True,
+        ).start()
+
+    def _app_launch_worker(self, question, app):
         try:
-            argv = resolve_app_command(app["command"])
-            subprocess.Popen(argv, close_fds=True)
-            answer = f"Abri {app['name']}."
-        except (OSError, ValueError) as exc:
+            self._launch_app(app, question)
+            answer = "Aberto!"
+        except subprocess.TimeoutExpired:
+            answer = f"A abertura de {app['name']} ainda está em andamento."
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
             answer = f"Não consegui abrir {app['name']}: {exc}"
-        self._record_local_interaction(question, answer)
-        self.show_bubble(answer)
+        self._app_launch_results.put((question, answer))
+
+    def _drain_app_launch_results(self):
+        try:
+            question, answer = self._app_launch_results.get_nowait()
+        except queue.Empty:
+            return
+        self.app_launch_active = False
+        if not self._closing:
+            answer = self._record_local_interaction(question, answer)
+            self.show_bubble(answer)
+
+    @staticmethod
+    def _launch_app(app, question=""):
+        desktop_file = app.get("desktop_file")
+        if desktop_file:
+            argv = ["gio", "launch", desktop_file]
+            app_name = app.get("name", "").casefold()
+            lowered_question = question.casefold()
+            if (
+                "google chrome" in app_name
+                and re.search(r"\bgoogle\b", lowered_question)
+                and not re.search(r"\bchrome\b", lowered_question)
+            ):
+                argv.append("https://www.google.com")
+            result = subprocess.run(
+                argv,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode:
+                details = (result.stderr or result.stdout or "").strip()
+                raise OSError(details or f"gio launch terminou com código {result.returncode}")
+            return
+
+        argv = resolve_app_command(app["command"])
+        subprocess.Popen(argv, close_fds=True)
 
     def close_app(self):
         self._closing = True
@@ -1607,6 +1803,14 @@ class DesktopPet:
         app = self._matching_app(question)
         if app:
             self._confirm_open_app(question, app)
+            return
+        if self._is_app_open_request(question):
+            answer = (
+                "Não encontrei um aplicativo cadastrado que corresponda ao pedido. "
+                "Cadastre-o na aba Aplicativos e tente novamente."
+            )
+            self._record_local_interaction(question, answer)
+            self.show_bubble(answer)
             return
         self.history.append({"role": "user", "content": question})
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
@@ -1735,7 +1939,6 @@ class DesktopPet:
         dialog.protocol("WM_DELETE_WINDOW", cancel)
         dialog.bind("<Control-Return>", lambda _event: finish())
         dialog.bind("<Escape>", lambda _event: cancel())
-        dialog.grab_set()
         answer.focus_set()
         self.root.wait_window(dialog)
         return result["question"]

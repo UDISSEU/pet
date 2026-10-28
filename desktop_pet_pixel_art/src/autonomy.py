@@ -17,6 +17,7 @@ DEFAULT_SETTINGS = {
     "memories": [],
     "reminders": [],
     "apps": [],
+    "confirm_app_launch": False,
     "focus_minutes": 25,
     "break_minutes": 5,
     "routine_greeting": False,
@@ -53,13 +54,20 @@ def load_settings(path=SETTINGS_PATH):
     ]
     if not isinstance(result.get("apps"), list):
         result["apps"] = []
-    result["apps"] = [
-        {"name": item["name"].strip(), "command": item["command"].strip()}
-        for item in result["apps"]
-        if isinstance(item, dict)
-        and isinstance(item.get("name"), str) and item["name"].strip()
-        and isinstance(item.get("command"), str) and item["command"].strip()
-    ]
+    cleaned_apps = []
+    for item in result["apps"]:
+        if not (
+            isinstance(item, dict)
+            and isinstance(item.get("name"), str) and item["name"].strip()
+            and isinstance(item.get("command"), str) and item["command"].strip()
+        ):
+            continue
+        app = {"name": item["name"].strip(), "command": item["command"].strip()}
+        desktop_file = item.get("desktop_file")
+        if isinstance(desktop_file, str) and desktop_file.strip():
+            app["desktop_file"] = desktop_file.strip()
+        cleaned_apps.append(app)
+    result["apps"] = cleaned_apps
     if result.get("mode") not in ("quietinha", "companhia", "proativa"):
         result["mode"] = "companhia"
     for key, default, minimum, maximum in (
@@ -74,6 +82,8 @@ def load_settings(path=SETTINGS_PATH):
     for key in ("routine_greeting", "routine_evening"):
         if not isinstance(result.get(key), bool):
             result[key] = False
+    if not isinstance(result.get("confirm_app_launch"), bool):
+        result["confirm_app_launch"] = False
     try:
         datetime.strptime(result.get("evening_time", "20:30"), "%H:%M")
     except (TypeError, ValueError):
