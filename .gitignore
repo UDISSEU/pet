@@ -1,0 +1,8 @@
+.venv*/
+venv/
+__pycache__/
+*.pyc
+*.bak
+*.bak2
+.pytest_cache/
+/desktop_pet_pixel_art.zip
