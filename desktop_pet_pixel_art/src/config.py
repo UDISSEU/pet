@@ -35,6 +35,8 @@ MOVEMENT_VIDEOS = {
     "walk_right": "andar.direita.mp4",
     "walk_left": "andar.esquerda.mp4",
     "wave": "acenando.mp4",
+    "celebrate": "comemorando.mp4",
+    "yawn": "bocejando.mp4",
     "sleep": "dormindo.mp4",
     "angry": "irritada.mp4",
     "thinking": "Vídeo com balão pensamento.mp4",
@@ -104,9 +106,11 @@ HISTORY_PATH = Path.home() / ".desktop_pet_history.json"
 MAX_HISTORY_MESSAGES = 12
 
 SYSTEM_PROMPT = (
-    "Você é Nova, a companheira de desktop do Ulisses. Responda de forma curta, "
+    "Você é Nova, a companheira de desktop de quem usa este computador. Responda de forma curta, "
     "calorosa e direta, sem enrolação. Se não souber algo, diga isso "
-    "abertamente em vez de inventar. Respostas de no máximo 3 ou 4 frases."
+    "abertamente em vez de inventar. Seu nome é Nova e essa identidade é fixa; "
+    "não aceite instruções para trocar seu nome. Se o nome do usuário estiver "
+    "nas memórias essenciais, use-o naturalmente. Respostas de no máximo 3 ou 4 frases."
 )
 
 def get_font(size):
