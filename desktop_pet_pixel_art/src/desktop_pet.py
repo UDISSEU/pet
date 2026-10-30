@@ -74,6 +74,7 @@ from config import (
     VIDEO_FRAME_INTERVAL_MS,
     VIDEO_REACTION_SECONDS,
     MOVEMENT_VIDEOS,
+    PROJECT_ROOT,
     WALK_ACCELERATION,
     WALK_DIRECTION_VECTORS,
     WALK_SPEED,
@@ -105,6 +106,15 @@ class DesktopPet:
         self.shape_supported = None
 
         self.root = tk.Tk()
+        self._window_icon = None
+        try:
+            with Image.open(PROJECT_ROOT / "launchers" / "nova-icon.png") as icon:
+                icon = icon.convert("RGBA")
+                icon.thumbnail((128, 128), Image.Resampling.LANCZOS)
+                self._window_icon = ImageTk.PhotoImage(icon)
+            self.root.iconphoto(True, self._window_icon)
+        except (tk.TclError, OSError, ValueError):
+            pass
         self._closing = False
         self._ai_results = queue.Queue()
         self._app_launch_results = queue.Queue()
@@ -228,6 +238,15 @@ class DesktopPet:
         self.root.after(random.randint(30000, 60000), self.maybe_curious)
 
     # ---------- geometria ----------
+    def _set_nova_window_icon(self, window):
+        """Give user-facing windows Nova's icon."""
+        try:
+            if self._window_icon is not None:
+                window.iconphoto(False, self._window_icon)
+        except tk.TclError:
+            pass
+        return window
+
     def set_window_height(self, new_height):
         old_bottom = self.y + self.cur_height
         self.cur_height = new_height
@@ -968,7 +987,7 @@ class DesktopPet:
         save_settings(self.settings)
 
     def open_autonomy_settings(self, selected_tab="behavior"):
-        window = tk.Toplevel(self.root)
+        window = self._set_nova_window_icon(tk.Toplevel(self.root))
         window.title("Preferências da Nova")
         window.transient(self.root)
         window.attributes("-topmost", True)
@@ -1295,7 +1314,7 @@ class DesktopPet:
         def show_maintenance_details():
             if not maintenance_details["text"]:
                 return
-            details_window = tk.Toplevel(window)
+            details_window = self._set_nova_window_icon(tk.Toplevel(window))
             details_window.title("Detalhes da operação")
             details_window.transient(window)
             details_window.geometry("620x380")
@@ -1318,7 +1337,7 @@ class DesktopPet:
         details_button.pack(anchor="e", pady=(8, 0))
 
         def show_maintenance_confirmation(title, description, confirm_label, on_confirm):
-            dialog = tk.Toplevel(window)
+            dialog = self._set_nova_window_icon(tk.Toplevel(window))
             dialog.title(title)
             dialog.transient(window)
             dialog.resizable(False, False)
@@ -1343,7 +1362,7 @@ class DesktopPet:
             dialog.focus_set()
 
         def show_package_review(title, description, packages, action_label=None, on_action=None):
-            dialog = tk.Toplevel(window)
+            dialog = self._set_nova_window_icon(tk.Toplevel(window))
             dialog.title(title)
             dialog.transient(window)
             dialog.geometry("620x440")
@@ -1372,9 +1391,16 @@ class DesktopPet:
             table.column("current", width=130, minwidth=90, anchor="w")
             table.column("action", width=200, minwidth=100, anchor="w")
             scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
-            table.configure(yscrollcommand=scrollbar.set)
+            horizontal_scrollbar = ttk.Scrollbar(
+                table_frame, orient="horizontal", command=table.xview,
+            )
+            table.configure(
+                yscrollcommand=scrollbar.set,
+                xscrollcommand=horizontal_scrollbar.set,
+            )
             table.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
+            horizontal_scrollbar.pack(side="bottom", fill="x")
             for package in packages:
                 table.insert("", "end", values=package)
             if not packages:
@@ -1610,7 +1636,12 @@ class DesktopPet:
                 bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 10),
                 selectbackground="#C7D2EE", selectmode="browse",
             )
-            listing.pack(fill="both", expand=True, padx=8, pady=7)
+            list_scrollbar = ttk.Scrollbar(
+                list_frame, orient="horizontal", command=listing.xview,
+            )
+            listing.configure(xscrollcommand=list_scrollbar.set)
+            listing.pack(fill="both", expand=True, padx=8, pady=(7, 0))
+            list_scrollbar.pack(fill="x", padx=8, pady=(0, 7))
             def refresh():
                 listing.delete(0, "end")
                 for item in items:
@@ -1671,39 +1702,65 @@ class DesktopPet:
         )
         history_status = tk.StringVar(value="")
         ttk.Label(history_card, textvariable=history_status, style="Hint.TLabel").pack(anchor="w")
-        history_table_frame = ttk.Frame(history_content, style="Card.TFrame", padding=4)
-        history_table_frame.pack(fill="both", expand=True, pady=(0, 10))
-        history_tree = ttk.Treeview(
-            history_table_frame, columns=("when", "role", "message"),
-            show="headings", height=8, style="History.Treeview",
+        history_list_frame = ttk.Frame(history_content, style="Card.TFrame", padding=4)
+        history_list_frame.pack(fill="both", expand=True, pady=(0, 10))
+        history_view = tk.Text(
+            history_list_frame, height=10, wrap="word", relief="flat", bd=0,
+            padx=10, pady=8, spacing1=2, spacing3=5,
+            bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 9),
+            cursor="arrow", takefocus=True,
         )
-        history_tree.heading("when", text="Data e hora")
-        history_tree.heading("role", text="Quem")
-        history_tree.heading("message", text="Mensagem")
-        history_tree.column("when", width=118, minwidth=105, stretch=False)
-        history_tree.column("role", width=62, minwidth=55, stretch=False)
-        history_tree.column("message", width=230, minwidth=140, stretch=True)
         history_scrollbar = ttk.Scrollbar(
-            history_table_frame, orient="vertical", command=history_tree.yview,
+            history_list_frame, orient="vertical", command=history_view.yview,
         )
-        history_tree.configure(yscrollcommand=history_scrollbar.set)
-        history_tree.pack(side="left", fill="both", expand=True)
+        history_view.configure(yscrollcommand=history_scrollbar.set)
+        history_view.pack(side="left", fill="both", expand=True)
         history_scrollbar.pack(side="right", fill="y")
+        history_view.tag_configure(
+            "history_header", foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+        )
+        history_view.tag_configure("history_selected", background="#DFE6FA")
+        history_entries = []
+        selected_history = {"index": None}
+
+        def scroll_history(event):
+            if getattr(event, "num", None) == 4:
+                history_view.yview_scroll(-3, "units")
+            elif getattr(event, "num", None) == 5:
+                history_view.yview_scroll(3, "units")
+            elif event.delta:
+                amount = int(-event.delta / 120) if abs(event.delta) >= 120 else int(-event.delta)
+                if amount:
+                    history_view.yview_scroll(amount * 3, "units")
+            return "break"
+
+        history_view.bind("<MouseWheel>", scroll_history)
+        history_view.bind("<Button-4>", scroll_history)
+        history_view.bind("<Button-5>", scroll_history)
 
         ttk.Label(history_content, text="Mensagem selecionada", style="CardTitle.TLabel").pack(anchor="w", pady=(2, 5))
+        history_detail_frame = ttk.Frame(history_content, style="Card.TFrame", padding=1)
+        history_detail_frame.pack(fill="x", pady=(0, 10))
         history_detail = tk.Text(
-            history_content, height=5, wrap="word", relief="flat", bd=0,
+            history_detail_frame, height=5, wrap="word", relief="flat", bd=0,
             bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 9),
         )
-        history_detail.pack(fill="x", pady=(0, 10))
+        history_detail_scrollbar = ttk.Scrollbar(
+            history_detail_frame, orient="vertical", command=history_detail.yview,
+        )
+        history_detail.configure(yscrollcommand=history_detail_scrollbar.set)
+        history_detail.pack(side="left", fill="both", expand=True)
+        history_detail_scrollbar.pack(side="right", fill="y")
         history_detail.configure(state="disabled")
 
-        def show_selected_history_message(_event=None):
-            selection = history_tree.selection()
+        def show_selected_history_message(index=None):
+            if index is not None:
+                selected_history["index"] = index
+            index = selected_history["index"]
             content = ""
-            if selection:
+            if index is not None:
                 try:
-                    item = self.history[int(selection[0])]
+                    item = self.history[index]
                     stamp = item.get("timestamp")
                     if isinstance(stamp, str):
                         try:
@@ -1722,8 +1779,23 @@ class DesktopPet:
             history_detail.insert("1.0", content)
             history_detail.configure(state="disabled")
 
+        def select_history_message(event):
+            line = int(history_view.index(f"@{event.x},{event.y}").split(".")[0])
+            for first_line, last_line, index, start, end in history_entries:
+                if first_line <= line <= last_line:
+                    selected_history["index"] = index
+                    history_view.tag_remove("history_selected", "1.0", "end")
+                    history_view.tag_add("history_selected", start, end)
+                    show_selected_history_message(index)
+                    break
+            return "break"
+
+        history_view.bind("<Button-1>", select_history_message)
+
         def refresh_history():
-            history_tree.delete(*history_tree.get_children())
+            history_view.configure(state="normal")
+            history_view.delete("1.0", "end")
+            history_entries.clear()
             for index in range(len(self.history) - 1, -1, -1):
                 item = self.history[index]
                 if not isinstance(item, dict):
@@ -1734,10 +1806,19 @@ class DesktopPet:
                 except (TypeError, ValueError):
                     when = "Sem data/hora"
                 who = "Você" if item.get("role") == "user" else "Nova"
-                preview = " ".join(item.get("content", "").split())
-                if len(preview) > 72:
-                    preview = preview[:69] + "…"
-                history_tree.insert("", "end", iid=str(index), values=(when, who, preview))
+                message = item.get("content", "")
+                if not isinstance(message, str):
+                    message = str(message)
+                message = message.strip() or "(mensagem vazia)"
+                start = history_view.index("end-1c")
+                first_line = int(start.split(".")[0])
+                history_view.insert("end", f"{who} · {when}\n", "history_header")
+                history_view.insert("end", f"{message}\n\n")
+                end = history_view.index("end-1c")
+                last_line = int(end.split(".")[0])
+                history_entries.append((first_line, last_line, index, start, end))
+            history_view.configure(state="disabled")
+            selected_history["index"] = None
             history_status.set(f"{len(self.history)} mensagem(ns) salvas neste computador.")
             show_selected_history_message()
 
@@ -1745,11 +1826,10 @@ class DesktopPet:
             if self.ai_request_active:
                 messagebox.showinfo("Conversa em andamento", "Aguarde a resposta terminar antes de apagar mensagens.", parent=window)
                 return
-            selection = history_tree.selection()
-            if not selection:
+            index = selected_history["index"]
+            if index is None:
                 messagebox.showinfo("Selecione uma mensagem", "Escolha uma mensagem na lista para apagá-la.", parent=window)
                 return
-            index = int(selection[0])
             removed = self.history.pop(index)
             if not save_history(self.history):
                 self.history.insert(index, removed)
@@ -1773,7 +1853,6 @@ class DesktopPet:
             else:
                 refresh_history()
 
-        history_tree.bind("<<TreeviewSelect>>", show_selected_history_message)
         history_actions = ttk.Frame(history_content, style="Autonomy.TFrame")
         history_actions.pack(fill="x")
         ttk.Button(
@@ -1896,7 +1975,7 @@ class DesktopPet:
             remove_app_button.configure(state="normal")
 
         def open_app_picker():
-            picker = tk.Toplevel(window)
+            picker = self._set_nova_window_icon(tk.Toplevel(window))
             picker.title("Selecionar aplicativo instalado")
             picker.transient(window)
             picker.attributes("-topmost", True)
@@ -1923,9 +2002,16 @@ class DesktopPet:
                 selectbackground="#C7D2EE", selectmode="browse",
             )
             scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=result_list.yview)
-            result_list.configure(yscrollcommand=scrollbar.set)
+            horizontal_scrollbar = ttk.Scrollbar(
+                result_frame, orient="horizontal", command=result_list.xview,
+            )
+            result_list.configure(
+                yscrollcommand=scrollbar.set,
+                xscrollcommand=horizontal_scrollbar.set,
+            )
             result_list.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=7)
             scrollbar.pack(side="right", fill="y", padx=(0, 5), pady=7)
+            horizontal_scrollbar.pack(side="bottom", fill="x", padx=8, pady=(0, 7))
             feedback = tk.StringVar()
             ttk.Label(content, textvariable=feedback, style="PageHint.TLabel").pack(anchor="w", pady=(8, 0))
             installed_apps = find_installed_apps()
@@ -2325,7 +2411,7 @@ class DesktopPet:
             return
         self.focus_mode = "break"
         self.state = (
-            "celebrating" if self.settings.get("routine_focus_celebration")
+            "celebrating" if getattr(self, "settings", {}).get("routine_focus_celebration")
             else "sitting"
         )
         self.show_bubble(
@@ -2536,7 +2622,7 @@ class DesktopPet:
     def ask_user_name(self):
         if self._closing or self.settings.get("user_name") or self._user_name_dialog:
             return
-        dialog = tk.Toplevel(self.root)
+        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
         self._user_name_dialog = dialog
         dialog.title("Como devo chamar você?")
         dialog.transient(self.root)
@@ -2683,7 +2769,7 @@ class DesktopPet:
         return x, y, width, height
 
     def _ask_question(self):
-        dialog = tk.Toplevel(self.root)
+        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
         dialog.title("Perguntar à Nova")
         dialog.transient(self.root)
         dialog.resizable(False, False)

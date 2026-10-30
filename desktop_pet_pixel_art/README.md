@@ -23,6 +23,12 @@ sudo apt install python3-tk
 .venv/bin/python src/desktop_pet.py
 ```
 
+O lançador para o menu de aplicativos fica em `launchers/nova.desktop`, com o ícone de referência e o script de inicialização na mesma pasta. Para instalá-lo no menu do usuário, execute na pasta do projeto:
+
+```bash
+install -Dm644 launchers/nova.desktop ~/.local/share/applications/nova.desktop
+```
+
 ## Usar
 
 - Arraste a Nova para movê-la.
