@@ -504,7 +504,7 @@ class TestHelperModules(unittest.TestCase):
         self.assertEqual((pet.focus_mode, pet.state), ("break", "sitting"))
         pet.finish_break()
         self.assertEqual((pet.focus_mode, pet.state, pet.focus_goal), ("idle", "celebrating", ""))
-        self.assertEqual(pet._video_for_current_pose(), "wave")
+        self.assertEqual(pet._video_for_current_pose(), "celebrate")
         pet.finish_celebration()
         self.assertEqual((pet.focus_mode, pet.state, pet.focus_goal), ("idle", "walk", ""))
 

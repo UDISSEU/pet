@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Nova
+GenericName=Companheira de desktop
+Comment=Iniciar a mascote Nova
+Exec=/home/ulisses/Downloads/pet/desktop_pet_pixel_art/launchers/run-nova.sh
+Icon=/home/ulisses/Downloads/pet/desktop_pet_pixel_art/launchers/nova-icon.png
+Terminal=false
+Categories=Utility;Accessibility;
+StartupNotify=false
+StartupWMClass=Nova

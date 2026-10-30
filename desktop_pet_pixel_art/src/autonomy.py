@@ -12,6 +12,7 @@ from pathlib import Path
 SETTINGS_PATH = Path.home() / ".config" / "desktop_pet" / "settings.json"
 DEFAULT_SETTINGS = {
     "mode": "companhia",
+    "user_name": "",
     "quiet_start": "22:00",
     "quiet_end": "08:00",
     "memories": [],
@@ -21,6 +22,14 @@ DEFAULT_SETTINGS = {
     "focus_minutes": 25,
     "break_minutes": 5,
     "routine_greeting": False,
+    "routine_context": False,
+    "last_context_date": "",
+    "routine_idle_yawn": False,
+    "routine_focus_celebration": False,
+    "routine_note": False,
+    "routine_surprise": False,
+    "last_surprise_date": "",
+    "last_note_at": 0,
     "routine_evening": False,
     "evening_time": "20:30",
     "last_evening_date": "",
@@ -35,6 +44,9 @@ def load_settings(path=SETTINGS_PATH):
     result = dict(DEFAULT_SETTINGS)
     if isinstance(data, dict):
         result.update(data)
+    if not isinstance(result.get("user_name"), str):
+        result["user_name"] = ""
+    result["user_name"] = result["user_name"].strip()[:60]
     if not isinstance(result.get("memories"), list):
         result["memories"] = []
     result["memories"] = [
@@ -79,9 +91,21 @@ def load_settings(path=SETTINGS_PATH):
         except (TypeError, ValueError):
             value = default
         result[key] = min(maximum, max(minimum, value))
-    for key in ("routine_greeting", "routine_evening"):
+    for key in (
+        "routine_greeting", "routine_context", "routine_idle_yawn",
+        "routine_focus_celebration", "routine_note", "routine_surprise",
+        "routine_evening",
+    ):
         if not isinstance(result.get(key), bool):
             result[key] = False
+    if not isinstance(result.get("last_surprise_date"), str):
+        result["last_surprise_date"] = ""
+    if not isinstance(result.get("last_context_date"), str):
+        result["last_context_date"] = ""
+    try:
+        result["last_note_at"] = max(0, int(result.get("last_note_at", 0)))
+    except (TypeError, ValueError):
+        result["last_note_at"] = 0
     if not isinstance(result.get("confirm_app_launch"), bool):
         result["confirm_app_launch"] = False
     try:

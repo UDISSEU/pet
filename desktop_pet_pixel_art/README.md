@@ -23,6 +23,12 @@ sudo apt install python3-tk
 .venv/bin/python src/desktop_pet.py
 ```
 
+O lançador para o menu de aplicativos fica em `launchers/nova.desktop`, com o ícone de referência e o script de inicialização na mesma pasta. Para instalá-lo no menu do usuário, execute na pasta do projeto:
+
+```bash
+install -Dm644 launchers/nova.desktop ~/.local/share/applications/nova.desktop
+```
+
 ## Usar
 
 - Arraste a Nova para movê-la.
@@ -30,6 +36,9 @@ sudo apt install python3-tk
 - No menu, escolha **Calendário** para abrir o calendário local.
 - Em **Foco e rotina**, escolha uma prioridade e a duração da sessão. Ao terminar, a Nova descansa e avisa quando a pausa acabar.
 - Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps.
+- Na aba **Foco e rotina**, você pode ativar o aceno ao iniciar, comentários por período do dia, bocejo após inatividade, comemoração ao concluir o foco e recadinhos ocasionais com intervalo mínimo de quatro horas.
+- Na aba **Meu Computador**, confira atualizações, atualize pacotes e revise limpezas do APT. A autenticação é feita pelo Linux; a remoção de pacotes mostra uma prévia antes de pedir confirmação.
+- Na aba **Histórico**, consulte mensagens com data e hora e apague uma mensagem selecionada ou todo o histórico.
 - Na aba **Aplicativos**, pesquise apps Linux instalados ou cadastre um comando manualmente. Selecione um item cadastrado para editá-lo.
 - **Testar comando** inicia o app imediatamente. Quando a Nova abrir um app a pedido, ela mostra o comando e pede confirmação.
 

@@ -74,6 +74,7 @@ from config import (
     VIDEO_FRAME_INTERVAL_MS,
     VIDEO_REACTION_SECONDS,
     MOVEMENT_VIDEOS,
+    PROJECT_ROOT,
     WALK_ACCELERATION,
     WALK_DIRECTION_VECTORS,
     WALK_SPEED,
@@ -99,15 +100,26 @@ class DesktopPet:
     def __init__(self):
         self.history = load_history()
         self.settings = load_settings()
+        self._user_name_dialog = None
         self._installed_apps_cache = None
         self.x11 = X11Helper()
         self.shape_supported = None
 
         self.root = tk.Tk()
+        self._window_icon = None
+        try:
+            with Image.open(PROJECT_ROOT / "launchers" / "nova-icon.png") as icon:
+                icon = icon.convert("RGBA")
+                icon.thumbnail((128, 128), Image.Resampling.LANCZOS)
+                self._window_icon = ImageTk.PhotoImage(icon)
+            self.root.iconphoto(True, self._window_icon)
+        except (tk.TclError, OSError, ValueError):
+            pass
         self._closing = False
         self._ai_results = queue.Queue()
         self._app_launch_results = queue.Queue()
         self.app_launch_active = False
+        self.system_maintenance_active = False
         self._last_render_key = None
         self.root.protocol("WM_DELETE_WINDOW", self.close_app)
         self.root.overrideredirect(True)
@@ -163,6 +175,7 @@ class DesktopPet:
         self.break_minutes = 5
         self._focus_job = None
         self._routine_greeted = False
+        self._last_user_activity_at = time.monotonic()
         self.sit_win_id = None
         self.behind_mode = False  # true = ela fica sempre atrás das janelas
         self.ai_request_active = False
@@ -213,11 +226,27 @@ class DesktopPet:
         self.root.after(random.randint(20000, 40000), self.maybe_sit)
         self.root.after(15000, self.check_reminders)
         self.root.after(30000, self.check_daily_routine)
+        self.root.after(300000, self.check_daily_surprise)
+        self.root.after(300000, self.check_idle_yawn)
+        self.root.after(300000, self.check_occasional_note)
+        if not self.settings.get("user_name"):
+            self.root.after(1200, self.ask_user_name)
         if self.settings.get("routine_greeting"):
             self.root.after(2500, self.show_start_greeting)
+        if self.settings.get("routine_context"):
+            self.root.after(7000, self.show_context_greeting)
         self.root.after(random.randint(30000, 60000), self.maybe_curious)
 
     # ---------- geometria ----------
+    def _set_nova_window_icon(self, window):
+        """Give user-facing windows Nova's icon."""
+        try:
+            if self._window_icon is not None:
+                window.iconphoto(False, self._window_icon)
+        except tk.TclError:
+            pass
+        return window
+
     def set_window_height(self, new_height):
         old_bottom = self.y + self.cur_height
         self.cur_height = new_height
@@ -240,12 +269,16 @@ class DesktopPet:
     def _video_for_current_pose(self, now=None):
         if self.state == "focused":
             return "idle"
+        if self.state == "celebrating":
+            return "celebrate"
+        if self.state == "greeting":
+            return "wave"
         if getattr(self, "focus_mode", "idle") == "break":
             return "rest"
         if self.state == "curious":
             return "curious"
-        if self.state == "celebrating":
-            return "wave"
+        if self.state == "yawning":
+            return "yawn"
         if self.state == "sitting":
             return "sleep"
         if self.state == "thinking":
@@ -542,6 +575,24 @@ class DesktopPet:
             self.root.after(3500, self.finish_curious)
         self.root.after(random.randint(45000, 90000), self.maybe_curious)
 
+    def check_idle_yawn(self):
+        if self._closing:
+            return
+        idle_long_enough = time.monotonic() - self._last_user_activity_at >= 900
+        available = (
+            self.settings.get("routine_idle_yawn")
+            and idle_long_enough and self.state == "walk"
+            and self.focus_mode == "idle" and not self.busy
+            and not self.dragging and not self.ai_request_active
+            and not self._is_quiet_time() and not self.is_covered()
+        )
+        if available and random.random() < 0.2:
+            self.state = "yawning"
+            self.show_bubble(random.choice(("Haaam... hora de espreguiçar.", "Um bocejo e já volto!")), duration=5000)
+            self.root.after(5000, self.finish_surprise)
+            self._last_user_activity_at = time.monotonic()
+        self.root.after(300000, self.check_idle_yawn)
+
     def finish_curious(self):
         if not self._closing and self.state == "curious":
             self.state = "walk"
@@ -688,6 +739,7 @@ class DesktopPet:
 
     # ---------- interação com o mouse ----------
     def start_drag(self, event):
+        self._last_user_activity_at = time.monotonic()
         try:
             self._drag_focus_widget = self.root.focus_get()
         except tk.TclError:
@@ -739,6 +791,7 @@ class DesktopPet:
         self.show_bubble(random.choice(SPEECH_LINES), duration=3000)
 
     def show_menu(self, event):
+        self._last_user_activity_at = time.monotonic()
         if self._context_popup is not None:
             try:
                 self._context_popup.destroy()
@@ -934,50 +987,160 @@ class DesktopPet:
         save_settings(self.settings)
 
     def open_autonomy_settings(self, selected_tab="behavior"):
-        window = tk.Toplevel(self.root)
-        window.title("Autonomia da Nova")
+        window = self._set_nova_window_icon(tk.Toplevel(self.root))
+        window.title("Preferências da Nova")
         window.transient(self.root)
         window.attributes("-topmost", True)
-        window.geometry("620x640")
-        window.minsize(560, 580)
+        window.geometry("560x600")
+        window.minsize(520, 550)
         window.configure(bg="#E3E8F0")
 
         style = ttk.Style(window)
         style.configure("Autonomy.TFrame", background="#E3E8F0")
         style.configure("Card.TFrame", background="#F5F7FA")
-        style.configure("Title.TLabel", background="#E3E8F0", foreground="#202B45", font=("TkDefaultFont", 16, "bold"))
+        style.configure("Title.TLabel", background="#E3E8F0", foreground="#202B45", font=("TkDefaultFont", 14, "bold"))
         style.configure("Subtitle.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
         style.configure("CardTitle.TLabel", background="#F5F7FA", foreground="#26344A", font=("TkDefaultFont", 10, "bold"))
         style.configure("Hint.TLabel", background="#F5F7FA", foreground="#58667C", font=("TkDefaultFont", 9))
         style.configure("PageHint.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
+        style.configure("ComputerStatus.TLabel", background="#F5F7FA", foreground="#26344A", font=("TkDefaultFont", 10, "bold"))
+        style.configure("ComputerStatusError.TLabel", background="#F5F7FA", foreground="#B42318", font=("TkDefaultFont", 10, "bold"))
         style.configure("ModeHint.TLabel", background="#F5F7FA", foreground="#58667C", font=("TkDefaultFont", 8))
         style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
         style.configure("Secondary.TButton", padding=(12, 8))
+        style.configure("Nav.TButton", padding=(4, 2))
+        style.configure(
+            "TabNav.TLabel", background="#E3E8F0", foreground="#202B45",
+            font=("TkDefaultFont", 11, "bold"),
+        )
+        style.configure(
+            "Maintenance.Treeview", background="#F5F7FA", fieldbackground="#F5F7FA",
+            foreground="#26344A", rowheight=28, borderwidth=0,
+        )
+        style.configure(
+            "Maintenance.Treeview.Heading", background="#E3E8F0",
+            foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+        )
+        style.configure(
+            "History.Treeview", background="#F5F7FA", fieldbackground="#F5F7FA",
+            foreground="#26344A", rowheight=27, borderwidth=0,
+        )
+        style.configure(
+            "History.Treeview.Heading", background="#E3E8F0",
+            foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+        )
         style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
-        style.configure("TNotebook", background="#E3E8F0", borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(14, 8), font=("TkDefaultFont", 9))
 
         outer = ttk.Frame(window, style="Autonomy.TFrame", padding=(22, 18, 22, 14))
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="Autonomia da Nova", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(outer, text="Preferências da Nova", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             outer,
             text="Ajuste o ritmo, a rotina e o que ela pode lembrar ou fazer.",
             style="Subtitle.TLabel",
         ).pack(anchor="w", pady=(3, 14))
 
-        notebook = ttk.Notebook(outer)
+        notebook = ttk.Frame(outer, style="Autonomy.TFrame")
+        tab_navigation = ttk.Frame(outer, style="Autonomy.TFrame")
+        tab_navigation.pack(fill="x", pady=(0, 6))
+        tab_pages = []
+        history_refresh_callback = {"callback": None}
+        active_tab_index = 0
+        active_tab_name = tk.StringVar(value="Comportamento")
+
+        def select_tab(target):
+            nonlocal active_tab_index
+            if isinstance(target, int):
+                index = target % len(tab_pages)
+            else:
+                index = next(i for i, (_name, page) in enumerate(tab_pages) if page is target)
+            active_tab_index = index
+            for i, (name, page) in enumerate(tab_pages):
+                if i == index:
+                    page.pack(fill="both", expand=True)
+                    active_tab_name.set(name)
+                    if name == "Histórico" and history_refresh_callback["callback"]:
+                        history_refresh_callback["callback"]()
+                else:
+                    page.pack_forget()
+
+        def register_tab(page, name):
+            tab_pages.append((name, page))
+            if len(tab_pages) == 1:
+                select_tab(0)
+
+        def move_tab(direction):
+            select_tab(active_tab_index + direction)
+
+        ttk.Button(
+            tab_navigation, text="◀", width=2, style="Nav.TButton",
+            command=lambda: move_tab(-1),
+        ).pack(side="left")
+        ttk.Label(
+            tab_navigation, textvariable=active_tab_name, style="TabNav.TLabel",
+        ).pack(side="left", expand=True, padx=8)
+        ttk.Button(
+            tab_navigation, text="▶", width=2, style="Nav.TButton",
+            command=lambda: move_tab(1),
+        ).pack(side="right")
         notebook.pack(fill="both", expand=True)
-        behavior_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
-        routine_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
-        memory_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
-        reminder_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
-        apps_tab = ttk.Frame(notebook, style="Autonomy.TFrame", padding=16)
-        notebook.add(behavior_tab, text="Comportamento")
-        notebook.add(routine_tab, text="Foco e rotina")
-        notebook.add(memory_tab, text="Memórias")
-        notebook.add(reminder_tab, text="Lembretes")
-        notebook.add(apps_tab, text="Aplicativos")
+        def scrollable_tab():
+            tab = ttk.Frame(notebook, style="Autonomy.TFrame")
+            canvas = tk.Canvas(
+                tab, bg="#E3E8F0", bd=0, highlightthickness=0,
+                yscrollincrement=24,
+            )
+            scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+            canvas.configure(yscrollcommand=scrollbar.set)
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            content = ttk.Frame(canvas, style="Autonomy.TFrame", padding=14)
+            content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+            content.bind(
+                "<Configure>",
+                lambda _event, target=canvas: target.configure(scrollregion=target.bbox("all")),
+            )
+            canvas.bind(
+                "<Configure>",
+                lambda event, target=canvas, item=content_window:
+                    target.itemconfigure(item, width=event.width),
+            )
+
+            def scroll_wheel(event, target=canvas):
+                widget = event.widget
+                while widget is not None:
+                    if widget is target:
+                        if getattr(event, "num", None) == 4:
+                            target.yview_scroll(-3, "units")
+                        elif getattr(event, "num", None) == 5:
+                            target.yview_scroll(3, "units")
+                        else:
+                            delta = int(-event.delta / 120) if abs(event.delta) >= 120 else int(-event.delta)
+                            if delta:
+                                target.yview_scroll(delta * 3, "units")
+                        return "break"
+                    widget = getattr(widget, "master", None)
+                return None
+
+            canvas.bind_all("<MouseWheel>", scroll_wheel, add="+")
+            canvas.bind_all("<Button-4>", scroll_wheel, add="+")
+            canvas.bind_all("<Button-5>", scroll_wheel, add="+")
+            return tab, content
+
+        behavior_tab, behavior_content = scrollable_tab()
+        routine_tab, routine_content = scrollable_tab()
+        memory_tab, memory_content = scrollable_tab()
+        history_tab, history_content = scrollable_tab()
+        reminder_tab, reminder_content = scrollable_tab()
+        apps_tab, apps_content = scrollable_tab()
+        computer_tab, computer_content = scrollable_tab()
+        register_tab(behavior_tab, "Comportamento")
+        register_tab(routine_tab, "Foco e rotina")
+        register_tab(memory_tab, "Memórias")
+        register_tab(history_tab, "Histórico")
+        register_tab(reminder_tab, "Lembretes")
+        register_tab(apps_tab, "Aplicativos")
+        register_tab(computer_tab, "Meu Computador")
 
         mode = tk.StringVar(value=self.settings.get("mode", "companhia"))
         quiet_start = tk.StringVar(value=self.settings.get("quiet_start", "22:00"))
@@ -986,6 +1149,11 @@ class DesktopPet:
         focus_minutes = tk.StringVar(value=str(self.settings.get("focus_minutes", 25)))
         break_minutes = tk.StringVar(value=str(self.settings.get("break_minutes", 5)))
         routine_greeting = tk.BooleanVar(value=self.settings.get("routine_greeting", False))
+        routine_context = tk.BooleanVar(value=self.settings.get("routine_context", False))
+        routine_idle_yawn = tk.BooleanVar(value=self.settings.get("routine_idle_yawn", False))
+        routine_focus_celebration = tk.BooleanVar(value=self.settings.get("routine_focus_celebration", False))
+        routine_note = tk.BooleanVar(value=self.settings.get("routine_note", False))
+        routine_surprise = tk.BooleanVar(value=self.settings.get("routine_surprise", False))
         routine_evening = tk.BooleanVar(value=self.settings.get("routine_evening", False))
         evening_time = tk.StringVar(value=self.settings.get("evening_time", "20:30"))
         speech = tk.BooleanVar(value=self.auto_speech_var.get())
@@ -1004,10 +1172,10 @@ class DesktopPet:
             frame.pack(fill="x", pady=(0, 12))
             ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor="w")
             if hint:
-                ttk.Label(frame, text=hint, style="Hint.TLabel", wraplength=500).pack(anchor="w", pady=(3, 8))
+                ttk.Label(frame, text=hint, style="Hint.TLabel", wraplength=360).pack(anchor="w", pady=(3, 8))
             return frame
 
-        mode_card = card(behavior_tab, "Como a Nova deve se comportar?", "Você pode personalizar as opções abaixo depois de escolher um modo.")
+        mode_card = card(behavior_content, "Como a Nova deve se comportar?", "Você pode personalizar as opções abaixo depois de escolher um modo.")
         mode_row = ttk.Frame(mode_card, style="Card.TFrame")
         mode_row.pack(fill="x", pady=(2, 0))
         modes = (
@@ -1035,13 +1203,13 @@ class DesktopPet:
             ).pack(anchor="w")
             ttk.Label(option, text=description, style="ModeHint.TLabel").pack(anchor="w", padx=(22, 0))
 
-        behavior_card = card(behavior_tab, "Iniciativas", "As iniciativas automáticas respeitam o horário de silêncio.")
+        behavior_card = card(behavior_content, "Iniciativas", "As iniciativas automáticas respeitam o horário de silêncio.")
         ttk.Checkbutton(behavior_card, text="Falas espontâneas", variable=speech).pack(anchor="w", pady=3)
         ttk.Checkbutton(behavior_card, text="Comentários sobre o app ativo", variable=observe).pack(anchor="w", pady=3)
         ttk.Checkbutton(behavior_card, text="Sentar em janelas", variable=auto_sit).pack(anchor="w", pady=3)
         ttk.Checkbutton(behavior_card, text="Brincar de sumir atrás das janelas", variable=peekaboo).pack(anchor="w", pady=3)
 
-        quiet_card = card(behavior_tab, "Horário de silêncio", "A Nova pausa falas, observações e lembretes durante esse período.")
+        quiet_card = card(behavior_content, "Horário de silêncio", "A Nova pausa falas, observações e lembretes durante esse período.")
         quiet_row = ttk.Frame(quiet_card, style="Card.TFrame")
         quiet_row.pack(anchor="w")
         ttk.Label(quiet_row, text="Das").pack(side="left")
@@ -1051,7 +1219,7 @@ class DesktopPet:
         ttk.Label(quiet_row, text="HH:MM").pack(side="left", padx=(4, 0))
 
         focus_card = card(
-            routine_tab,
+            routine_content,
             "Sessão de foco",
             "Escolha no que vai trabalhar. A Nova fica quieta até a pausa e usa a animação de descanso.",
         )
@@ -1070,7 +1238,7 @@ class DesktopPet:
         else:
             focus_status_text = "Ao terminar, ela avisa para você fazer uma pausa."
         focus_status = tk.StringVar(value=focus_status_text)
-        ttk.Label(focus_card, textvariable=focus_status, style="Hint.TLabel", wraplength=500).pack(anchor="w", pady=(6, 8))
+        ttk.Label(focus_card, textvariable=focus_status, style="Hint.TLabel", wraplength=360).pack(anchor="w", pady=(6, 8))
         focus_actions = ttk.Frame(focus_card, style="Card.TFrame")
         focus_actions.pack(fill="x")
         ttk.Button(
@@ -1083,13 +1251,33 @@ class DesktopPet:
         ).pack(side="left", padx=(8, 0))
 
         routine_card = card(
-            routine_tab,
+            routine_content,
             "Pequenas rotinas",
             "As mensagens aparecem apenas enquanto a Nova estiver aberta e fora do horário de silêncio.",
         )
         ttk.Checkbutton(
             routine_card, text="Dar boas-vindas quando eu iniciar a Nova",
             variable=routine_greeting,
+        ).pack(anchor="w", pady=4)
+        ttk.Checkbutton(
+            routine_card, text="Comentário de bom dia, boa tarde ou boa noite",
+            variable=routine_context,
+        ).pack(anchor="w", pady=4)
+        ttk.Checkbutton(
+            routine_card, text="Bocejar depois de 15 minutos sem interação",
+            variable=routine_idle_yawn,
+        ).pack(anchor="w", pady=4)
+        ttk.Checkbutton(
+            routine_card, text="Comemorar ao concluir uma sessão de foco",
+            variable=routine_focus_celebration,
+        ).pack(anchor="w", pady=4)
+        ttk.Checkbutton(
+            routine_card, text="Recadinho ocasional (intervalo mínimo de 4 horas)",
+            variable=routine_note,
+        ).pack(anchor="w", pady=4)
+        ttk.Checkbutton(
+            routine_card, text="Uma surpresa aleatória por dia (fala e aceno)",
+            variable=routine_surprise,
         ).pack(anchor="w", pady=4)
         evening_row = ttk.Frame(routine_card, style="Card.TFrame")
         evening_row.pack(fill="x", pady=(5, 0))
@@ -1099,6 +1287,344 @@ class DesktopPet:
         ).pack(side="left")
         ttk.Entry(evening_row, textvariable=evening_time, width=8, justify="center", style="Autonomy.TEntry").pack(side="left", padx=8, ipady=3)
         ttk.Label(evening_row, text="(HH:MM)", style="Hint.TLabel").pack(side="left")
+
+        computer_intro = card(
+            computer_content, "Cuidados com o sistema",
+            "Atualizações e limpezas usam o APT. O Linux solicitará autenticação quando necessário.",
+        )
+        ttk.Label(
+            computer_intro, text="Escolha uma ação para começar.", style="Hint.TLabel",
+        ).pack(anchor="w", pady=(2, 0))
+
+        progress_card = ttk.Frame(computer_content, style="Card.TFrame", padding=14)
+        progress_card.pack(fill="x", pady=(0, 12))
+        computer_status = tk.StringVar(value="Tudo pronto.")
+        computer_status_label = ttk.Label(
+            progress_card, textvariable=computer_status, style="ComputerStatus.TLabel",
+            wraplength=360,
+        )
+        computer_status_label.pack(anchor="w")
+        computer_progress = ttk.Progressbar(progress_card, mode="indeterminate", length=380)
+        computer_progress.pack(fill="x", pady=(10, 0))
+        computer_progress.stop()
+        computer_progress.pack_forget()
+        maintenance_buttons = []
+        maintenance_details = {"text": ""}
+
+        def show_maintenance_details():
+            if not maintenance_details["text"]:
+                return
+            details_window = self._set_nova_window_icon(tk.Toplevel(window))
+            details_window.title("Detalhes da operação")
+            details_window.transient(window)
+            details_window.geometry("620x380")
+            details_window.configure(bg="#E3E8F0")
+            frame = ttk.Frame(details_window, style="Autonomy.TFrame", padding=14)
+            frame.pack(fill="both", expand=True)
+            output = tk.Text(frame, wrap="word", height=18, relief="flat", bd=0,
+                             bg="#F5F7FA", fg="#344054", font=("TkFixedFont", 9))
+            scrollbar = ttk.Scrollbar(frame, orient="vertical", command=output.yview)
+            output.configure(yscrollcommand=scrollbar.set)
+            output.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            output.insert("1.0", maintenance_details["text"])
+            output.configure(state="disabled")
+
+        details_button = ttk.Button(
+            progress_card, text="Ver detalhes", style="Secondary.TButton",
+            command=show_maintenance_details, state="disabled",
+        )
+        details_button.pack(anchor="e", pady=(8, 0))
+
+        def show_maintenance_confirmation(title, description, confirm_label, on_confirm):
+            dialog = self._set_nova_window_icon(tk.Toplevel(window))
+            dialog.title(title)
+            dialog.transient(window)
+            dialog.resizable(False, False)
+            dialog.configure(bg="#E3E8F0")
+            frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=20)
+            frame.pack(fill="both", expand=True)
+            ttk.Label(frame, text=title, style="Title.TLabel").pack(anchor="w")
+            ttk.Label(frame, text=description, style="Subtitle.TLabel", wraplength=420).pack(anchor="w", pady=(8, 18))
+            actions = ttk.Frame(frame, style="Autonomy.TFrame")
+            actions.pack(fill="x")
+            ttk.Button(actions, text="Cancelar", style="Secondary.TButton", command=dialog.destroy).pack(side="right")
+
+            def confirm():
+                dialog.destroy()
+                on_confirm()
+
+            ttk.Button(
+                actions, text=confirm_label, style="Primary.TButton", command=confirm,
+            ).pack(side="right", padx=(0, 8))
+            dialog.geometry("500x220")
+            dialog.grab_set()
+            dialog.focus_set()
+
+        def show_package_review(title, description, packages, action_label=None, on_action=None):
+            dialog = self._set_nova_window_icon(tk.Toplevel(window))
+            dialog.title(title)
+            dialog.transient(window)
+            dialog.geometry("620x440")
+            dialog.minsize(500, 350)
+            dialog.configure(bg="#E3E8F0")
+            frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=16)
+            frame.pack(fill="both", expand=True)
+            ttk.Label(frame, text=title, style="Title.TLabel").pack(anchor="w")
+            count = len(packages)
+            count_text = f"{count} pacote(s)" if count else "Nenhum pacote"
+            ttk.Label(
+                frame, text=f"{description}  {count_text}.", style="Subtitle.TLabel",
+                wraplength=440,
+            ).pack(anchor="w", pady=(4, 12))
+            table_frame = ttk.Frame(frame, style="Card.TFrame", padding=4)
+            table_frame.pack(fill="both", expand=True)
+            columns = ("package", "current", "action")
+            table = ttk.Treeview(
+                table_frame, columns=columns, show="headings", height=12,
+                style="Maintenance.Treeview",
+            )
+            table.heading("package", text="Pacote")
+            table.heading("current", text="Versão instalada")
+            table.heading("action", text="Ação / nova versão")
+            table.column("package", width=200, minwidth=120, anchor="w")
+            table.column("current", width=130, minwidth=90, anchor="w")
+            table.column("action", width=200, minwidth=100, anchor="w")
+            scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+            horizontal_scrollbar = ttk.Scrollbar(
+                table_frame, orient="horizontal", command=table.xview,
+            )
+            table.configure(
+                yscrollcommand=scrollbar.set,
+                xscrollcommand=horizontal_scrollbar.set,
+            )
+            table.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            horizontal_scrollbar.pack(side="bottom", fill="x")
+            for package in packages:
+                table.insert("", "end", values=package)
+            if not packages:
+                ttk.Label(
+                    frame, text="Não há pacotes para mostrar.", style="Hint.TLabel",
+                ).pack(anchor="w", pady=(8, 0))
+            buttons = ttk.Frame(frame, style="Autonomy.TFrame")
+            buttons.pack(fill="x", pady=(12, 0))
+            ttk.Button(buttons, text="Fechar", style="Secondary.TButton", command=dialog.destroy).pack(side="right")
+            if packages and action_label and on_action:
+                def do_action():
+                    dialog.destroy()
+                    on_action()
+
+                ttk.Button(
+                    buttons, text=action_label, style="Primary.TButton", command=do_action,
+                ).pack(side="right", padx=(0, 8))
+            dialog.grab_set()
+            dialog.focus_set()
+
+        def parse_upgradable_packages(output):
+            packages = []
+            for line in output.splitlines():
+                if "upgradable" not in line.lower() or "/" not in line:
+                    continue
+                fields = line.split()
+                if len(fields) < 2:
+                    continue
+                name = fields[0].split("/", 1)[0]
+                candidate = fields[1]
+                installed = ""
+                match = re.search(r"\[upgradable from: ([^\]]+)\]", line)
+                if match:
+                    installed = match.group(1)
+                packages.append((name, installed, candidate))
+            return packages
+
+        def parse_removable_packages(output):
+            packages = []
+            for line in output.splitlines():
+                fields = line.split()
+                if len(fields) >= 2 and fields[0] in ("Remv", "Purg"):
+                    version = fields[2].strip("[]") if len(fields) >= 3 else ""
+                    packages.append((fields[1], version, "Será removido"))
+            return packages
+
+        def finish_maintenance(title, result, error, on_success=None):
+            if not window.winfo_exists():
+                return
+            computer_progress.stop()
+            computer_progress.pack_forget()
+            for button in maintenance_buttons:
+                button.configure(state="normal")
+            maintenance_details["text"] = (result or error or "").strip()
+            details_button.configure(state="normal" if maintenance_details["text"] else "disabled")
+            if error:
+                computer_status_label.configure(style="ComputerStatusError.TLabel")
+                computer_status.set(f"{title}: não foi concluído. Veja os detalhes para entender o erro.")
+                return
+            computer_status_label.configure(style="ComputerStatus.TLabel")
+            if title == "Verificar atualizações":
+                packages = parse_upgradable_packages(result)
+                if packages:
+                    summary = f"Há {len(packages)} atualização(ões) disponível(is)."
+                else:
+                    summary = "Seu sistema está atualizado."
+            elif title == "Atualizar sistema":
+                summary = "Atualização concluída."
+            elif title == "Limpar cache do APT":
+                summary = "Cache de pacotes limpo."
+            else:
+                summary = "Limpeza concluída."
+            computer_status.set(summary)
+            if title == "Verificar atualizações":
+                action = on_success or None
+                show_package_review(
+                    "Atualizações disponíveis", "Veja as versões encontradas pelo APT.",
+                    packages, "Atualizar pacotes" if action else None, action,
+                )
+            elif on_success:
+                on_success()
+
+        def run_maintenance(title, commands, on_success=None):
+            if self.system_maintenance_active:
+                messagebox.showinfo("Manutenção em andamento", "Aguarde a ação atual terminar.", parent=window)
+                return
+            self.system_maintenance_active = True
+            maintenance_details["text"] = ""
+            details_button.configure(state="disabled")
+            computer_status_label.configure(style="ComputerStatus.TLabel")
+            computer_status.set(f"{title} em andamento. O Linux pode solicitar autenticação.")
+            for button in maintenance_buttons:
+                button.configure(state="disabled")
+            computer_progress.pack(fill="x", pady=(10, 0), before=details_button)
+            computer_progress.start(12)
+
+            def worker():
+                output = []
+                error = None
+                try:
+                    for command in commands:
+                        completed = subprocess.run(
+                            command, capture_output=True, text=True, timeout=600,
+                            check=False,
+                        )
+                        details = (completed.stdout or "") + (completed.stderr or "")
+                        if details.strip():
+                            output.append(details.strip())
+                        if completed.returncode != 0:
+                            error = details.strip() or f"O comando terminou com código {completed.returncode}."
+                            break
+                except subprocess.TimeoutExpired:
+                    error = "A operação demorou demais e foi interrompida."
+                except OSError as exc:
+                    error = f"Não consegui iniciar a ação: {exc}"
+                finally:
+                    self.system_maintenance_active = False
+                self.root.after(0, lambda: finish_maintenance(
+                    title, "\n\n".join(output), error, on_success,
+                ))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def check_system_updates(for_upgrade=False):
+            followup = None
+            if for_upgrade:
+                followup = lambda: run_maintenance(
+                    "Atualizar sistema", [["pkexec", "apt-get", "upgrade", "-y"]],
+                )
+            run_maintenance("Verificar atualizações", [
+                ["pkexec", "apt-get", "update"],
+                ["apt", "list", "--upgradable"],
+            ], on_success=followup)
+
+        def add_maintenance_button(parent, text, style_name, command):
+            button = ttk.Button(parent, text=text, style=style_name, command=command)
+            button.pack(side="right", padx=(12, 0))
+            maintenance_buttons.append(button)
+            return button
+
+        def action_card(title, description):
+            action = ttk.Frame(computer_content, style="Card.TFrame", padding=(14, 11))
+            action.pack(fill="x", pady=(0, 9))
+            text_frame = ttk.Frame(action, style="Card.TFrame")
+            text_frame.pack(side="left", fill="x", expand=True)
+            ttk.Label(text_frame, text=title, style="CardTitle.TLabel").pack(anchor="w")
+            ttk.Label(text_frame, text=description, style="Hint.TLabel", wraplength=280).pack(anchor="w", pady=(3, 0))
+            return action
+
+        def preview_autoremove():
+            if self.system_maintenance_active:
+                messagebox.showinfo("Manutenção em andamento", "Aguarde a ação atual terminar.", parent=window)
+                return
+            self.system_maintenance_active = True
+            computer_status.set("Conferindo a prévia de remoção…")
+            details_button.configure(state="disabled")
+            for button in maintenance_buttons:
+                button.configure(state="disabled")
+            computer_progress.pack(fill="x", pady=(10, 0), before=details_button)
+            computer_progress.start(12)
+
+            def worker():
+                try:
+                    result = subprocess.run(
+                        ["apt-get", "-s", "autoremove"], capture_output=True,
+                        text=True, timeout=120, check=False,
+                    )
+                    details = (result.stdout or "") + (result.stderr or "")
+                    error = details.strip() if result.returncode else None
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    details = ""
+                    error = f"Não consegui verificar a lista: {exc}"
+                self.system_maintenance_active = False
+
+                def show_preview():
+                    if not window.winfo_exists():
+                        return
+                    computer_progress.stop()
+                    computer_progress.pack_forget()
+                    for button in maintenance_buttons:
+                        button.configure(state="normal")
+                    if error:
+                        maintenance_details["text"] = error
+                        details_button.configure(state="normal")
+                        computer_status_label.configure(style="ComputerStatusError.TLabel")
+                        computer_status.set("Não consegui preparar a prévia. Veja os detalhes.")
+                        return
+                    preview_text = details.strip() or "O APT não listou pacotes para remover."
+                    maintenance_details["text"] = preview_text
+                    details_button.configure(state="normal")
+                    packages = parse_removable_packages(preview_text)
+                    computer_status.set(f"Prévia pronta: {len(packages)} pacote(s) para revisar.")
+                    show_package_review(
+                        "Pacotes não utilizados", "O APT marcou estes pacotes para remoção.",
+                        packages, "Remover pacotes" if packages else None,
+                        lambda: run_maintenance(
+                            "Remover pacotes não utilizados",
+                            [["pkexec", "apt-get", "autoremove", "-y"]],
+                        ),
+                    )
+
+                self.root.after(0, show_preview)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        action = action_card("Atualizações disponíveis", "Atualiza a lista do APT e informa quais pacotes têm versões novas.")
+        add_maintenance_button(action, "Verificar", "Secondary.TButton", check_system_updates)
+        action = action_card("Atualizar programas", "Instala atualizações disponíveis sem remover pacotes.")
+        add_maintenance_button(
+            action, "Atualizar", "Primary.TButton",
+            lambda: check_system_updates(for_upgrade=True),
+        )
+        action = action_card("Pacotes não utilizados", "Mostra primeiro a prévia do que o APT pretende remover.")
+        add_maintenance_button(action, "Revisar", "Secondary.TButton", preview_autoremove)
+        action = action_card("Cache de downloads", "Apaga arquivos de instalação .deb já baixados pelo APT.")
+        add_maintenance_button(
+            action, "Limpar cache", "Secondary.TButton",
+            lambda: show_maintenance_confirmation(
+                "Limpar cache de downloads",
+                "Serão apagados os arquivos .deb já baixados pelo APT. Isso não remove programas instalados.",
+                "Limpar cache",
+                lambda: run_maintenance("Limpar cache do APT", [["pkexec", "apt-get", "clean"]]),
+            ),
+        )
 
         def setup_list(parent, items, format_item, empty_text):
             ttk.Label(parent, text=empty_text, style="PageHint.TLabel").pack(anchor="w", pady=(0, 8))
@@ -1110,7 +1636,12 @@ class DesktopPet:
                 bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 10),
                 selectbackground="#C7D2EE", selectmode="browse",
             )
-            listing.pack(fill="both", expand=True, padx=8, pady=7)
+            list_scrollbar = ttk.Scrollbar(
+                list_frame, orient="horizontal", command=listing.xview,
+            )
+            listing.configure(xscrollcommand=list_scrollbar.set)
+            listing.pack(fill="both", expand=True, padx=8, pady=(7, 0))
+            list_scrollbar.pack(fill="x", padx=8, pady=(0, 7))
             def refresh():
                 listing.delete(0, "end")
                 for item in items:
@@ -1123,14 +1654,36 @@ class DesktopPet:
             refresh()
             return listing, refresh, remove_selected
 
-        memory_card = card(memory_tab, "O que a Nova deve lembrar?", "Só use informações que você queira manter. Elas entram no contexto da IA local.")
+        protected_memory_card = card(
+            memory_content, "Memórias essenciais protegidas",
+            "Essas informações são controladas pelo código e não podem ser removidas pela lista de memórias.",
+        )
+        ttk.Label(
+            protected_memory_card, text="Nome da assistente: Nova · protegido",
+            style="CardTitle.TLabel",
+        ).pack(anchor="w", pady=(2, 4))
+        user_name_display = tk.StringVar(
+            value=(f"Seu nome: {self.settings['user_name']} · protegido"
+                   if self.settings.get("user_name") else "Seu nome ainda não foi informado.")
+        )
+        self._user_name_display_var = user_name_display
+        ttk.Label(
+            protected_memory_card, textvariable=user_name_display, style="CardTitle.TLabel",
+        ).pack(anchor="w")
+        if not self.settings.get("user_name"):
+            ttk.Button(
+                protected_memory_card, text="Informar meu nome", style="Secondary.TButton",
+                command=self.ask_user_name,
+            ).pack(anchor="w", pady=(8, 0))
+
+        memory_card = card(memory_content, "O que a Nova deve lembrar?", "Só use informações que você queira manter. Elas entram no contexto da IA local.")
         memory_entry = tk.StringVar()
         memory_form = ttk.Frame(memory_card, style="Card.TFrame")
         memory_form.pack(fill="x")
         memory_input = ttk.Entry(memory_form, textvariable=memory_entry, style="Autonomy.TEntry")
         memory_input.pack(side="left", fill="x", expand=True, ipady=5)
         memory_list, refresh_memories, remove_memory = setup_list(
-            memory_tab, memory_items, lambda item: item,
+            memory_content, memory_items, lambda item: item,
             "Suas memórias ficam neste computador e você pode removê-las quando quiser.",
         )
         def add_memory():
@@ -1141,9 +1694,179 @@ class DesktopPet:
                 refresh_memories()
         ttk.Button(memory_form, text="Adicionar", style="Primary.TButton", command=add_memory).pack(side="left", padx=(8, 0))
         memory_input.bind("<Return>", lambda _event: add_memory())
-        ttk.Button(memory_tab, text="Remover selecionada", style="Secondary.TButton", command=remove_memory).pack(anchor="e", pady=(10, 0))
+        ttk.Button(memory_content, text="Remover selecionada", style="Secondary.TButton", command=remove_memory).pack(anchor="e", pady=(10, 0))
 
-        reminder_card = card(reminder_tab, "Criar lembrete", "A data e hora seguem o relógio local deste computador.")
+        history_card = card(
+            history_content, "Histórico de conversa",
+            "Veja as mensagens salvas, quando foram registradas e apague uma mensagem ou todo o histórico.",
+        )
+        history_status = tk.StringVar(value="")
+        ttk.Label(history_card, textvariable=history_status, style="Hint.TLabel").pack(anchor="w")
+        history_list_frame = ttk.Frame(history_content, style="Card.TFrame", padding=4)
+        history_list_frame.pack(fill="both", expand=True, pady=(0, 10))
+        history_view = tk.Text(
+            history_list_frame, height=10, wrap="word", relief="flat", bd=0,
+            padx=10, pady=8, spacing1=2, spacing3=5,
+            bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 9),
+            cursor="arrow", takefocus=True,
+        )
+        history_scrollbar = ttk.Scrollbar(
+            history_list_frame, orient="vertical", command=history_view.yview,
+        )
+        history_view.configure(yscrollcommand=history_scrollbar.set)
+        history_view.pack(side="left", fill="both", expand=True)
+        history_scrollbar.pack(side="right", fill="y")
+        history_view.tag_configure(
+            "history_header", foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+        )
+        history_view.tag_configure("history_selected", background="#DFE6FA")
+        history_entries = []
+        selected_history = {"index": None}
+
+        def scroll_history(event):
+            if getattr(event, "num", None) == 4:
+                history_view.yview_scroll(-3, "units")
+            elif getattr(event, "num", None) == 5:
+                history_view.yview_scroll(3, "units")
+            elif event.delta:
+                amount = int(-event.delta / 120) if abs(event.delta) >= 120 else int(-event.delta)
+                if amount:
+                    history_view.yview_scroll(amount * 3, "units")
+            return "break"
+
+        history_view.bind("<MouseWheel>", scroll_history)
+        history_view.bind("<Button-4>", scroll_history)
+        history_view.bind("<Button-5>", scroll_history)
+
+        ttk.Label(history_content, text="Mensagem selecionada", style="CardTitle.TLabel").pack(anchor="w", pady=(2, 5))
+        history_detail_frame = ttk.Frame(history_content, style="Card.TFrame", padding=1)
+        history_detail_frame.pack(fill="x", pady=(0, 10))
+        history_detail = tk.Text(
+            history_detail_frame, height=5, wrap="word", relief="flat", bd=0,
+            bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 9),
+        )
+        history_detail_scrollbar = ttk.Scrollbar(
+            history_detail_frame, orient="vertical", command=history_detail.yview,
+        )
+        history_detail.configure(yscrollcommand=history_detail_scrollbar.set)
+        history_detail.pack(side="left", fill="both", expand=True)
+        history_detail_scrollbar.pack(side="right", fill="y")
+        history_detail.configure(state="disabled")
+
+        def show_selected_history_message(index=None):
+            if index is not None:
+                selected_history["index"] = index
+            index = selected_history["index"]
+            content = ""
+            if index is not None:
+                try:
+                    item = self.history[index]
+                    stamp = item.get("timestamp")
+                    if isinstance(stamp, str):
+                        try:
+                            local_time = datetime.fromisoformat(stamp).astimezone()
+                            when = local_time.strftime("%d/%m/%Y às %H:%M:%S")
+                        except ValueError:
+                            when = "Data/hora não registrada"
+                    else:
+                        when = "Data/hora não registrada"
+                    who = "Você" if item.get("role") == "user" else "Nova"
+                    content = f"{who} · {when}\n\n{item.get('content', '')}"
+                except (IndexError, ValueError):
+                    pass
+            history_detail.configure(state="normal")
+            history_detail.delete("1.0", "end")
+            history_detail.insert("1.0", content)
+            history_detail.configure(state="disabled")
+
+        def select_history_message(event):
+            line = int(history_view.index(f"@{event.x},{event.y}").split(".")[0])
+            for first_line, last_line, index, start, end in history_entries:
+                if first_line <= line <= last_line:
+                    selected_history["index"] = index
+                    history_view.tag_remove("history_selected", "1.0", "end")
+                    history_view.tag_add("history_selected", start, end)
+                    show_selected_history_message(index)
+                    break
+            return "break"
+
+        history_view.bind("<Button-1>", select_history_message)
+
+        def refresh_history():
+            history_view.configure(state="normal")
+            history_view.delete("1.0", "end")
+            history_entries.clear()
+            for index in range(len(self.history) - 1, -1, -1):
+                item = self.history[index]
+                if not isinstance(item, dict):
+                    continue
+                stamp = item.get("timestamp")
+                try:
+                    when = datetime.fromisoformat(stamp).astimezone().strftime("%d/%m/%Y %H:%M")
+                except (TypeError, ValueError):
+                    when = "Sem data/hora"
+                who = "Você" if item.get("role") == "user" else "Nova"
+                message = item.get("content", "")
+                if not isinstance(message, str):
+                    message = str(message)
+                message = message.strip() or "(mensagem vazia)"
+                start = history_view.index("end-1c")
+                first_line = int(start.split(".")[0])
+                history_view.insert("end", f"{who} · {when}\n", "history_header")
+                history_view.insert("end", f"{message}\n\n")
+                end = history_view.index("end-1c")
+                last_line = int(end.split(".")[0])
+                history_entries.append((first_line, last_line, index, start, end))
+            history_view.configure(state="disabled")
+            selected_history["index"] = None
+            history_status.set(f"{len(self.history)} mensagem(ns) salvas neste computador.")
+            show_selected_history_message()
+
+        def delete_history_message():
+            if self.ai_request_active:
+                messagebox.showinfo("Conversa em andamento", "Aguarde a resposta terminar antes de apagar mensagens.", parent=window)
+                return
+            index = selected_history["index"]
+            if index is None:
+                messagebox.showinfo("Selecione uma mensagem", "Escolha uma mensagem na lista para apagá-la.", parent=window)
+                return
+            removed = self.history.pop(index)
+            if not save_history(self.history):
+                self.history.insert(index, removed)
+                messagebox.showerror("Erro ao salvar", "Não consegui apagar a mensagem do arquivo de histórico.", parent=window)
+                return
+            refresh_history()
+
+        def clear_conversation_history():
+            if self.ai_request_active:
+                messagebox.showinfo("Conversa em andamento", "Aguarde a resposta terminar antes de apagar o histórico.", parent=window)
+                return
+            if not self.history:
+                return
+            if not messagebox.askyesno("Apagar histórico", "Apagar todas as mensagens salvas?", parent=window):
+                return
+            previous = self.history
+            self.history = []
+            if not save_history(self.history):
+                self.history = previous
+                messagebox.showerror("Erro ao salvar", "Não consegui apagar o arquivo de histórico.", parent=window)
+            else:
+                refresh_history()
+
+        history_actions = ttk.Frame(history_content, style="Autonomy.TFrame")
+        history_actions.pack(fill="x")
+        ttk.Button(
+            history_actions, text="Apagar mensagem selecionada", style="Secondary.TButton",
+            command=delete_history_message,
+        ).pack(side="left")
+        ttk.Button(
+            history_actions, text="Apagar todo o histórico", style="Secondary.TButton",
+            command=clear_conversation_history,
+        ).pack(side="right")
+        history_refresh_callback["callback"] = refresh_history
+        refresh_history()
+
+        reminder_card = card(reminder_content, "Criar lembrete", "A data e hora seguem o relógio local deste computador.")
         reminder_form = ttk.Frame(reminder_card, style="Card.TFrame")
         reminder_form.pack(fill="x")
         reminder_date = tk.StringVar()
@@ -1157,7 +1880,7 @@ class DesktopPet:
         ttk.Entry(reminder_form, textvariable=reminder_text, style="Autonomy.TEntry").grid(row=1, column=2, sticky="ew", pady=(3, 8), ipady=4)
         reminder_form.columnconfigure(2, weight=1)
         reminder_list, refresh_reminders, remove_reminder = setup_list(
-            reminder_tab, reminder_items,
+            reminder_content, reminder_items,
             lambda item: f"{item.get('at', '')[:16].replace('T', ' ')}   ·   {item.get('text', '')}",
             "Quando vencer, a Nova mostra o lembrete em um balão.",
         )
@@ -1174,10 +1897,10 @@ class DesktopPet:
             reminder_text.set("")
             refresh_reminders()
         ttk.Button(reminder_form, text="Adicionar", style="Primary.TButton", command=add_reminder).grid(row=2, column=0, columnspan=3, sticky="e")
-        ttk.Button(reminder_tab, text="Remover selecionado", style="Secondary.TButton", command=remove_reminder).pack(anchor="e", pady=(10, 0))
+        ttk.Button(reminder_content, text="Remover selecionado", style="Secondary.TButton", command=remove_reminder).pack(anchor="e", pady=(10, 0))
 
         app_card = card(
-            apps_tab,
+            apps_content,
             "Permitir que a Nova abra um app",
             "Cadastre apenas apps que você reconhece. Você pode escolher se a Nova confirma cada abertura.",
         )
@@ -1216,14 +1939,14 @@ class DesktopPet:
         app_error = tk.StringVar()
         app_error_label = ttk.Label(
             app_form, textvariable=app_error, foreground="#B42318",
-            background="#F5F7FA", wraplength=440,
+            background="#F5F7FA", wraplength=360,
         )
         app_error_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 5))
         app_buttons = ttk.Frame(app_form, style="Card.TFrame")
         app_buttons.grid(row=4, column=0, columnspan=2, sticky="ew")
         editing_app = {"index": None}
         app_list, refresh_apps, remove_app = setup_list(
-            apps_tab, app_items,
+            apps_content, app_items,
             lambda item: f"{item.get('name', '')}   ·   {item.get('command', '')}",
             "Selecione um app para editar ou remover. As alterações são salvas na hora.",
         )
@@ -1252,7 +1975,7 @@ class DesktopPet:
             remove_app_button.configure(state="normal")
 
         def open_app_picker():
-            picker = tk.Toplevel(window)
+            picker = self._set_nova_window_icon(tk.Toplevel(window))
             picker.title("Selecionar aplicativo instalado")
             picker.transient(window)
             picker.attributes("-topmost", True)
@@ -1279,9 +2002,16 @@ class DesktopPet:
                 selectbackground="#C7D2EE", selectmode="browse",
             )
             scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=result_list.yview)
-            result_list.configure(yscrollcommand=scrollbar.set)
+            horizontal_scrollbar = ttk.Scrollbar(
+                result_frame, orient="horizontal", command=result_list.xview,
+            )
+            result_list.configure(
+                yscrollcommand=scrollbar.set,
+                xscrollcommand=horizontal_scrollbar.set,
+            )
             result_list.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=7)
             scrollbar.pack(side="right", fill="y", padx=(0, 5), pady=7)
+            horizontal_scrollbar.pack(side="bottom", fill="x", padx=8, pady=(0, 7))
             feedback = tk.StringVar()
             ttk.Label(content, textvariable=feedback, style="PageHint.TLabel").pack(anchor="w", pady=(8, 0))
             installed_apps = find_installed_apps()
@@ -1437,11 +2167,11 @@ class DesktopPet:
                 duration = int(focus_minutes.get())
                 pause = int(break_minutes.get())
             except ValueError:
-                notebook.select(routine_tab)
+                select_tab(routine_tab)
                 messagebox.showerror("Duração inválida", "Informe durações em minutos.", parent=window)
                 return
             if not 5 <= duration <= 180 or not 1 <= pause <= 60:
-                notebook.select(routine_tab)
+                select_tab(routine_tab)
                 messagebox.showerror("Duração inválida", "Foco: 5–180 minutos. Pausa: 1–60 minutos.", parent=window)
                 return
             save_and_close((focus_goal.get(), duration, pause))
@@ -1454,7 +2184,7 @@ class DesktopPet:
                 for value in (quiet_start.get(), quiet_end.get()):
                     time.strptime(value, "%H:%M")
             except ValueError:
-                notebook.select(behavior_tab)
+                select_tab(behavior_tab)
                 messagebox.showerror("Horário inválido", "Use HH:MM nos horários de silêncio.", parent=window)
                 return
             try:
@@ -1462,11 +2192,11 @@ class DesktopPet:
                 pause = int(break_minutes.get())
                 time.strptime(evening_time.get(), "%H:%M")
             except ValueError:
-                notebook.select(routine_tab)
+                select_tab(routine_tab)
                 messagebox.showerror("Valor inválido", "Confira as durações e use HH:MM no horário de encerramento.", parent=window)
                 return
             if not 5 <= duration <= 180 or not 1 <= pause <= 60:
-                notebook.select(routine_tab)
+                select_tab(routine_tab)
                 messagebox.showerror("Duração inválida", "Foco: 5–180 minutos. Pausa: 1–60 minutos.", parent=window)
                 return
             updated = dict(self.settings)
@@ -1478,6 +2208,11 @@ class DesktopPet:
                 peekaboo=peekaboo.get(),
                 focus_minutes=duration, break_minutes=pause,
                 routine_greeting=routine_greeting.get(),
+                routine_context=routine_context.get(),
+                routine_idle_yawn=routine_idle_yawn.get(),
+                routine_focus_celebration=routine_focus_celebration.get(),
+                routine_note=routine_note.get(),
+                routine_surprise=routine_surprise.get(),
                 routine_evening=routine_evening.get(), evening_time=evening_time.get(),
             )
             if not save_settings(updated):
@@ -1489,6 +2224,10 @@ class DesktopPet:
             self.auto_sit_var.set(auto_sit.get())
             self.peekaboo_var.set(peekaboo.get())
             window.destroy()
+            if routine_greeting.get() and not self._routine_greeted:
+                self.root.after(500, self.show_start_greeting)
+            if routine_context.get():
+                self.root.after(1000, self.show_context_greeting)
             if focus_params:
                 self.start_focus(*focus_params)
             else:
@@ -1497,13 +2236,15 @@ class DesktopPet:
         ttk.Button(footer, text="Cancelar", style="Secondary.TButton", command=window.destroy).pack(side="right")
         ttk.Button(footer, text="Salvar alterações", style="Primary.TButton", command=save_and_close).pack(side="right", padx=(0, 8))
         if selected_tab == "routine":
-            notebook.select(routine_tab)
+            select_tab(routine_tab)
         elif selected_tab == "memory":
-            notebook.select(memory_tab)
+            select_tab(memory_tab)
         elif selected_tab == "reminder":
-            notebook.select(reminder_tab)
+            select_tab(reminder_tab)
         elif selected_tab == "apps":
-            notebook.select(apps_tab)
+            select_tab(apps_tab)
+        elif selected_tab == "computer":
+            select_tab(computer_tab)
         window.bind("<Escape>", lambda _event: window.destroy())
         window.bind("<Control-Return>", lambda _event: save_and_close())
 
@@ -1530,17 +2271,66 @@ class DesktopPet:
         self.root.after(15000, self.check_reminders)
 
     def show_start_greeting(self):
-        if self._closing or self._routine_greeted or self._is_quiet_time():
+        if (self._closing or self._routine_greeted or self._is_quiet_time()
+                or not self.settings.get("user_name")):
             return
         self._routine_greeted = True
         hour = datetime.now().astimezone().hour
         if hour < 12:
-            greeting = "Bom dia! Qual é sua prioridade de hoje?"
+            greeting = f"Bom dia, {self.settings['user_name']}! Qual é sua prioridade de hoje?"
         elif hour < 18:
-            greeting = "Oi! Quer escolher uma prioridade para hoje?"
+            greeting = f"Oi, {self.settings['user_name']}! Quer escolher uma prioridade para hoje?"
         else:
-            greeting = "Boa noite! Espero que seu dia tenha ido bem."
+            greeting = f"Boa noite, {self.settings['user_name']}! Espero que seu dia tenha ido bem."
+        self.state = "greeting"
         self.show_bubble(greeting, duration=7000)
+        self.root.after(5000, self.finish_greeting)
+
+    def finish_greeting(self):
+        if not self._closing and self.state == "greeting":
+            self.state = "walk"
+
+    def show_context_greeting(self):
+        if self._closing or self._is_quiet_time() or not self.settings.get("user_name"):
+            return
+        now = datetime.now().astimezone()
+        today = now.date().isoformat()
+        if self.settings.get("last_context_date") == today:
+            return
+        if self.busy or self.focus_mode != "idle":
+            self.root.after(60000, self.show_context_greeting)
+            return
+        hour = now.hour
+        if hour < 12:
+            line = f"Bom dia, {self.settings['user_name']}! Que bom ter você por aqui."
+        elif hour < 18:
+            line = f"Boa tarde, {self.settings['user_name']}! Espero que seu dia esteja indo bem."
+        else:
+            line = f"Boa noite, {self.settings['user_name']}! Vamos com calma por aí."
+        self.settings["last_context_date"] = today
+        save_settings(self.settings)
+        self.show_bubble(line, duration=6000)
+
+    def check_occasional_note(self):
+        if self._closing:
+            return
+        now = time.time()
+        available = (
+            self.settings.get("routine_note")
+            and now - self.settings.get("last_note_at", 0) >= 4 * 60 * 60
+            and not self._is_quiet_time() and self.focus_mode == "idle"
+            and not self.busy and not self.dragging and not self.ai_request_active
+            and not self.is_covered()
+        )
+        if available and random.random() < 0.08:
+            self.settings["last_note_at"] = int(now)
+            save_settings(self.settings)
+            self.show_bubble(random.choice((
+                "Só passando pra lembrar que você está fazendo o seu melhor.",
+                "Espero que você esteja se tratando com carinho hoje.",
+                "Oi, estou aqui se quiser uma companhia.",
+            )), duration=6000)
+        self.root.after(300000, self.check_occasional_note)
 
     def check_daily_routine(self):
         if self._closing:
@@ -1555,6 +2345,46 @@ class DesktopPet:
             save_settings(self.settings)
             self.show_bubble("Hora de encerrar: confira seus lembretes e descanse um pouco.", duration=9000)
         self.root.after(30000, self.check_daily_routine)
+
+    def check_daily_surprise(self):
+        if self._closing:
+            return
+        now = datetime.now().astimezone()
+        today = now.date().isoformat()
+        available = (
+            self.settings.get("routine_surprise")
+            and self.settings.get("last_surprise_date") != today
+            and not self._is_quiet_time()
+            and self.focus_mode == "idle"
+            and not self.busy
+            and not self.dragging
+            and not self.ai_request_active
+            and not self.is_covered()
+        )
+        if available and random.random() < 0.15:
+            self.settings["last_surprise_date"] = today
+            save_settings(self.settings)
+            if random.choice(("wave", "yawn")) == "yawn":
+                self.state = "yawning"
+                line = random.choice((
+                    "Haaam... pausa pra espreguiçar!",
+                    "Quase dormi aqui... como você está?",
+                ))
+            else:
+                self.state = "celebrating"
+                line = random.choice((
+                    "Passei só pra deixar um oi pra você!",
+                    "Uma pausa pequena também conta. Como você está?",
+                    "Surpresinha do dia: você está indo muito bem!",
+                    "Oi! Trouxe um aceno e um pouquinho de companhia.",
+                ))
+            self.show_bubble(line, duration=6500)
+            self.root.after(6500, self.finish_surprise)
+        self.root.after(300000, self.check_daily_surprise)
+
+    def finish_surprise(self):
+        if not self._closing and self.state in ("celebrating", "yawning"):
+            self.state = "walk"
 
     def start_focus(self, goal, focus_minutes, break_minutes):
         if self.focus_mode != "idle":
@@ -1580,12 +2410,21 @@ class DesktopPet:
         if self._closing or self.focus_mode != "focus":
             return
         self.focus_mode = "break"
-        self.state = "sitting"  # Usa a animação de descanso que já existe.
+        self.state = (
+            "celebrating" if getattr(self, "settings", {}).get("routine_focus_celebration")
+            else "sitting"
+        )
         self.show_bubble(
             f"Boa! Foco concluído. Descanse por {self.break_minutes} min: olhe para longe e se alongue.",
             duration=12_000,
         )
+        if self.state == "celebrating":
+            self.root.after(4500, self.enter_focus_break)
         self._focus_job = self.root.after(self.break_minutes * 60_000, self.finish_break)
+
+    def enter_focus_break(self):
+        if not self._closing and self.focus_mode == "break" and self.state == "celebrating":
+            self.state = "sitting"
 
     def finish_break(self):
         self._focus_job = None
@@ -1780,8 +2619,81 @@ class DesktopPet:
                 duration=4000,
             )
 
+    def ask_user_name(self):
+        if self._closing or self.settings.get("user_name") or self._user_name_dialog:
+            return
+        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
+        self._user_name_dialog = dialog
+        dialog.title("Como devo chamar você?")
+        dialog.transient(self.root)
+        dialog.attributes("-topmost", True)
+        dialog.resizable(False, False)
+        dialog.configure(bg="#E3E8F0")
+        style = ttk.Style(dialog)
+        style.configure("Autonomy.TFrame", background="#E3E8F0")
+        style.configure("Title.TLabel", background="#E3E8F0", foreground="#202B45", font=("TkDefaultFont", 14, "bold"))
+        style.configure("Subtitle.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
+        style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
+        style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
+        style.configure("Secondary.TButton", padding=(12, 8))
+        frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=20)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Oi! Eu sou a Nova", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            frame, text="Como você gostaria que eu te chamasse? Vou guardar seu nome para nossas próximas conversas.",
+            style="Subtitle.TLabel", wraplength=360,
+        ).pack(anchor="w", pady=(6, 14))
+        name = tk.StringVar()
+        name_entry = ttk.Entry(frame, textvariable=name, style="Autonomy.TEntry", width=36)
+        name_entry.pack(fill="x", ipady=5)
+        error = tk.StringVar()
+        ttk.Label(frame, textvariable=error, style="Hint.TLabel", foreground="#B42318").pack(anchor="w", pady=(5, 0))
+        buttons = ttk.Frame(frame, style="Autonomy.TFrame")
+        buttons.pack(fill="x", pady=(14, 0))
+
+        def close_dialog():
+            self._user_name_dialog = None
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
+
+        def save_name():
+            value = name.get().strip()
+            if not value:
+                error.set("Escreva seu nome para eu poder guardá-lo.")
+                name_entry.focus_set()
+                return
+            updated = dict(self.settings)
+            updated["user_name"] = value[:60]
+            if not save_settings(updated):
+                error.set("Não consegui salvar agora. Confira as permissões e tente novamente.")
+                return
+            self.settings = updated
+            close_dialog()
+            if hasattr(self, "_user_name_display_var"):
+                self._user_name_display_var.set(f"Seu nome: {updated['user_name']} · protegido")
+            self.show_bubble(f"Prazer em conhecer você, {updated['user_name']}! Vou lembrar do seu nome.", duration=7000)
+            if self.settings.get("routine_greeting") and not self._routine_greeted:
+                self.root.after(7500, self.show_start_greeting)
+            if self.settings.get("routine_context"):
+                self.root.after(8000, self.show_context_greeting)
+
+        ttk.Button(buttons, text="Agora não", style="Secondary.TButton", command=close_dialog).pack(side="right")
+        ttk.Button(buttons, text="Guardar nome", style="Primary.TButton", command=save_name).pack(side="right", padx=(0, 8))
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
+        dialog.bind("<Return>", lambda _event: save_name())
+        dialog.bind("<Escape>", lambda _event: close_dialog())
+        dialog.update_idletasks()
+        x = max(0, (self.screen_w - dialog.winfo_reqwidth()) // 2)
+        y = max(0, (self.screen_h - dialog.winfo_reqheight()) // 2)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.grab_set()
+        name_entry.focus_set()
+
     # ---------- integração com a IA local ----------
     def ask_menu(self, event=None):
+        self._last_user_activity_at = time.monotonic()
         if self.ai_request_active:
             self.show_bubble("Já estou respondendo sua pergunta!", duration=2500)
             return
@@ -1812,7 +2724,10 @@ class DesktopPet:
             self._record_local_interaction(question, answer)
             self.show_bubble(answer)
             return
-        self.history.append({"role": "user", "content": question})
+        self.history.append({
+            "role": "user", "content": question,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        })
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
         request_history = list(self.history)
         self.ai_request_active = True
@@ -1821,12 +2736,16 @@ class DesktopPet:
         self._thinking_started_at = time.monotonic()
         self.show_bubble("pensando...", duration=999999)
         memories = list(self.settings.get("memories", []))
+        user_name = self.settings.get("user_name", "").strip()
+        if user_name:
+            memories.insert(0, f"O nome da pessoa usuária é {user_name}; use esse nome naturalmente ao conversar.")
         threading.Thread(target=self._ask_worker, args=(request_history, memories), daemon=True).start()
 
     def _record_local_interaction(self, question, answer):
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
         self.history.extend((
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": answer},
+            {"role": "user", "content": question, "timestamp": timestamp},
+            {"role": "assistant", "content": answer, "timestamp": timestamp},
         ))
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
         if not save_history(self.history):
@@ -1850,7 +2769,7 @@ class DesktopPet:
         return x, y, width, height
 
     def _ask_question(self):
-        dialog = tk.Toplevel(self.root)
+        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
         dialog.title("Perguntar à Nova")
         dialog.transient(self.root)
         dialog.resizable(False, False)
@@ -1963,7 +2882,10 @@ class DesktopPet:
         if self._closing:
             return
         self.ai_request_active = False
-        self.history.append({"role": "assistant", "content": answer})
+        self.history.append({
+            "role": "assistant", "content": answer,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        })
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
         history_saved = save_history(self.history)
         self.state = "walk"
