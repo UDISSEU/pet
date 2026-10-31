@@ -82,7 +82,10 @@ from config import (
     WALK_DIRECTION_CHANGE_MIN_SECONDS,
     WIDTH,
 )
-from ollama_client import ask_local_ai, load_history, save_history
+from ollama_client import load_history, save_history
+from ai.ai_core import AICore
+from providers.base_provider import ProviderError
+from providers.provider_factory import create_provider
 from x11_helper import X11Helper
 
 try:
@@ -117,6 +120,7 @@ class DesktopPet:
             pass
         self._closing = False
         self._ai_results = queue.Queue()
+        self._provider_test_results = queue.Queue()
         self._app_launch_results = queue.Queue()
         self.app_launch_active = False
         self.system_maintenance_active = False
@@ -462,6 +466,8 @@ class DesktopPet:
         now = time.monotonic()
         if hasattr(self, "_ai_results"):
             self._drain_ai_results()
+        if hasattr(self, "_provider_test_results"):
+            self._drain_provider_test_results()
         if hasattr(self, "_app_launch_results"):
             self._drain_app_launch_results()
         raw_elapsed = max(0.0, now - self._last_tick_at)
@@ -1134,6 +1140,7 @@ class DesktopPet:
         reminder_tab, reminder_content = scrollable_tab()
         apps_tab, apps_content = scrollable_tab()
         computer_tab, computer_content = scrollable_tab()
+        ai_tab, ai_content = scrollable_tab()
         register_tab(behavior_tab, "Comportamento")
         register_tab(routine_tab, "Foco e rotina")
         register_tab(memory_tab, "Memórias")
@@ -1141,6 +1148,7 @@ class DesktopPet:
         register_tab(reminder_tab, "Lembretes")
         register_tab(apps_tab, "Aplicativos")
         register_tab(computer_tab, "Meu Computador")
+        register_tab(ai_tab, "Inteligência artificial")
 
         mode = tk.StringVar(value=self.settings.get("mode", "companhia"))
         quiet_start = tk.StringVar(value=self.settings.get("quiet_start", "22:00"))
@@ -1163,6 +1171,15 @@ class DesktopPet:
         confirm_app_launch = tk.BooleanVar(
             value=self.settings.get("confirm_app_launch", False)
         )
+        ai_provider = tk.StringVar(value=self.settings.get("ai_provider", "ollama"))
+        online_ai_enabled = tk.BooleanVar(value=self.settings.get("online_ai_enabled", False))
+        allow_online_data = tk.BooleanVar(value=self.settings.get("allow_online_data", False))
+        confirm_free_tier = tk.BooleanVar(value=self.settings.get("confirm_free_tier", False))
+        ai_timeout = tk.StringVar(value=str(self.settings.get("ai_timeout", 30)))
+        ollama_model = tk.StringVar(value=self.settings.get("ollama_model", "llama3.2:1b"))
+        gemini_model = tk.StringVar(value=self.settings.get("gemini_model", "gemini-3.8-flash"))
+        groq_model = tk.StringVar(value=self.settings.get("groq_model", "openai/gpt-oss-20b"))
+        mistral_model = tk.StringVar(value=self.settings.get("mistral_model", "mistral-small-latest"))
         memory_items = list(self.settings.get("memories", []))
         reminder_items = list(self.settings.get("reminders", []))
         app_items = list(self.settings.get("apps", []))
@@ -1174,6 +1191,88 @@ class DesktopPet:
             if hint:
                 ttk.Label(frame, text=hint, style="Hint.TLabel", wraplength=360).pack(anchor="w", pady=(3, 8))
             return frame
+
+        ai_provider_card = card(
+            ai_content, "Provedor de conversa",
+            "A Nova começa usando o Ollama local. Provedores online só recebem o histórico recente e memórias relacionadas depois que você habilitar o uso e autorizar o envio.",
+        )
+        ttk.Label(ai_provider_card, text="Provedor", style="Hint.TLabel").pack(anchor="w")
+        ttk.Combobox(
+            ai_provider_card, textvariable=ai_provider,
+            values=("ollama", "gemini", "groq", "mistral"), state="readonly",
+        ).pack(fill="x", pady=(3, 8))
+        ttk.Checkbutton(
+            ai_provider_card, text="Ativar provedor online selecionado",
+            variable=online_ai_enabled,
+        ).pack(anchor="w", pady=2)
+        ttk.Checkbutton(
+            ai_provider_card,
+            text="Autorizo enviar histórico recente e memórias relacionadas\nà pergunta ao provedor online",
+            variable=allow_online_data,
+        ).pack(anchor="w", pady=2)
+        ttk.Checkbutton(
+            ai_provider_card,
+            text="Confirmei no painel que minha chave usa modalidade gratuita\ne que a cobrança está desabilitada",
+            variable=confirm_free_tier,
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            ai_provider_card,
+            text="O teste verifica a chave e a disponibilidade do modelo sem enviar conversas. Chaves (nunca gravadas nas preferências): GEMINI_API_KEY, GROQ_API_KEY ou MISTRAL_API_KEY; o lançador também lê as três do cofre do sistema. Confira privacidade, limites e cobrança no painel do provedor.",
+            style="Hint.TLabel", wraplength=400,
+        ).pack(anchor="w", pady=(5, 8))
+        test_row = ttk.Frame(ai_provider_card, style="Card.TFrame")
+        test_row.pack(fill="x", pady=(0, 8))
+        test_status = tk.StringVar(value="")
+        test_button_state = {"running": False}
+        test_button = ttk.Button(
+            test_row, text="Testar conexão", style="Secondary.TButton",
+        )
+        test_button.pack(side="left")
+        ttk.Label(test_row, textvariable=test_status, style="Hint.TLabel", wraplength=265).pack(
+            side="left", fill="x", expand=True, padx=(8, 0),
+        )
+
+        def test_selected_provider():
+            if test_button_state["running"]:
+                return
+            try:
+                timeout_value = int(ai_timeout.get())
+            except ValueError:
+                test_status.set("Informe um timeout entre 5 e 30 segundos.")
+                return
+            if not 5 <= timeout_value <= 30:
+                test_status.set("Informe um timeout entre 5 e 30 segundos.")
+                return
+            provider_name = ai_provider.get()
+            provider_settings = dict(self.settings)
+            provider_settings.update(
+                ai_provider=provider_name,
+                ai_timeout=timeout_value,
+                ollama_model=ollama_model.get().strip(),
+                gemini_model=gemini_model.get().strip(),
+                groq_model=groq_model.get().strip(),
+                mistral_model=mistral_model.get().strip(),
+            )
+            test_button_state["running"] = True
+            test_button.configure(state="disabled")
+            test_status.set("Testando…")
+            threading.Thread(
+                target=self._provider_test_worker,
+                args=(provider_name, provider_settings, window, test_status, test_button, test_button_state),
+                daemon=True,
+            ).start()
+
+        test_button.configure(command=test_selected_provider)
+        ttk.Label(ai_provider_card, text="Modelo Ollama", style="Hint.TLabel").pack(anchor="w")
+        ttk.Entry(ai_provider_card, textvariable=ollama_model, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
+        ttk.Label(ai_provider_card, text="Modelo Gemini", style="Hint.TLabel").pack(anchor="w")
+        ttk.Entry(ai_provider_card, textvariable=gemini_model, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
+        ttk.Label(ai_provider_card, text="Modelo Groq", style="Hint.TLabel").pack(anchor="w")
+        ttk.Entry(ai_provider_card, textvariable=groq_model, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
+        ttk.Label(ai_provider_card, text="Modelo Mistral", style="Hint.TLabel").pack(anchor="w")
+        ttk.Entry(ai_provider_card, textvariable=mistral_model, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
+        ttk.Label(ai_provider_card, text="Timeout (5–30 segundos)", style="Hint.TLabel").pack(anchor="w")
+        ttk.Entry(ai_provider_card, textvariable=ai_timeout, style="Autonomy.TEntry").pack(fill="x", pady=(2, 0))
 
         mode_card = card(behavior_content, "Como a Nova deve se comportar?", "Você pode personalizar as opções abaixo depois de escolher um modo.")
         mode_row = ttk.Frame(mode_card, style="Card.TFrame")
@@ -2199,6 +2298,16 @@ class DesktopPet:
                 select_tab(routine_tab)
                 messagebox.showerror("Duração inválida", "Foco: 5–180 minutos. Pausa: 1–60 minutos.", parent=window)
                 return
+            try:
+                timeout_value = int(ai_timeout.get())
+            except ValueError:
+                select_tab(ai_tab)
+                messagebox.showerror("Timeout inválido", "Informe um número entre 5 e 30 segundos.", parent=window)
+                return
+            if not 5 <= timeout_value <= 30:
+                select_tab(ai_tab)
+                messagebox.showerror("Timeout inválido", "Informe um número entre 5 e 30 segundos.", parent=window)
+                return
             updated = dict(self.settings)
             updated.update(
                 mode=mode.get(), quiet_start=quiet_start.get(), quiet_end=quiet_end.get(),
@@ -2214,6 +2323,12 @@ class DesktopPet:
                 routine_note=routine_note.get(),
                 routine_surprise=routine_surprise.get(),
                 routine_evening=routine_evening.get(), evening_time=evening_time.get(),
+                ai_provider=ai_provider.get(), online_ai_enabled=online_ai_enabled.get(),
+                allow_online_data=allow_online_data.get(),
+                confirm_free_tier=confirm_free_tier.get(), ai_timeout=timeout_value,
+                ollama_model=ollama_model.get().strip(),
+                gemini_model=gemini_model.get().strip(), groq_model=groq_model.get().strip(),
+                mistral_model=mistral_model.get().strip(),
             )
             if not save_settings(updated):
                 messagebox.showerror("Erro ao salvar", "Não consegui salvar as preferências.", parent=window)
@@ -2245,6 +2360,8 @@ class DesktopPet:
             select_tab(apps_tab)
         elif selected_tab == "computer":
             select_tab(computer_tab)
+        elif selected_tab == "ai":
+            select_tab(ai_tab)
         window.bind("<Escape>", lambda _event: window.destroy())
         window.bind("<Control-Return>", lambda _event: save_and_close())
 
@@ -2739,7 +2856,11 @@ class DesktopPet:
         user_name = self.settings.get("user_name", "").strip()
         if user_name:
             memories.insert(0, f"O nome da pessoa usuária é {user_name}; use esse nome naturalmente ao conversar.")
-        threading.Thread(target=self._ask_worker, args=(request_history, memories), daemon=True).start()
+        threading.Thread(
+            target=self._ask_worker,
+            args=(request_history, memories, dict(self.settings)),
+            daemon=True,
+        ).start()
 
     def _record_local_interaction(self, question, answer):
         timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -2862,13 +2983,39 @@ class DesktopPet:
         self.root.wait_window(dialog)
         return result["question"]
 
-    def _ask_worker(self, history, memories=None):
+    def _ask_worker(self, history, memories=None, settings=None):
         try:
-            answer = ask_local_ai(history, memories=memories)
+            answer = AICore(settings=settings or self.settings).process_message(
+                history, memories=memories,
+            )
         except Exception:
-            logging.getLogger(__name__).exception("Falha inesperada ao consultar o Ollama")
+            logging.getLogger(__name__).exception("Falha inesperada ao consultar o provedor de IA")
             answer = "Tive um problema ao consultar a IA. Tente novamente daqui a pouco."
         self._ai_results.put(answer)
+
+    def _provider_test_worker(self, provider_name, settings, window, status_var, button, button_state):
+        try:
+            provider = create_provider(provider_name, settings)
+            result = provider.test_connection(timeout=min(15, settings.get("ai_timeout", 10)))
+        except ProviderError as exc:
+            result = str(exc)
+        except Exception:
+            logging.getLogger(__name__).exception("Falha inesperada no teste do provedor de IA")
+            result = "O teste de conexão falhou por um erro inesperado."
+        self._provider_test_results.put((window, status_var, button, result, button_state))
+
+    def _drain_provider_test_results(self):
+        try:
+            window, status_var, button, result, button_state = self._provider_test_results.get_nowait()
+        except queue.Empty:
+            return
+        button_state["running"] = False
+        try:
+            if window.winfo_exists():
+                status_var.set(result)
+                button.configure(state="normal")
+        except tk.TclError:
+            pass
 
     def _drain_ai_results(self):
         try:

@@ -33,6 +33,15 @@ DEFAULT_SETTINGS = {
     "routine_evening": False,
     "evening_time": "20:30",
     "last_evening_date": "",
+    "ai_provider": "ollama",
+    "online_ai_enabled": False,
+    "allow_online_data": False,
+    "confirm_free_tier": False,
+    "ai_timeout": 30,
+    "ollama_model": "llama3.2:1b",
+    "gemini_model": "gemini-3.8-flash",
+    "groq_model": "openai/gpt-oss-20b",
+    "mistral_model": "mistral-small-latest",
 }
 
 
@@ -114,6 +123,23 @@ def load_settings(path=SETTINGS_PATH):
         result["evening_time"] = "20:30"
     if not isinstance(result.get("last_evening_date"), str):
         result["last_evening_date"] = ""
+    if result.get("ai_provider") not in ("ollama", "gemini", "groq", "mistral"):
+        result["ai_provider"] = "ollama"
+    for key in ("online_ai_enabled", "allow_online_data", "confirm_free_tier"):
+        if not isinstance(result.get(key), bool):
+            result[key] = False
+    try:
+        result["ai_timeout"] = min(30, max(5, int(result.get("ai_timeout", 30))))
+    except (TypeError, ValueError):
+        result["ai_timeout"] = 30
+    for key, default in (
+        ("ollama_model", "llama3.2:1b"),
+        ("gemini_model", "gemini-3.8-flash"),
+        ("groq_model", "openai/gpt-oss-20b"),
+        ("mistral_model", "mistral-small-latest"),
+    ):
+        value = result.get(key)
+        result[key] = value.strip()[:100] if isinstance(value, str) and value.strip() else default
     return result
 
 
