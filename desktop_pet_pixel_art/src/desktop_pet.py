@@ -51,8 +51,8 @@ try:
     from animation import load_video_frames
     from PIL import Image, ImageDraw, ImageTk
 except ImportError as exc:
-    if exc.name in ("PIL", "cv2"):
-        dependency = "Pillow" if exc.name == "PIL" else "OpenCV"
+    if exc.name in ("PIL", "cv2", "numpy"):
+        dependency = {"PIL": "Pillow", "cv2": "OpenCV", "numpy": "NumPy"}[exc.name]
         print(
             f"Falta a dependência {dependency}. Instale as dependências com ./install.sh.",
             file=sys.stderr,

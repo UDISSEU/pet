@@ -95,7 +95,7 @@ try:
 except SystemExit as exc:
     raise SystemExit(exc.code)
 '''
-        for missing, label in (("cv2", "OpenCV"), ("PIL", "Pillow")):
+        for missing, label in (("cv2", "OpenCV"), ("PIL", "Pillow"), ("numpy", "NumPy")):
             with self.subTest(dependency=label):
                 result = desktop_pet.subprocess.run(
                     [sys.executable, "-c", script, str(SRC), missing, str(SRC / "desktop_pet.py")],
