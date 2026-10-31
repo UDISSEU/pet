@@ -2572,9 +2572,10 @@ class DesktopPet:
             decomposed = unicodedata.normalize("NFKD", value.casefold())
             return "".join(char for char in decomposed if not unicodedata.combining(char))
 
-        normalized_question = normalize(question)
-        if not self._is_app_open_request(normalized_question):
+        target = self._app_open_target(question)
+        if not target:
             return None
+        normalized_question = normalize(target)
 
         def contains_phrase(text, phrase):
             return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text))
@@ -2650,24 +2651,43 @@ class DesktopPet:
         return None
 
     @staticmethod
-    def _is_app_open_request(question):
-        return bool(re.search(
-            r"\b(abrir|abro|abre|abra|abram|abri|abriu|abrindo|abriria|abririam|"
-            r"iniciar|inicio|inicia|inicie|iniciem|iniciam|iniciando|iniciou|"
-            r"executar|executo|executa|execute|executem|executam|executei|"
-            r"executou|executava|executando|executaria|executariam)\b",
-            question.casefold(),
-        ))
+    def _app_open_target(question):
+        match = re.match(
+            r"^\s*(?:(?:pode|poderia)\s+)?(?:(?:por\s+favor)[,:]?\s+)?"
+            r"(?:abre|abra|abrir|inicia|iniciar|executa|executar)\s+(.+?)\s*[.!?]*\s*$",
+            question,
+            re.IGNORECASE,
+        )
+        return match.group(1).strip() if match else ""
 
-    @staticmethod
-    def _is_short_imperative_open_request(question):
-        normalized = unicodedata.normalize("NFKD", question.casefold())
-        normalized = "".join(c for c in normalized if not unicodedata.combining(c))
-        return bool(re.fullmatch(
-            r"\s*(?:abre|abra|abrir|inicia|inicie|iniciar|executa|execute|executar)"
-            r"\s+(?:o\s+|a\s+|the\s+)?[\w.+-]+\s*[.!?]*\s*",
-            normalized,
-        ))
+    @classmethod
+    def _is_app_open_request(cls, question):
+        return bool(cls._app_open_target(question))
+
+    def _looks_like_app_target(self, question):
+        target = self._app_open_target(question)
+        if not target:
+            return False
+        words = re.findall(r"[\w.+-]+", target)
+        if not words:
+            return False
+        articles = {"o", "a", "os", "as", "um", "uma", "uns", "umas", "the"}
+        while words and words[0].casefold() in articles:
+            words.pop(0)
+        if not words:
+            return False
+        non_app_targets = {
+            "codigo", "code", "sql", "script", "arquivo", "ficheiro", "html",
+            "csv", "json", "python", "javascript", "css", "texto",
+        }
+        normalized_words = [
+            "".join(c for c in unicodedata.normalize("NFKD", word.casefold())
+                    if not unicodedata.combining(c))
+            for word in words
+        ]
+        if len(words) == 1:
+            return normalized_words[0] not in non_app_targets
+        return any(word[:1].isupper() for word in words)
 
     def _confirm_open_app(self, question, app):
         if getattr(self, "app_launch_active", False):
@@ -2855,7 +2875,7 @@ class DesktopPet:
         if app:
             self._confirm_open_app(question, app)
             return
-        if self._is_short_imperative_open_request(question):
+        if self._is_app_open_request(question) and self._looks_like_app_target(question):
             answer = (
                 "Não encontrei um aplicativo cadastrado que corresponda ao pedido. "
                 "Cadastre-o na aba Aplicativos e tente novamente."

@@ -123,19 +123,23 @@ class TestHelperModules(unittest.TestCase):
         pet.settings = {"apps": [app]}
 
         for request in (
-            "abri Sober",
-            "ABRI Sober",
             "Abra Sober",
             "ABRA Sober",
-            "execute Sober",
-            "EXECUTE Sober",
             "executar Sober",
             "Executa Sober",
-            "executem Sober",
+            "pode abrir Sober",
+            "poderia por favor, iniciar Sober",
         ):
             with self.subTest(request=request):
                 self.assertTrue(DesktopPet._is_app_open_request(request))
                 self.assertEqual(pet._matching_app(request), app)
+        for question in (
+            "como executar Sober?", "qual app abre Sober?", "por que iniciar Sober?",
+            "o que executar Sober?", "quando abrir Sober?",
+        ):
+            with self.subTest(question=question):
+                self.assertFalse(DesktopPet._is_app_open_request(question))
+                self.assertIsNone(pet._matching_app(question))
 
     def test_registered_app_matching_accepts_google_alias_and_avoids_ambiguity(self):
         pet = DesktopPet.__new__(DesktopPet)
@@ -163,12 +167,12 @@ class TestHelperModules(unittest.TestCase):
         app = {"name": "Google", "command": "browser --new-window https://google.com"}
         pet.settings = {"apps": [app]}
         pet.ai_request_active = False
-        pet._ask_question = mock.Mock(return_value="Quero abrir o Google")
+        pet._ask_question = mock.Mock(return_value="Abra o Google")
         pet._confirm_open_app = mock.Mock()
 
         pet.ask_menu()
 
-        pet._confirm_open_app.assert_called_once_with("Quero abrir o Google", app)
+        pet._confirm_open_app.assert_called_once_with("Abra o Google", app)
 
     def test_google_request_runs_saved_command_without_confirmation_when_disabled(self):
         pet = DesktopPet.__new__(DesktopPet)
@@ -257,13 +261,13 @@ class TestHelperModules(unittest.TestCase):
             "Abra a Calculadora", "Aberto!"
         )
 
-    def test_first_person_abri_request_uses_saved_app_instead_of_ai(self):
+    def test_imperative_opens_saved_app_instead_of_ai(self):
         pet = DesktopPet.__new__(DesktopPet)
         app = {"name": "Sober", "command": "sober"}
         pet.settings = {"apps": [app], "confirm_app_launch": False}
         pet._installed_apps_cache = None
         pet.ai_request_active = False
-        pet._ask_question = mock.Mock(return_value="Abri Sober")
+        pet._ask_question = mock.Mock(return_value="Abra Sober")
         pet._app_launch_results = queue.Queue()
         pet._closing = False
         pet._record_local_interaction = mock.Mock(return_value="Aberto!")
@@ -345,22 +349,42 @@ class TestHelperModules(unittest.TestCase):
         self.assertEqual(answer, "A abertura de Example App ainda está em andamento.")
 
     def test_programming_questions_with_open_verbs_fall_through_to_ai(self):
-        for question in (
-            "como abrir um arquivo CSV no pandas?",
-            "como executar um script Python?",
-            "como iniciar um servidor Flask?",
-        ):
+        cases = (
+            ("como executar um script Python?", [{"name": "Python IDLE", "command": "idle"}], []),
+            ("como abrir um arquivo html no Firefox?", [], [{
+                "name": "Firefox", "command": "firefox", "desktop_file": "/apps/firefox.desktop",
+            }]),
+            ("executa o código", [], []),
+            ("executar sql", [], []),
+        )
+        for question, saved_apps, installed_apps in cases:
             with self.subTest(question=question):
                 pet = DesktopPet.__new__(DesktopPet)
-                pet.settings = {"apps": [], "memories": []}
+                pet.settings = {"apps": saved_apps, "memories": []}
+                pet._installed_apps_cache = None
                 pet.ai_request_active = False
                 pet.history = []
                 pet._ask_question = mock.Mock(return_value=question)
                 pet.show_bubble = mock.Mock()
-                with mock.patch.object(desktop_pet.threading, "Thread") as thread:
+                with mock.patch.object(desktop_pet, "find_installed_apps", return_value=installed_apps), \
+                     mock.patch.object(desktop_pet.threading, "Thread") as thread:
                     pet.ask_menu()
                 thread.assert_called_once()
                 self.assertEqual(thread.call_args.kwargs["target"], pet._ask_worker)
+
+    def test_imperative_firefox_command_matches_installed_app(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        firefox = {
+            "name": "Firefox", "command": "firefox", "desktop_file": "/apps/firefox.desktop",
+        }
+        pet.settings = {"apps": []}
+        pet._installed_apps_cache = None
+        pet.ai_request_active = False
+        pet._ask_question = mock.Mock(return_value="abre o firefox")
+        pet._confirm_open_app = mock.Mock()
+        with mock.patch.object(desktop_pet, "find_installed_apps", return_value=[firefox]):
+            pet.ask_menu()
+        pet._confirm_open_app.assert_called_once_with("abre o firefox", firefox)
 
     def test_unmatched_short_imperative_open_app_request_does_not_fall_through_to_ai(self):
         pet = DesktopPet.__new__(DesktopPet)
