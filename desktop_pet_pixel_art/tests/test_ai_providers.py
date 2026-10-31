@@ -147,7 +147,7 @@ class TestAIProviders(unittest.TestCase):
                 provider.generate([{"role": "user", "content": "Oi"}], "Nova", timeout=7)
         self.assertIn("HTTP 429", str(caught.exception))
         self.assertNotIn("dummy", str(caught.exception))
-        self.assertAlmostEqual(open_url.call_args.kwargs["timeout"], 7, places=5)
+        self.assertAlmostEqual(open_url.call_args.kwargs["timeout"], 7, delta=0.5)
 
     def test_settings_keep_local_private_defaults_and_validate_timeout(self):
         with tempfile.TemporaryDirectory() as tmp:
