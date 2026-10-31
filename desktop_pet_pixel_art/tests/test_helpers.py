@@ -56,6 +56,29 @@ class TestHelperModules(unittest.TestCase):
             exec(compile(ast.Module(body=[main_block], type_ignores=[]), str(SRC / "desktop_pet.py"), "exec"), namespace)
         pet_class.return_value.run.assert_called_once()
 
+    def test_maintenance_subprocesses_use_the_filtered_environment(self):
+        tree = ast.parse((SRC / "desktop_pet.py").read_text(encoding="utf-8"))
+        functions = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for function_name in ("run_maintenance", "preview_autoremove"):
+            with self.subTest(function=function_name):
+                calls = [
+                    node for node in ast.walk(functions[function_name])
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "subprocess"
+                    and node.func.attr == "run"
+                ]
+                self.assertEqual(len(calls), 1)
+                env_arg = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "env")
+                self.assertIsInstance(env_arg, ast.Call)
+                self.assertIsInstance(env_arg.func, ast.Attribute)
+                self.assertEqual(env_arg.func.attr, "_child_process_env")
+
     def test_autonomy_settings_round_trip_and_recover_invalid_data(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
