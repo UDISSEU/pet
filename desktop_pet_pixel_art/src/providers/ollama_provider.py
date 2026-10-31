@@ -54,7 +54,8 @@ class OllamaProvider(BaseProvider):
             answer = content.strip()
             return answer
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="ignore")[:160]
-            raise ProviderError(f"Ollama HTTP {exc.code}: {detail}") from exc
+            raise ProviderError(
+                f"Ollama respondeu com HTTP {exc.code}. Confira se o serviço e o modelo estão disponíveis."
+            ) from exc
         except (urllib.error.URLError, TimeoutError, OSError, ValueError, AttributeError) as exc:
             raise ProviderError("Não foi possível obter uma resposta válida do Ollama.") from exc
