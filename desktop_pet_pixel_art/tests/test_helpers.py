@@ -426,6 +426,8 @@ except SystemExit as exc:
             }]),
             ("executa o código", [], []),
             ("executar sql", [], []),
+            ("executar teste", [], []),
+            ("iniciar projeto", [], []),
         )
         for question, saved_apps, installed_apps in cases:
             with self.subTest(question=question):
@@ -470,6 +472,7 @@ except SystemExit as exc:
         thread.assert_not_called()
         answer = pet._record_local_interaction.call_args.args[1]
         self.assertIn("Cadastre-o na aba Aplicativos", answer)
+        self.assertIn("Se era uma pergunta, comece com 'como...'", answer)
         pet.show_bubble.assert_called_once_with(answer)
 
     def test_confirmation_setting_defaults_to_confirmation_and_is_sanitized(self):

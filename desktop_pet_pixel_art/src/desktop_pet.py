@@ -2692,6 +2692,8 @@ class DesktopPet:
         non_app_targets = {
             "codigo", "code", "sql", "script", "arquivo", "ficheiro", "html",
             "csv", "json", "python", "javascript", "css", "texto",
+            "teste", "test", "projeto", "pandas", "jupyter", "notebook",
+            "query", "dados",
         }
         normalized_words = [
             "".join(c for c in unicodedata.normalize("NFKD", word.casefold())
@@ -2891,7 +2893,8 @@ class DesktopPet:
         if self._is_app_open_request(question) and self._looks_like_app_target(question):
             answer = (
                 "Não encontrei um aplicativo cadastrado que corresponda ao pedido. "
-                "Cadastre-o na aba Aplicativos e tente novamente."
+                "Cadastre-o na aba Aplicativos e tente novamente. "
+                "Se era uma pergunta, comece com 'como...'."
             )
             self._record_local_interaction(question, answer)
             self.show_bubble(answer)
