@@ -18,19 +18,19 @@ DEFAULT_SETTINGS = {
     "memories": [],
     "reminders": [],
     "apps": [],
-    "confirm_app_launch": False,
+    "confirm_app_launch": True,
     "focus_minutes": 25,
     "break_minutes": 5,
-    "routine_greeting": False,
-    "routine_context": False,
+    "routine_greeting": True,
+    "routine_context": True,
     "last_context_date": "",
-    "routine_idle_yawn": False,
-    "routine_focus_celebration": False,
-    "routine_note": False,
-    "routine_surprise": False,
+    "routine_idle_yawn": True,
+    "routine_focus_celebration": True,
+    "routine_note": True,
+    "routine_surprise": True,
     "last_surprise_date": "",
     "last_note_at": 0,
-    "routine_evening": False,
+    "routine_evening": True,
     "evening_time": "20:30",
     "last_evening_date": "",
     "ai_provider": "ollama",
@@ -58,10 +58,18 @@ def load_settings(path=SETTINGS_PATH):
     result["user_name"] = result["user_name"].strip()[:60]
     if not isinstance(result.get("memories"), list):
         result["memories"] = []
-    result["memories"] = [
-        item.strip() for item in result["memories"]
-        if isinstance(item, str) and item.strip()
-    ]
+    memories = []
+    seen_memories = set()
+    for item in result["memories"]:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        memory = item.strip()
+        normalized = memory.casefold()
+        if normalized in seen_memories:
+            continue
+        seen_memories.add(normalized)
+        memories.append(memory)
+    result["memories"] = memories
     if not isinstance(result.get("reminders"), list):
         result["reminders"] = []
     result["reminders"] = [
@@ -116,7 +124,7 @@ def load_settings(path=SETTINGS_PATH):
     except (TypeError, ValueError):
         result["last_note_at"] = 0
     if not isinstance(result.get("confirm_app_launch"), bool):
-        result["confirm_app_launch"] = False
+        result["confirm_app_launch"] = True
     try:
         datetime.strptime(result.get("evening_time", "20:30"), "%H:%M")
     except (TypeError, ValueError):

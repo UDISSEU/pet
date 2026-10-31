@@ -26,26 +26,39 @@ Como usar:
     Clique e segure       -> pega ela, arrasta rápido pra ver o balanço "de carro"
     Soltar o clique         -> ela volta ao normal
     Clique simples (sem arrastar) -> fecha o balão de fala mais cedo
-    Duplo clique             -> abre o claude.ai no navegador
+    Duplo clique             -> abre a caixa de pergunta
     Clique direito             -> menu (perguntar / falar algo / esquecer conversa / fechar)
 """
 
 import logging
 import math
+import os
 import queue
 import random
 import re
-import shlex
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
 import unicodedata
 from datetime import datetime
+from pathlib import Path
 from tkinter import messagebox
 from tkinter import ttk
 
-from animation import load_video_frames
+try:
+    from animation import load_video_frames
+    from PIL import Image, ImageDraw, ImageTk
+except ImportError as exc:
+    if exc.name in ("PIL", "cv2", "numpy"):
+        dependency = {"PIL": "Pillow", "cv2": "OpenCV", "numpy": "NumPy"}[exc.name]
+        print(
+            f"Falta a dependência {dependency}. Instale as dependências com ./install.sh.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    raise
 from autonomy import (
     is_quiet_now,
     find_installed_apps,
@@ -87,14 +100,6 @@ from ai.ai_core import AICore
 from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 from x11_helper import X11Helper
-
-try:
-    from PIL import Image, ImageDraw, ImageTk
-except ImportError:
-    import sys
-    print("Falta a biblioteca Pillow. Instale com:\n"
-          "    pip install --break-system-packages Pillow", file=sys.stderr)
-    sys.exit(1)
 
 # ---------------------------------------------------------------------------
 # Personagem
@@ -584,7 +589,7 @@ class DesktopPet:
     def check_idle_yawn(self):
         if self._closing:
             return
-        idle_long_enough = time.monotonic() - self._last_user_activity_at >= 900
+        idle_long_enough = time.monotonic() - self._last_user_activity_at >= 300
         available = (
             self.settings.get("routine_idle_yawn")
             and idle_long_enough and self.state == "walk"
@@ -1156,13 +1161,13 @@ class DesktopPet:
         focus_goal = tk.StringVar()
         focus_minutes = tk.StringVar(value=str(self.settings.get("focus_minutes", 25)))
         break_minutes = tk.StringVar(value=str(self.settings.get("break_minutes", 5)))
-        routine_greeting = tk.BooleanVar(value=self.settings.get("routine_greeting", False))
-        routine_context = tk.BooleanVar(value=self.settings.get("routine_context", False))
-        routine_idle_yawn = tk.BooleanVar(value=self.settings.get("routine_idle_yawn", False))
-        routine_focus_celebration = tk.BooleanVar(value=self.settings.get("routine_focus_celebration", False))
-        routine_note = tk.BooleanVar(value=self.settings.get("routine_note", False))
-        routine_surprise = tk.BooleanVar(value=self.settings.get("routine_surprise", False))
-        routine_evening = tk.BooleanVar(value=self.settings.get("routine_evening", False))
+        routine_greeting = tk.BooleanVar(value=self.settings.get("routine_greeting", True))
+        routine_context = tk.BooleanVar(value=self.settings.get("routine_context", True))
+        routine_idle_yawn = tk.BooleanVar(value=self.settings.get("routine_idle_yawn", True))
+        routine_focus_celebration = tk.BooleanVar(value=self.settings.get("routine_focus_celebration", True))
+        routine_note = tk.BooleanVar(value=self.settings.get("routine_note", True))
+        routine_surprise = tk.BooleanVar(value=self.settings.get("routine_surprise", True))
+        routine_evening = tk.BooleanVar(value=self.settings.get("routine_evening", True))
         evening_time = tk.StringVar(value=self.settings.get("evening_time", "20:30"))
         speech = tk.BooleanVar(value=self.auto_speech_var.get())
         observe = tk.BooleanVar(value=self.observe_apps_var.get())
@@ -1363,7 +1368,7 @@ class DesktopPet:
             variable=routine_context,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(
-            routine_card, text="Bocejar depois de 15 minutos sem interação",
+            routine_card, text="Bocejar depois de 5 minutos sem interação",
             variable=routine_idle_yawn,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(
@@ -1371,7 +1376,7 @@ class DesktopPet:
             variable=routine_focus_celebration,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(
-            routine_card, text="Recadinho ocasional (intervalo mínimo de 4 horas)",
+            routine_card, text="Recadinho ocasional (intervalo mínimo de 30 minutos)",
             variable=routine_note,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(
@@ -1603,7 +1608,7 @@ class DesktopPet:
                     for command in commands:
                         completed = subprocess.run(
                             command, capture_output=True, text=True, timeout=600,
-                            check=False,
+                            check=False, env=self._child_process_env(),
                         )
                         details = (completed.stdout or "") + (completed.stderr or "")
                         if details.strip():
@@ -1666,6 +1671,7 @@ class DesktopPet:
                     result = subprocess.run(
                         ["apt-get", "-s", "autoremove"], capture_output=True,
                         text=True, timeout=120, check=False,
+                        env=self._child_process_env(),
                     )
                     details = (result.stdout or "") + (result.stderr or "")
                     error = details.strip() if result.returncode else None
@@ -2434,7 +2440,7 @@ class DesktopPet:
         now = time.time()
         available = (
             self.settings.get("routine_note")
-            and now - self.settings.get("last_note_at", 0) >= 4 * 60 * 60
+            and now - self.settings.get("last_note_at", 0) >= 30 * 60
             and not self._is_quiet_time() and self.focus_mode == "idle"
             and not self.busy and not self.dragging and not self.ai_request_active
             and not self.is_covered()
@@ -2576,14 +2582,15 @@ class DesktopPet:
             decomposed = unicodedata.normalize("NFKD", value.casefold())
             return "".join(char for char in decomposed if not unicodedata.combining(char))
 
-        normalized_question = normalize(question)
-        if not self._is_app_open_request(normalized_question):
+        target = self._app_open_target(question)
+        if not target:
             return None
+        normalized_question = normalize(target)
 
         def contains_phrase(text, phrase):
             return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text))
 
-        def match_apps(apps):
+        def match_apps(apps, allow_partial=False):
             named_apps = [
                 (app, normalize(app.get("name", "").strip()))
                 for app in apps
@@ -2598,16 +2605,27 @@ class DesktopPet:
             if exact_matches:
                 return max(exact_matches, key=lambda item: len(item[1]))[0], True
 
-            # Aceita o nome curto, por exemplo "Google" para "Google Chrome",
-            # desde que não haja mais de um app cadastrado com essa palavra.
-            partial_matches = []
-            for app, name in named_apps:
-                words = re.findall(r"\w+", name)
-                if any(contains_phrase(normalized_question, word) for word in words):
-                    partial_matches.append(app)
-            if len(partial_matches) == 1:
-                return partial_matches[0], True
-            return None, bool(partial_matches)
+            # O alias Google é específico do Chrome; palavras soltas podem ser
+            # assunto da pergunta e não identificam um aplicativo com segurança.
+            google_matches = [
+                app for app, name in named_apps
+                if name == "google chrome" and contains_phrase(normalized_question, "google")
+            ]
+            google_candidates = [
+                app for app, name in named_apps
+                if contains_phrase(name, "google") and contains_phrase(normalized_question, "google")
+            ]
+            if len(google_matches) == 1 and len(google_candidates) == 1:
+                return google_matches[0], True
+            if allow_partial:
+                partial_matches = [
+                    app for app, name in named_apps
+                    if any(contains_phrase(normalized_question, word) for word in re.findall(r"\w+", name))
+                ]
+                if len(partial_matches) == 1:
+                    return partial_matches[0], True
+                return None, bool(partial_matches)
+            return None, False
 
         def get_installed_apps():
             if getattr(self, "_installed_apps_cache", None) is None:
@@ -2617,7 +2635,7 @@ class DesktopPet:
                     self._installed_apps_cache = []
             return self._installed_apps_cache
 
-        saved_match, has_saved_candidate = match_apps(self.settings.get("apps", []))
+        saved_match, has_saved_candidate = match_apps(self.settings.get("apps", []), allow_partial=True)
         if saved_match:
             if not saved_match.get("desktop_file"):
                 saved_name = normalize(saved_match["name"])
@@ -2643,14 +2661,48 @@ class DesktopPet:
         return None
 
     @staticmethod
-    def _is_app_open_request(question):
-        return bool(re.search(
-            r"\b(abrir|abro|abre|abra|abram|abri|abriu|abrindo|abriria|abririam|"
-            r"iniciar|inicio|inicia|inicie|iniciem|iniciam|iniciando|iniciou|"
-            r"executar|executo|executa|execute|executem|executam|executei|"
-            r"executou|executava|executando|executaria|executariam)\b",
-            question.casefold(),
-        ))
+    def _app_open_target(question):
+        match = re.match(
+            r"^\s*(?:(?:quero|preciso)\s+|gostaria\s+de\s+|"
+            r"voc(?:e|ê)\s+pode\s+|consegue\s+|pode\s+|poderia\s+)?"
+            r"(?:(?:por\s+favor)[,:]?\s+)?"
+            r"(?:abre|abra|abrir|inicia|inicie|iniciar|executa|execute|executar)"
+            r"\s+(.+?)\s*[.!?]*\s*$",
+            question,
+            re.IGNORECASE,
+        )
+        return match.group(1).strip() if match else ""
+
+    @classmethod
+    def _is_app_open_request(cls, question):
+        return bool(cls._app_open_target(question))
+
+    def _looks_like_app_target(self, question):
+        target = self._app_open_target(question)
+        if not target:
+            return False
+        words = re.findall(r"[\w.+-]+", target)
+        if not words:
+            return False
+        articles = {"o", "a", "os", "as", "um", "uma", "uns", "umas", "the"}
+        while words and words[0].casefold() in articles:
+            words.pop(0)
+        if not words:
+            return False
+        non_app_targets = {
+            "codigo", "code", "sql", "script", "arquivo", "ficheiro", "html",
+            "csv", "json", "python", "javascript", "css", "texto",
+            "teste", "test", "projeto", "pandas", "jupyter", "notebook",
+            "query", "dados",
+        }
+        normalized_words = [
+            "".join(c for c in unicodedata.normalize("NFKD", word.casefold())
+                    if not unicodedata.combining(c))
+            for word in words
+        ]
+        if len(words) == 1:
+            return normalized_words[0] not in non_app_targets
+        return any(word[:1].isupper() for word in words)
 
     def _confirm_open_app(self, question, app):
         if getattr(self, "app_launch_active", False):
@@ -2692,6 +2744,10 @@ class DesktopPet:
             self.show_bubble(answer)
 
     @staticmethod
+    def _child_process_env():
+        return {key: value for key, value in os.environ.items() if not key.endswith("_API_KEY")}
+
+    @staticmethod
     def _launch_app(app, question=""):
         desktop_file = app.get("desktop_file")
         if desktop_file:
@@ -2710,6 +2766,7 @@ class DesktopPet:
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=DesktopPet._child_process_env(),
             )
             if result.returncode:
                 details = (result.stderr or result.stdout or "").strip()
@@ -2717,7 +2774,7 @@ class DesktopPet:
             return
 
         argv = resolve_app_command(app["command"])
-        subprocess.Popen(argv, close_fds=True)
+        subprocess.Popen(argv, close_fds=True, env=DesktopPet._child_process_env())
 
     def close_app(self):
         self._closing = True
@@ -2833,10 +2890,11 @@ class DesktopPet:
         if app:
             self._confirm_open_app(question, app)
             return
-        if self._is_app_open_request(question):
+        if self._is_app_open_request(question) and self._looks_like_app_target(question):
             answer = (
                 "Não encontrei um aplicativo cadastrado que corresponda ao pedido. "
-                "Cadastre-o na aba Aplicativos e tente novamente."
+                "Cadastre-o na aba Aplicativos e tente novamente. "
+                "Se era uma pergunta, comece com 'como...'."
             )
             self._record_local_interaction(question, answer)
             self.show_bubble(answer)
@@ -2853,12 +2911,10 @@ class DesktopPet:
         self._thinking_started_at = time.monotonic()
         self.show_bubble("pensando...", duration=999999)
         memories = list(self.settings.get("memories", []))
-        user_name = self.settings.get("user_name", "").strip()
-        if user_name:
-            memories.insert(0, f"O nome da pessoa usuária é {user_name}; use esse nome naturalmente ao conversar.")
+        user_name = self.settings.get("user_name", "").strip()[:60]
         threading.Thread(
             target=self._ask_worker,
-            args=(request_history, memories, dict(self.settings)),
+            args=(request_history, memories, dict(self.settings), user_name),
             daemon=True,
         ).start()
 
@@ -2983,10 +3039,10 @@ class DesktopPet:
         self.root.wait_window(dialog)
         return result["question"]
 
-    def _ask_worker(self, history, memories=None, settings=None):
+    def _ask_worker(self, history, memories=None, settings=None, user_name=""):
         try:
             answer = AICore(settings=settings or self.settings).process_message(
-                history, memories=memories,
+                history, memories=memories, user_name=user_name,
             )
         except Exception:
             logging.getLogger(__name__).exception("Falha inesperada ao consultar o provedor de IA")
@@ -3052,6 +3108,13 @@ class DesktopPet:
 
 
 if __name__ == "__main__":
+    log_dir = Path.home() / ".local" / "state" / "desktop_pet"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[logging.FileHandler(log_dir / "nova.log", encoding="utf-8"), logging.StreamHandler()],
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     try:
         pet = DesktopPet()
         pet.run()

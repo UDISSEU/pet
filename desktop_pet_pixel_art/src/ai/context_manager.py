@@ -8,7 +8,7 @@ class ContextManager:
     max_message_chars = 4000
     max_memories = 8
 
-    def build(self, history, memories=None, user_name=""):
+    def build(self, history, memories=None):
         messages = []
         valid_history = []
         for message in history or []:
@@ -30,8 +30,6 @@ class ContextManager:
         }
         ranked = []
         candidates = list(memories or [])
-        if user_name.strip():
-            candidates.append(f"Nome informado pela pessoa usuária: {user_name.strip()[:60]}.")
         for memory in candidates:
             if not isinstance(memory, str) or not memory.strip():
                 continue

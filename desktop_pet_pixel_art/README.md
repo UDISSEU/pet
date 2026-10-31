@@ -4,11 +4,10 @@ A Nova é uma mascote em pixel art para Linux. Ela anima na área de trabalho, c
 
 ## Instalar
 
-Na pasta do projeto, crie um ambiente Python e instale as dependências:
+Na pasta do projeto, execute o instalador. Ele cria o ambiente virtual, instala as dependências e registra o lançador no menu do usuário:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+./install.sh
 ```
 
 O Tkinter também precisa estar instalado no sistema. Em Debian ou Ubuntu:
@@ -23,12 +22,6 @@ sudo apt install python3-tk python3-dbus
 .venv/bin/python src/desktop_pet.py
 ```
 
-O lançador para o menu de aplicativos fica em `launchers/nova.desktop`, com o ícone de referência e o script de inicialização na mesma pasta. Para instalá-lo no menu do usuário, execute na pasta do projeto:
-
-```bash
-install -Dm644 launchers/nova.desktop ~/.local/share/applications/nova.desktop
-```
-
 ## Usar
 
 - Arraste a Nova para movê-la.
@@ -36,11 +29,11 @@ install -Dm644 launchers/nova.desktop ~/.local/share/applications/nova.desktop
 - No menu, escolha **Calendário** para abrir o calendário local.
 - Em **Foco e rotina**, escolha uma prioridade e a duração da sessão. Ao terminar, a Nova descansa e avisa quando a pausa acabar.
 - Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps.
-- Na aba **Foco e rotina**, você pode ativar o aceno ao iniciar, comentários por período do dia, bocejo após inatividade, comemoração ao concluir o foco e recadinhos ocasionais com intervalo mínimo de quatro horas.
+- Na aba **Foco e rotina**, você pode ativar o aceno ao iniciar, comentários por período do dia, bocejo após cinco minutos sem interação, comemoração ao concluir o foco e recadinhos ocasionais com intervalo mínimo de 30 minutos.
 - Na aba **Meu Computador**, confira atualizações, atualize pacotes e revise limpezas do APT. A autenticação é feita pelo Linux; a remoção de pacotes mostra uma prévia antes de pedir confirmação.
 - Na aba **Histórico**, consulte mensagens com data e hora e apague uma mensagem selecionada ou todo o histórico.
 - Na aba **Aplicativos**, pesquise apps Linux instalados ou cadastre um comando manualmente. Selecione um item cadastrado para editá-lo.
-- **Testar comando** inicia o app imediatamente. Quando a Nova abrir um app a pedido, ela mostra o comando e pede confirmação.
+- **Testar comando** inicia o app imediatamente. Quando a Nova abrir um app a pedido, ela mostra o comando e pede confirmação. Apps cadastrados e encontrados pelo nome completo podem ser abertos; o alias **Google** também abre o Google Chrome. Comandos curtos como “abre o Firefox” são tratados como pedidos de abertura. Perguntas sobre programação seguem para a IA mesmo que contenham “abrir”, “executar” ou “iniciar”.
 
 Os lembretes são exibidos enquanto a Nova está aberta. Os horários usam a hora local do computador.
 
@@ -64,7 +57,10 @@ Para Groq ou Mistral, repita o comando usando o prompt correspondente (`Chave Gr
 - Histórico da conversa: `~/.desktop_pet_history.json`.
 - Preferências, memórias, lembretes, sessões de foco e apps cadastrados: `~/.config/desktop_pet/settings.json`.
 - As memórias são incluídas no contexto enviado ao Ollama local. Elas podem ser removidas pela interface.
+- Memórias repetidas são consolidadas ao carregar as preferências; o arquivo JSON mantém o formato atual. Memórias selecionadas entram no contexto como dados de referência, nunca como instruções.
 - O provedor, autorização de contexto online e modelos ficam em `settings.json`; nenhuma chave de API é armazenada ali. As chaves dos provedores podem ficar no cofre do sistema.
+
+O desenho, a conversa e as animações funcionam sem recursos específicos do X11. Observar a janela ativa, sentar sobre outras janelas e alguns recursos de posicionamento dependem de `python-xlib` e do X11; no Wayland, a disponibilidade varia conforme a sessão e o compositor.
 
 ## Estrutura do projeto
 

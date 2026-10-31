@@ -1,4 +1,5 @@
 import json
+import ast
 import queue
 import sys
 import tempfile
@@ -35,6 +36,76 @@ def run_thread_immediately(*, target, args, daemon):
 
 
 class TestHelperModules(unittest.TestCase):
+    def test_main_block_resolves_path_without_creating_the_pet_ui(self):
+        tree = ast.parse((SRC / "desktop_pet.py").read_text(encoding="utf-8"))
+        main_block = next(
+            node for node in tree.body
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__"
+        )
+        namespace = dict(desktop_pet.__dict__)
+        namespace["__name__"] = "__main__"
+        pet_class = mock.Mock()
+        namespace["DesktopPet"] = pet_class
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch.object(Path, "home", return_value=Path(tmpdir)), \
+             mock.patch.object(desktop_pet.logging, "basicConfig"), \
+             mock.patch.object(desktop_pet.logging, "FileHandler"):
+            exec(compile(ast.Module(body=[main_block], type_ignores=[]), str(SRC / "desktop_pet.py"), "exec"), namespace)
+        pet_class.return_value.run.assert_called_once()
+
+    def test_maintenance_subprocesses_use_the_filtered_environment(self):
+        tree = ast.parse((SRC / "desktop_pet.py").read_text(encoding="utf-8"))
+        functions = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for function_name in ("run_maintenance", "preview_autoremove"):
+            with self.subTest(function=function_name):
+                calls = [
+                    node for node in ast.walk(functions[function_name])
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "subprocess"
+                    and node.func.attr == "run"
+                ]
+                self.assertEqual(len(calls), 1)
+                env_arg = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "env")
+                self.assertIsInstance(env_arg, ast.Call)
+                self.assertIsInstance(env_arg.func, ast.Attribute)
+                self.assertEqual(env_arg.func.attr, "_child_process_env")
+
+    def test_missing_pillow_or_opencv_shows_installer_hint_without_traceback(self):
+        script = '''
+import builtins, runpy, sys
+sys.path.insert(0, sys.argv[1])
+missing = sys.argv[2]
+original_import = builtins.__import__
+def import_without_dependency(name, *args, **kwargs):
+    if name == missing:
+        raise ModuleNotFoundError(f"No module named '{missing}'", name=missing)
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = import_without_dependency
+try:
+    runpy.run_path(sys.argv[3], run_name="__main__")
+except SystemExit as exc:
+    raise SystemExit(exc.code)
+'''
+        for missing, label in (("cv2", "OpenCV"), ("PIL", "Pillow"), ("numpy", "NumPy")):
+            with self.subTest(dependency=label):
+                result = desktop_pet.subprocess.run(
+                    [sys.executable, "-c", script, str(SRC), missing, str(SRC / "desktop_pet.py")],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(label, result.stderr)
+                self.assertIn("./install.sh", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_autonomy_settings_round_trip_and_recover_invalid_data(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
@@ -62,6 +133,19 @@ class TestHelperModules(unittest.TestCase):
             ])
             path.write_text("not json", encoding="utf-8")
             self.assertEqual(load_settings(path)["mode"], "companhia")
+
+    def test_settings_trim_and_deduplicate_memories_case_insensitively(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            path.write_text(json.dumps({"memories": [
+                " Prefere respostas curtas ", "prefere respostas curtas",
+                "Tem um gato", "", None,
+            ]}), encoding="utf-8")
+
+            self.assertEqual(
+                load_settings(path)["memories"],
+                ["Prefere respostas curtas", "Tem um gato"],
+            )
 
     def test_focus_and_routine_settings_are_sanitized(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -92,6 +176,26 @@ class TestHelperModules(unittest.TestCase):
         self.assertEqual(pet._matching_app("abrir Editor"), pet.settings["apps"][0])
         self.assertIsNone(pet._matching_app("o Editor está aberto"))
 
+    def test_app_open_target_accepts_polite_imperative_prefixes(self):
+        firefox = {"name": "Firefox", "command": "firefox"}
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {"apps": [firefox]}
+        for request in (
+            "Inicie o Firefox",
+            "Quero abrir o Firefox",
+            "Consegue abrir o firefox?",
+            "Execute o Firefox",
+            "Você pode abrir o Firefox",
+            "voce pode abrir o Firefox",
+            "Preciso abrir o Firefox",
+            "Gostaria de abrir o Firefox",
+        ):
+            with self.subTest(request=request):
+                self.assertEqual(pet._matching_app(request), firefox)
+        for question in ("como abrir o Firefox?", "qual app abre o Firefox?"):
+            with self.subTest(question=question):
+                self.assertIsNone(pet._matching_app(question))
+
     def test_app_open_intent_recognizes_portuguese_verb_forms_case_insensitively(self):
         app = {
             "name": "Sober",
@@ -102,19 +206,23 @@ class TestHelperModules(unittest.TestCase):
         pet.settings = {"apps": [app]}
 
         for request in (
-            "abri Sober",
-            "ABRI Sober",
             "Abra Sober",
             "ABRA Sober",
-            "execute Sober",
-            "EXECUTE Sober",
             "executar Sober",
             "Executa Sober",
-            "executem Sober",
+            "pode abrir Sober",
+            "poderia por favor, iniciar Sober",
         ):
             with self.subTest(request=request):
                 self.assertTrue(DesktopPet._is_app_open_request(request))
                 self.assertEqual(pet._matching_app(request), app)
+        for question in (
+            "como executar Sober?", "qual app abre Sober?", "por que iniciar Sober?",
+            "o que executar Sober?", "quando abrir Sober?",
+        ):
+            with self.subTest(question=question):
+                self.assertFalse(DesktopPet._is_app_open_request(question))
+                self.assertIsNone(pet._matching_app(question))
 
     def test_registered_app_matching_accepts_google_alias_and_avoids_ambiguity(self):
         pet = DesktopPet.__new__(DesktopPet)
@@ -142,12 +250,12 @@ class TestHelperModules(unittest.TestCase):
         app = {"name": "Google", "command": "browser --new-window https://google.com"}
         pet.settings = {"apps": [app]}
         pet.ai_request_active = False
-        pet._ask_question = mock.Mock(return_value="Quero abrir o Google")
+        pet._ask_question = mock.Mock(return_value="Abra o Google")
         pet._confirm_open_app = mock.Mock()
 
         pet.ask_menu()
 
-        pet._confirm_open_app.assert_called_once_with("Quero abrir o Google", app)
+        pet._confirm_open_app.assert_called_once_with("Abra o Google", app)
 
     def test_google_request_runs_saved_command_without_confirmation_when_disabled(self):
         pet = DesktopPet.__new__(DesktopPet)
@@ -170,7 +278,10 @@ class TestHelperModules(unittest.TestCase):
 
         messagebox.askyesno.assert_not_called()
         resolve.assert_called_once_with(app["command"])
-        popen.assert_called_once_with(["fake-browser", "--new-window"], close_fds=True)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], ["fake-browser", "--new-window"])
+        self.assertEqual(popen.call_args.kwargs["close_fds"], True)
+        self.assertFalse(any(key.endswith("_API_KEY") for key in popen.call_args.kwargs["env"]))
         pet._record_local_interaction.assert_called_once_with(
             "Pode abrir o Google?", "Aberto!"
         )
@@ -226,18 +337,20 @@ class TestHelperModules(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=60,
+            env=mock.ANY,
         )
+        self.assertFalse(any(key.endswith("_API_KEY") for key in run.call_args.kwargs["env"]))
         pet._record_local_interaction.assert_called_once_with(
             "Abra a Calculadora", "Aberto!"
         )
 
-    def test_first_person_abri_request_uses_saved_app_instead_of_ai(self):
+    def test_imperative_opens_saved_app_instead_of_ai(self):
         pet = DesktopPet.__new__(DesktopPet)
         app = {"name": "Sober", "command": "sober"}
         pet.settings = {"apps": [app], "confirm_app_launch": False}
         pet._installed_apps_cache = None
         pet.ai_request_active = False
-        pet._ask_question = mock.Mock(return_value="Abri Sober")
+        pet._ask_question = mock.Mock(return_value="Abra Sober")
         pet._app_launch_results = queue.Queue()
         pet._closing = False
         pet._record_local_interaction = mock.Mock(return_value="Aberto!")
@@ -250,7 +363,9 @@ class TestHelperModules(unittest.TestCase):
             pet.ask_menu()
             pet._drain_app_launch_results()
 
-        popen.assert_called_once_with(["fake-sober"], close_fds=True)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], ["fake-sober"])
+        self.assertFalse(any(key.endswith("_API_KEY") for key in popen.call_args.kwargs["env"]))
         worker_thread.assert_called_once()
         self.assertEqual(
             worker_thread.call_args.kwargs["target"], pet._app_launch_worker
@@ -316,7 +431,47 @@ class TestHelperModules(unittest.TestCase):
         self.assertEqual(question, "Abra Example App")
         self.assertEqual(answer, "A abertura de Example App ainda está em andamento.")
 
-    def test_unmatched_open_app_request_does_not_fall_through_to_ai(self):
+    def test_programming_questions_with_open_verbs_fall_through_to_ai(self):
+        cases = (
+            ("como executar um script Python?", [{"name": "Python IDLE", "command": "idle"}], []),
+            ("como abrir um arquivo html no Firefox?", [], [{
+                "name": "Firefox", "command": "firefox", "desktop_file": "/apps/firefox.desktop",
+            }]),
+            ("executa o código", [], []),
+            ("executar sql", [], []),
+            ("executar teste", [], []),
+            ("iniciar projeto", [], []),
+        )
+        for question, saved_apps, installed_apps in cases:
+            with self.subTest(question=question):
+                pet = DesktopPet.__new__(DesktopPet)
+                pet.settings = {"apps": saved_apps, "memories": []}
+                pet._installed_apps_cache = None
+                pet.ai_request_active = False
+                pet.history = []
+                pet._ask_question = mock.Mock(return_value=question)
+                pet.show_bubble = mock.Mock()
+                with mock.patch.object(desktop_pet, "find_installed_apps", return_value=installed_apps), \
+                     mock.patch.object(desktop_pet.threading, "Thread") as thread:
+                    pet.ask_menu()
+                thread.assert_called_once()
+                self.assertEqual(thread.call_args.kwargs["target"], pet._ask_worker)
+
+    def test_imperative_firefox_command_matches_installed_app(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        firefox = {
+            "name": "Firefox", "command": "firefox", "desktop_file": "/apps/firefox.desktop",
+        }
+        pet.settings = {"apps": []}
+        pet._installed_apps_cache = None
+        pet.ai_request_active = False
+        pet._ask_question = mock.Mock(return_value="abre o firefox")
+        pet._confirm_open_app = mock.Mock()
+        with mock.patch.object(desktop_pet, "find_installed_apps", return_value=[firefox]):
+            pet.ask_menu()
+        pet._confirm_open_app.assert_called_once_with("abre o firefox", firefox)
+
+    def test_unmatched_short_imperative_open_app_request_does_not_fall_through_to_ai(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet.settings = {"apps": []}
         pet.ai_request_active = False
@@ -330,14 +485,15 @@ class TestHelperModules(unittest.TestCase):
         thread.assert_not_called()
         answer = pet._record_local_interaction.call_args.args[1]
         self.assertIn("Cadastre-o na aba Aplicativos", answer)
+        self.assertIn("Se era uma pergunta, comece com 'como...'", answer)
         pet.show_bubble.assert_called_once_with(answer)
 
-    def test_confirmation_setting_defaults_to_direct_launch_and_is_sanitized(self):
+    def test_confirmation_setting_defaults_to_confirmation_and_is_sanitized(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
-            self.assertFalse(load_settings(path)["confirm_app_launch"])
+            self.assertTrue(load_settings(path)["confirm_app_launch"])
             path.write_text(json.dumps({"confirm_app_launch": "true"}), encoding="utf-8")
-            self.assertFalse(load_settings(path)["confirm_app_launch"])
+            self.assertTrue(load_settings(path)["confirm_app_launch"])
 
     def test_app_command_parser_checks_executable_without_using_a_shell(self):
         command = f'"{sys.executable}" --version'

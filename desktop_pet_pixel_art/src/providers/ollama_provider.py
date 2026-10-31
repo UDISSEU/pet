@@ -21,8 +21,11 @@ class OllamaProvider(BaseProvider):
         try:
             with urllib.request.urlopen(tags_url, timeout=min(self.timeout, 4)) as response:
                 data = json.loads(response.read().decode("utf-8"))
-            return any(item.get("name", "").split(":")[0] == self.model.split(":")[0]
-                       for item in data.get("models", []))
+            wanted = self.model if ":" in self.model else f"{self.model}:latest"
+            return any(
+                item.get("name", "") == wanted
+                for item in data.get("models", [])
+            )
         except (OSError, ValueError, AttributeError):
             return False
 
@@ -44,12 +47,14 @@ class OllamaProvider(BaseProvider):
         try:
             with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
                 data = json.loads(response.read().decode("utf-8"))
-            answer = data.get("message", {}).get("content", "").strip()
-            if not answer:
-                raise ProviderError("O Ollama retornou uma resposta vazia.")
+            message = data.get("message") if isinstance(data, dict) else None
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, str) or not content.strip():
+                raise ProviderError("O Ollama retornou uma resposta vazia ou inválida.")
+            answer = content.strip()
             return answer
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")[:160]
             raise ProviderError(f"Ollama HTTP {exc.code}: {detail}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            raise ProviderError("Não foi possível obter uma resposta do Ollama.") from exc
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError, AttributeError) as exc:
+            raise ProviderError("Não foi possível obter uma resposta válida do Ollama.") from exc
