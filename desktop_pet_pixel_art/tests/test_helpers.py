@@ -1,4 +1,5 @@
 import json
+import ast
 import queue
 import sys
 import tempfile
@@ -35,6 +36,26 @@ def run_thread_immediately(*, target, args, daemon):
 
 
 class TestHelperModules(unittest.TestCase):
+    def test_main_block_resolves_path_without_creating_the_pet_ui(self):
+        tree = ast.parse((SRC / "desktop_pet.py").read_text(encoding="utf-8"))
+        main_block = next(
+            node for node in tree.body
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__"
+        )
+        namespace = dict(desktop_pet.__dict__)
+        namespace["__name__"] = "__main__"
+        pet_class = mock.Mock()
+        namespace["DesktopPet"] = pet_class
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch.object(Path, "home", return_value=Path(tmpdir)), \
+             mock.patch.object(desktop_pet.logging, "basicConfig"), \
+             mock.patch.object(desktop_pet.logging, "FileHandler"):
+            exec(compile(ast.Module(body=[main_block], type_ignores=[]), str(SRC / "desktop_pet.py"), "exec"), namespace)
+        pet_class.return_value.run.assert_called_once()
+
     def test_autonomy_settings_round_trip_and_recover_invalid_data(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
