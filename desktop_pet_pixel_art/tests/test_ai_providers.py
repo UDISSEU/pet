@@ -70,7 +70,7 @@ class TestAIProviders(unittest.TestCase):
         history = ([{"role": "user", "content": "x" * 5000}] * 15 + [
             {"role": "system", "content": "não incluir"},
         ])
-        messages, memories = ContextManager().build(history, ["memória"], "Ana")
+        messages, memories = ContextManager().build(history, ["memória"])
         self.assertEqual(len(messages), 12)
         self.assertEqual(len(messages[0]["content"]), 4000)
         self.assertEqual(memories, [])

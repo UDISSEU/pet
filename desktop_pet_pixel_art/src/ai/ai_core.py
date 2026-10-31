@@ -12,7 +12,7 @@ class AICore:
         self.context_manager = context_manager or ContextManager()
 
     def process_message(self, history, memories=None, user_name=""):
-        messages, selected_memories = self.context_manager.build(history, memories, user_name)
+        messages, selected_memories = self.context_manager.build(history, memories)
         if selected_memories:
             instruction = "Memórias escolhidas pela pessoa usuária; use apenas se forem pertinentes:\n- "
             instruction += "\n- ".join(selected_memories)

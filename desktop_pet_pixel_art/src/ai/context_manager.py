@@ -8,7 +8,7 @@ class ContextManager:
     max_message_chars = 4000
     max_memories = 8
 
-    def build(self, history, memories=None, user_name=""):
+    def build(self, history, memories=None):
         messages = []
         valid_history = []
         for message in history or []:

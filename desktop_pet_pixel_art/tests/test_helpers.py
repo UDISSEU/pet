@@ -402,7 +402,7 @@ class TestHelperModules(unittest.TestCase):
         self.assertIn("Cadastre-o na aba Aplicativos", answer)
         pet.show_bubble.assert_called_once_with(answer)
 
-    def test_confirmation_setting_defaults_to_direct_launch_and_is_sanitized(self):
+    def test_confirmation_setting_defaults_to_confirmation_and_is_sanitized(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
             self.assertTrue(load_settings(path)["confirm_app_launch"])

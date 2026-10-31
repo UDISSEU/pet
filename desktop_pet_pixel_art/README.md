@@ -22,7 +22,6 @@ sudo apt install python3-tk python3-dbus
 .venv/bin/python src/desktop_pet.py
 ```
 
-
 ## Usar
 
 - Arraste a Nova para movê-la.
