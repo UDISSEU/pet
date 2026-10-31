@@ -18,8 +18,6 @@ ASSET_DIRS = [
 def resolve_movement_path(filename):
     candidate = Path(filename)
     if candidate.is_absolute():
-        if candidate.exists():
-            return candidate
         return candidate
 
     for directory in ASSET_DIRS:

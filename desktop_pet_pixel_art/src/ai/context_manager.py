@@ -30,8 +30,6 @@ class ContextManager:
         }
         ranked = []
         candidates = list(memories or [])
-        if user_name.strip():
-            candidates.append(f"Nome informado pela pessoa usuária: {user_name.strip()[:60]}.")
         for memory in candidates:
             if not isinstance(memory, str) or not memory.strip():
                 continue

@@ -37,7 +37,6 @@ class X11Helper:
                 return None
             win_id = prop.value[0]
             win = self.dpy.create_resource_object("window", win_id)
-            geom = win.get_geometry()
             name = win.get_wm_name() or ""
             klass = win.get_wm_class() or ("", "")
             class_name = klass[0] if isinstance(klass, tuple) and klass else ""
@@ -60,8 +59,6 @@ class X11Helper:
                     continue
                 try:
                     win = self.dpy.create_resource_object("window", win_id)
-                    coords = win.get_attributes().map_state
-                    _ = coords
                     geom = win.get_geometry()
                     x = geom.x
                     y = geom.y

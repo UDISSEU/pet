@@ -26,16 +26,16 @@ Como usar:
     Clique e segure       -> pega ela, arrasta rápido pra ver o balanço "de carro"
     Soltar o clique         -> ela volta ao normal
     Clique simples (sem arrastar) -> fecha o balão de fala mais cedo
-    Duplo clique             -> abre o claude.ai no navegador
+    Duplo clique             -> abre a caixa de pergunta
     Clique direito             -> menu (perguntar / falar algo / esquecer conversa / fechar)
 """
 
 import logging
 import math
+import os
 import queue
 import random
 import re
-import shlex
 import subprocess
 import threading
 import time
@@ -88,13 +88,7 @@ from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 from x11_helper import X11Helper
 
-try:
-    from PIL import Image, ImageDraw, ImageTk
-except ImportError:
-    import sys
-    print("Falta a biblioteca Pillow. Instale com:\n"
-          "    pip install --break-system-packages Pillow", file=sys.stderr)
-    sys.exit(1)
+from PIL import Image, ImageDraw, ImageTk
 
 # ---------------------------------------------------------------------------
 # Personagem
@@ -1603,7 +1597,7 @@ class DesktopPet:
                     for command in commands:
                         completed = subprocess.run(
                             command, capture_output=True, text=True, timeout=600,
-                            check=False,
+                            check=False, env=self._child_process_env(),
                         )
                         details = (completed.stdout or "") + (completed.stderr or "")
                         if details.strip():
@@ -1666,6 +1660,7 @@ class DesktopPet:
                     result = subprocess.run(
                         ["apt-get", "-s", "autoremove"], capture_output=True,
                         text=True, timeout=120, check=False,
+                        env=self._child_process_env(),
                     )
                     details = (result.stdout or "") + (result.stderr or "")
                     error = details.strip() if result.returncode else None
@@ -2583,7 +2578,7 @@ class DesktopPet:
         def contains_phrase(text, phrase):
             return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text))
 
-        def match_apps(apps):
+        def match_apps(apps, allow_partial=False):
             named_apps = [
                 (app, normalize(app.get("name", "").strip()))
                 for app in apps
@@ -2598,16 +2593,27 @@ class DesktopPet:
             if exact_matches:
                 return max(exact_matches, key=lambda item: len(item[1]))[0], True
 
-            # Aceita o nome curto, por exemplo "Google" para "Google Chrome",
-            # desde que não haja mais de um app cadastrado com essa palavra.
-            partial_matches = []
-            for app, name in named_apps:
-                words = re.findall(r"\w+", name)
-                if any(contains_phrase(normalized_question, word) for word in words):
-                    partial_matches.append(app)
-            if len(partial_matches) == 1:
-                return partial_matches[0], True
-            return None, bool(partial_matches)
+            # O alias Google é específico do Chrome; palavras soltas podem ser
+            # assunto da pergunta e não identificam um aplicativo com segurança.
+            google_matches = [
+                app for app, name in named_apps
+                if name == "google chrome" and contains_phrase(normalized_question, "google")
+            ]
+            google_candidates = [
+                app for app, name in named_apps
+                if contains_phrase(name, "google") and contains_phrase(normalized_question, "google")
+            ]
+            if len(google_matches) == 1 and len(google_candidates) == 1:
+                return google_matches[0], True
+            if allow_partial:
+                partial_matches = [
+                    app for app, name in named_apps
+                    if any(contains_phrase(normalized_question, word) for word in re.findall(r"\w+", name))
+                ]
+                if len(partial_matches) == 1:
+                    return partial_matches[0], True
+                return None, bool(partial_matches)
+            return None, False
 
         def get_installed_apps():
             if getattr(self, "_installed_apps_cache", None) is None:
@@ -2617,7 +2623,7 @@ class DesktopPet:
                     self._installed_apps_cache = []
             return self._installed_apps_cache
 
-        saved_match, has_saved_candidate = match_apps(self.settings.get("apps", []))
+        saved_match, has_saved_candidate = match_apps(self.settings.get("apps", []), allow_partial=True)
         if saved_match:
             if not saved_match.get("desktop_file"):
                 saved_name = normalize(saved_match["name"])
@@ -2650,6 +2656,16 @@ class DesktopPet:
             r"executar|executo|executa|execute|executem|executam|executei|"
             r"executou|executava|executando|executaria|executariam)\b",
             question.casefold(),
+        ))
+
+    @staticmethod
+    def _is_short_imperative_open_request(question):
+        normalized = unicodedata.normalize("NFKD", question.casefold())
+        normalized = "".join(c for c in normalized if not unicodedata.combining(c))
+        return bool(re.fullmatch(
+            r"\s*(?:abre|abra|abrir|inicia|inicie|iniciar|executa|execute|executar)"
+            r"\s+(?:o\s+|a\s+|the\s+)?[\w.+-]+\s*[.!?]*\s*",
+            normalized,
         ))
 
     def _confirm_open_app(self, question, app):
@@ -2692,6 +2708,10 @@ class DesktopPet:
             self.show_bubble(answer)
 
     @staticmethod
+    def _child_process_env():
+        return {key: value for key, value in os.environ.items() if not key.endswith("_API_KEY")}
+
+    @staticmethod
     def _launch_app(app, question=""):
         desktop_file = app.get("desktop_file")
         if desktop_file:
@@ -2710,6 +2730,7 @@ class DesktopPet:
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=DesktopPet._child_process_env(),
             )
             if result.returncode:
                 details = (result.stderr or result.stdout or "").strip()
@@ -2717,7 +2738,7 @@ class DesktopPet:
             return
 
         argv = resolve_app_command(app["command"])
-        subprocess.Popen(argv, close_fds=True)
+        subprocess.Popen(argv, close_fds=True, env=DesktopPet._child_process_env())
 
     def close_app(self):
         self._closing = True
@@ -2833,7 +2854,7 @@ class DesktopPet:
         if app:
             self._confirm_open_app(question, app)
             return
-        if self._is_app_open_request(question):
+        if self._is_short_imperative_open_request(question):
             answer = (
                 "Não encontrei um aplicativo cadastrado que corresponda ao pedido. "
                 "Cadastre-o na aba Aplicativos e tente novamente."
@@ -2853,12 +2874,10 @@ class DesktopPet:
         self._thinking_started_at = time.monotonic()
         self.show_bubble("pensando...", duration=999999)
         memories = list(self.settings.get("memories", []))
-        user_name = self.settings.get("user_name", "").strip()
-        if user_name:
-            memories.insert(0, f"O nome da pessoa usuária é {user_name}; use esse nome naturalmente ao conversar.")
+        user_name = self.settings.get("user_name", "").strip()[:60]
         threading.Thread(
             target=self._ask_worker,
-            args=(request_history, memories, dict(self.settings)),
+            args=(request_history, memories, dict(self.settings), user_name),
             daemon=True,
         ).start()
 
@@ -2983,10 +3002,10 @@ class DesktopPet:
         self.root.wait_window(dialog)
         return result["question"]
 
-    def _ask_worker(self, history, memories=None, settings=None):
+    def _ask_worker(self, history, memories=None, settings=None, user_name=""):
         try:
             answer = AICore(settings=settings or self.settings).process_message(
-                history, memories=memories,
+                history, memories=memories, user_name=user_name,
             )
         except Exception:
             logging.getLogger(__name__).exception("Falha inesperada ao consultar o provedor de IA")
@@ -3052,6 +3071,13 @@ class DesktopPet:
 
 
 if __name__ == "__main__":
+    log_dir = Path.home() / ".local" / "state" / "desktop_pet"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[logging.FileHandler(log_dir / "nova.log", encoding="utf-8"), logging.StreamHandler()],
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     try:
         pet = DesktopPet()
         pet.run()

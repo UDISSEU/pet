@@ -21,8 +21,11 @@ class OllamaProvider(BaseProvider):
         try:
             with urllib.request.urlopen(tags_url, timeout=min(self.timeout, 4)) as response:
                 data = json.loads(response.read().decode("utf-8"))
-            return any(item.get("name", "").split(":")[0] == self.model.split(":")[0]
-                       for item in data.get("models", []))
+            wanted = self.model if ":" in self.model else f"{self.model}:latest"
+            return any(
+                item.get("name", "") == wanted
+                for item in data.get("models", [])
+            )
         except (OSError, ValueError, AttributeError):
             return False
 

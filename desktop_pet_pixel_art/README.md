@@ -4,11 +4,10 @@ A Nova é uma mascote em pixel art para Linux. Ela anima na área de trabalho, c
 
 ## Instalar
 
-Na pasta do projeto, crie um ambiente Python e instale as dependências:
+Na pasta do projeto, execute o instalador. Ele cria o ambiente virtual, instala as dependências e registra o lançador no menu do usuário:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+./install.sh
 ```
 
 O Tkinter também precisa estar instalado no sistema. Em Debian ou Ubuntu:
@@ -23,11 +22,6 @@ sudo apt install python3-tk python3-dbus
 .venv/bin/python src/desktop_pet.py
 ```
 
-O lançador para o menu de aplicativos fica em `launchers/nova.desktop`, com o ícone de referência e o script de inicialização na mesma pasta. Para instalá-lo no menu do usuário, execute na pasta do projeto:
-
-```bash
-install -Dm644 launchers/nova.desktop ~/.local/share/applications/nova.desktop
-```
 
 ## Usar
 
@@ -40,7 +34,7 @@ install -Dm644 launchers/nova.desktop ~/.local/share/applications/nova.desktop
 - Na aba **Meu Computador**, confira atualizações, atualize pacotes e revise limpezas do APT. A autenticação é feita pelo Linux; a remoção de pacotes mostra uma prévia antes de pedir confirmação.
 - Na aba **Histórico**, consulte mensagens com data e hora e apague uma mensagem selecionada ou todo o histórico.
 - Na aba **Aplicativos**, pesquise apps Linux instalados ou cadastre um comando manualmente. Selecione um item cadastrado para editá-lo.
-- **Testar comando** inicia o app imediatamente. Quando a Nova abrir um app a pedido, ela mostra o comando e pede confirmação.
+- **Testar comando** inicia o app imediatamente. Quando a Nova abrir um app a pedido, ela mostra o comando e pede confirmação. Apps cadastrados e encontrados pelo nome completo podem ser abertos; o alias **Google** também abre o Google Chrome. Comandos curtos como “abre o Firefox” são tratados como pedidos de abertura. Perguntas sobre programação seguem para a IA mesmo que contenham “abrir”, “executar” ou “iniciar”.
 
 Os lembretes são exibidos enquanto a Nova está aberta. Os horários usam a hora local do computador.
 

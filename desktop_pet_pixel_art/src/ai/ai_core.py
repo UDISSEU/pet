@@ -19,4 +19,6 @@ class AICore:
             prompt = f"{build_system_prompt()}\n\n{instruction}"
         else:
             prompt = build_system_prompt()
+        if user_name.strip():
+            prompt += f"\n\nO nome da pessoa usuária é {user_name.strip()[:60]}. Use-o naturalmente ao conversar."
         return self.router.generate(messages, prompt)

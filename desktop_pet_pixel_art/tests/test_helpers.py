@@ -170,7 +170,10 @@ class TestHelperModules(unittest.TestCase):
 
         messagebox.askyesno.assert_not_called()
         resolve.assert_called_once_with(app["command"])
-        popen.assert_called_once_with(["fake-browser", "--new-window"], close_fds=True)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], ["fake-browser", "--new-window"])
+        self.assertEqual(popen.call_args.kwargs["close_fds"], True)
+        self.assertFalse(any(key.endswith("_API_KEY") for key in popen.call_args.kwargs["env"]))
         pet._record_local_interaction.assert_called_once_with(
             "Pode abrir o Google?", "Aberto!"
         )
@@ -226,7 +229,9 @@ class TestHelperModules(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=60,
+            env=mock.ANY,
         )
+        self.assertFalse(any(key.endswith("_API_KEY") for key in run.call_args.kwargs["env"]))
         pet._record_local_interaction.assert_called_once_with(
             "Abra a Calculadora", "Aberto!"
         )
@@ -250,7 +255,9 @@ class TestHelperModules(unittest.TestCase):
             pet.ask_menu()
             pet._drain_app_launch_results()
 
-        popen.assert_called_once_with(["fake-sober"], close_fds=True)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], ["fake-sober"])
+        self.assertFalse(any(key.endswith("_API_KEY") for key in popen.call_args.kwargs["env"]))
         worker_thread.assert_called_once()
         self.assertEqual(
             worker_thread.call_args.kwargs["target"], pet._app_launch_worker
@@ -316,7 +323,25 @@ class TestHelperModules(unittest.TestCase):
         self.assertEqual(question, "Abra Example App")
         self.assertEqual(answer, "A abertura de Example App ainda está em andamento.")
 
-    def test_unmatched_open_app_request_does_not_fall_through_to_ai(self):
+    def test_programming_questions_with_open_verbs_fall_through_to_ai(self):
+        for question in (
+            "como abrir um arquivo CSV no pandas?",
+            "como executar um script Python?",
+            "como iniciar um servidor Flask?",
+        ):
+            with self.subTest(question=question):
+                pet = DesktopPet.__new__(DesktopPet)
+                pet.settings = {"apps": [], "memories": []}
+                pet.ai_request_active = False
+                pet.history = []
+                pet._ask_question = mock.Mock(return_value=question)
+                pet.show_bubble = mock.Mock()
+                with mock.patch.object(desktop_pet.threading, "Thread") as thread:
+                    pet.ask_menu()
+                thread.assert_called_once()
+                self.assertEqual(thread.call_args.kwargs["target"], pet._ask_worker)
+
+    def test_unmatched_short_imperative_open_app_request_does_not_fall_through_to_ai(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet.settings = {"apps": []}
         pet.ai_request_active = False
@@ -335,9 +360,9 @@ class TestHelperModules(unittest.TestCase):
     def test_confirmation_setting_defaults_to_direct_launch_and_is_sanitized(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
-            self.assertFalse(load_settings(path)["confirm_app_launch"])
+            self.assertTrue(load_settings(path)["confirm_app_launch"])
             path.write_text(json.dumps({"confirm_app_launch": "true"}), encoding="utf-8")
-            self.assertFalse(load_settings(path)["confirm_app_launch"])
+            self.assertTrue(load_settings(path)["confirm_app_launch"])
 
     def test_app_command_parser_checks_executable_without_using_a_shell(self):
         command = f'"{sys.executable}" --version'

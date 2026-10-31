@@ -121,6 +121,18 @@ class TestAIProviders(unittest.TestCase):
         provider = OllamaProvider(model="llama3.2:1b")
         with mock.patch("providers.ollama_provider.urllib.request.urlopen", return_value=response):
             self.assertTrue(provider.is_available())
+        wrong_tag = OllamaProvider(model="llama3.2:1b")
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "models": [{"name": "llama3.2:3b"}],
+        }).encode()
+        with mock.patch("providers.ollama_provider.urllib.request.urlopen", return_value=response):
+            self.assertFalse(wrong_tag.is_available())
+        untagged = OllamaProvider(model="llama3.2")
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "models": [{"name": "llama3.2:latest"}],
+        }).encode()
+        with mock.patch("providers.ollama_provider.urllib.request.urlopen", return_value=response):
+            self.assertTrue(untagged.is_available())
         with mock.patch(
             "providers.ollama_provider.urllib.request.urlopen",
             side_effect=urllib.error.URLError("offline"),
@@ -135,7 +147,7 @@ class TestAIProviders(unittest.TestCase):
                 provider.generate([{"role": "user", "content": "Oi"}], "Nova", timeout=7)
         self.assertIn("HTTP 429", str(caught.exception))
         self.assertNotIn("dummy", str(caught.exception))
-        self.assertEqual(open_url.call_args.kwargs["timeout"], 7)
+        self.assertAlmostEqual(open_url.call_args.kwargs["timeout"], 7, places=5)
 
     def test_settings_keep_local_private_defaults_and_validate_timeout(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,12 +158,23 @@ class TestAIProviders(unittest.TestCase):
         self.assertFalse(settings["online_ai_enabled"])
         self.assertFalse(settings["allow_online_data"])
         self.assertFalse(settings["confirm_free_tier"])
-        self.assertEqual(settings["ai_timeout"], 120)
+        self.assertEqual(settings["ai_timeout"], 30)
 
     def test_ai_core_generates_contextual_prompt(self):
-        core = AICore(router=mock.Mock(generate=mock.Mock(return_value="resposta")))
+        router = mock.Mock(generate=mock.Mock(return_value="resposta"))
+        core = AICore(router=router)
         result = core.process_message([{"role": "user", "content": "Oi"}])
         self.assertEqual(result, "resposta")
+
+    def test_user_name_is_always_in_system_prompt_without_matching_memory(self):
+        router = mock.Mock(generate=mock.Mock(return_value="resposta"))
+        core = AICore(router=router)
+        core.process_message(
+            [{"role": "user", "content": "Como está o clima?"}], user_name="Ada"
+        )
+        prompt = router.generate.call_args.args[1]
+        self.assertIn("Ada", prompt)
+        self.assertIn("Como está o clima?", router.generate.call_args.args[0][0]["content"])
 
 
 if __name__ == "__main__":

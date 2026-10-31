@@ -18,7 +18,7 @@ DEFAULT_SETTINGS = {
     "memories": [],
     "reminders": [],
     "apps": [],
-    "confirm_app_launch": False,
+    "confirm_app_launch": True,
     "focus_minutes": 25,
     "break_minutes": 5,
     "routine_greeting": False,
@@ -116,7 +116,7 @@ def load_settings(path=SETTINGS_PATH):
     except (TypeError, ValueError):
         result["last_note_at"] = 0
     if not isinstance(result.get("confirm_app_launch"), bool):
-        result["confirm_app_launch"] = False
+        result["confirm_app_launch"] = True
     try:
         datetime.strptime(result.get("evening_time", "20:30"), "%H:%M")
     except (TypeError, ValueError):
