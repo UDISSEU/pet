@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Nova · painel</title>
+    <link rel="icon" href="/nova-icon.png">
+    <link rel="stylesheet" href="/app.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" aria-label="Navegação">
+        <div class="brand">
+          <img src="/nova-icon.png" alt="" class="brand-icon">
+          <div><strong>nova</strong><span>companheira de desktop</span></div>
+        </div>
+        <div class="pet-card">
+          <div class="pet-orbit"><img src="/nova-icon.png" alt="Nova" class="pet-avatar"></div>
+          <div class="pet-status"><span id="connection-dot" class="dot"></span><span id="connection-label">Conectando…</span></div>
+          <div class="pet-pose" id="pet-pose">Preparando o painel</div>
+        </div>
+        <nav class="nav-list">
+          <button class="nav-item active" data-view="chat"><span class="nav-icon">✦</span> Conversa</button>
+          <div class="nav-caption">ORGANIZAÇÃO</div>
+          <button class="nav-item" data-view="history"><span class="nav-icon">≡</span> Histórico</button>
+          <button class="nav-item" data-view="reminders"><span class="nav-icon">♧</span> Lembretes</button>
+        </nav>
+        <div class="sidebar-foot"><span>Painel de conversa e organização.</span><span id="provider-label">Provedor local</span></div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div><div class="eyebrow">SEU ESPAÇO</div><h1 id="page-title">Conversa</h1></div>
+          <div class="topbar-actions"><span id="activity-label" class="activity-pill">Nova está por aqui</span><button id="theme-toggle" class="icon-button theme-toggle" type="button" aria-label="Ativar modo escuro" title="Ativar modo escuro" aria-pressed="false">☾</button><button id="refresh-button" class="icon-button" title="Atualizar estado" aria-label="Atualizar estado">↻</button></div>
+        </header>
+
+        <section class="chat-layout" aria-label="Conversa com a Nova">
+          <div id="welcome" class="welcome-card">
+            <div class="welcome-copy"><span class="sparkle">✦</span><div><h2>Oi<span id="user-greeting"></span>!</h2><p>O que vamos fazer hoje?</p></div></div>
+            <div class="quick-prompts">
+              <button class="prompt-chip" data-prompt="Me ajuda a organizar meu dia?">Organizar meu dia</button>
+              <button class="prompt-chip" data-prompt="Vamos fazer uma sessão de foco?">Começar um foco</button>
+              <button class="prompt-chip" data-prompt="Que dia é hoje?">Ver a data</button>
+            </div>
+          </div>
+          <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+          <div id="working-indicator" class="working-indicator" hidden><span class="typing-dots"><i></i><i></i><i></i></span><span id="working-label">A Nova está pensando…</span></div>
+          <div id="error-banner" class="error-banner" role="alert" hidden></div>
+          <form id="chat-form" class="composer">
+            <textarea id="message-input" rows="1" maxlength="4000" placeholder="Escreva uma mensagem para a Nova…" aria-label="Mensagem para a Nova"></textarea>
+            <div class="composer-bottom"><span>Enter envia · Shift + Enter quebra a linha</span><button id="send-button" type="submit"><span>Enviar</span><b>↑</b></button></div>
+          </form>
+          <p class="privacy-note">Suas mensagens são processadas pelo provedor configurado nas preferências.</p>
+        </section>
+        <section id="history-view" class="data-view" aria-label="Histórico" hidden>
+          <div class="view-heading"><div><h2>Histórico de conversa</h2><p>Mensagens salvas neste computador.</p></div><button id="clear-history" class="secondary-button">Apagar todo o histórico</button></div>
+          <div id="history-list" class="record-list"></div>
+        </section>
+        <section id="reminders-view" class="data-view" aria-label="Lembretes" hidden>
+          <div class="view-heading"><div><h2>Seus lembretes</h2><p>Gerencie os avisos acompanhados pela Nova.</p></div></div>
+          <form id="reminder-form" class="reminder-form"><label>Data e hora<input id="reminder-at" type="datetime-local" required></label><label class="reminder-text-field">Lembrete<input id="reminder-text" maxlength="500" required placeholder="Ex.: tomar água"></label><button class="primary-button" type="submit">Adicionar lembrete</button></form>
+          <div id="reminders-view-list" class="record-list"></div>
+        </section>
+      </main>
+
+      <aside class="details-panel" aria-label="Resumo da Nova">
+        <div class="detail-heading"><span class="eyebrow">AGORA</span><h2>Seu ritmo</h2></div>
+        <div class="focus-card"><div class="detail-icon violet">◷</div><div><strong id="focus-title">Sem sessão ativa</strong><span id="focus-subtitle">Quando quiser, começamos.</span></div><button id="start-focus-shortcut" class="text-action">Iniciar</button></div>
+        <div class="detail-section"><div class="section-title"><h3>Próximos lembretes</h3><button class="text-action" data-view="reminders">Ver todos</button></div><div id="reminder-list" class="reminder-list"><p class="muted">Carregando…</p></div></div>
+        <div class="detail-section"><div class="section-title"><h3>Configuração ativa</h3></div><div class="setting-row"><span>Provedor de IA</span><strong id="provider-value">—</strong></div><div class="setting-row"><span>Modo</span><strong id="mode-value">—</strong></div><p class="settings-hint">Para alterar preferências, calendário, rotina, aplicativos ou manutenção, use o menu da mascote na área de trabalho.</p></div>
+        <div class="detail-footer"><span class="tiny-avatar"><img src="/nova-icon.png" alt=""></span><span>Nova continua animada na sua área de trabalho.</span></div>
+      </aside>
+    </div>
+
+    <dialog id="confirmation-dialog" class="confirmation-dialog">
+      <form method="dialog" id="confirmation-form">
+        <div class="dialog-mark">!</div><h2>Confirmar abertura</h2>
+        <p>A Nova encontrou <strong id="confirm-app-name"></strong>. O comando cadastrado será:</p>
+        <pre id="confirm-app-command"></pre>
+        <p class="muted">Só continue se você reconhecer este aplicativo e comando.</p>
+        <div class="dialog-actions"><button id="cancel-app-button" type="button" class="secondary-button">Cancelar</button><button id="confirm-app-button" type="button" class="danger-button">Confirmar e abrir</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="focus-dialog" class="confirmation-dialog focus-dialog">
+      <form id="focus-form">
+        <div class="dialog-mark violet-mark">◷</div><h2>Uma pausa para focar</h2><p>O temporizador e as transições continuam sob controle do núcleo Python.</p>
+        <label>Prioridade<input id="focus-goal-input" maxlength="120" placeholder="Ex.: terminar o relatório"></label>
+        <div class="duration-row"><label>Foco (min)<input id="focus-minutes-input" type="number" min="5" max="180" value="25" required></label><label>Pausa (min)<input id="break-minutes-input" type="number" min="1" max="60" value="5" required></label></div>
+        <div class="dialog-actions"><button id="cancel-focus-button" type="button" class="secondary-button">Cancelar</button><button type="submit" class="primary-button">Começar sessão</button></div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

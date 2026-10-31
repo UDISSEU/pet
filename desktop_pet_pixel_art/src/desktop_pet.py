@@ -36,8 +36,11 @@ import os
 import queue
 import random
 import re
+import secrets
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -95,11 +98,20 @@ from config import (
     WALK_DIRECTION_CHANGE_MIN_SECONDS,
     WIDTH,
 )
+from frontend_bridge import FrontendBridge, RpcCall
 from ollama_client import load_history, save_history
 from ai.ai_core import AICore
 from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
+from system_maintenance import (
+    parse_removable_packages,
+    parse_upgradable_packages,
+    run_commands,
+)
 from x11_helper import X11Helper
+
+# O painel web fica preservado no projeto, mas inativo enquanto sua nova função é definida.
+WEB_FRONTEND_ENABLED = False
 
 # ---------------------------------------------------------------------------
 # Personagem
@@ -127,6 +139,11 @@ class DesktopPet:
         self._ai_results = queue.Queue()
         self._provider_test_results = queue.Queue()
         self._app_launch_results = queue.Queue()
+        self._frontend_bridge = None
+        self._frontend_calls = {}
+        self._pending_frontend_actions = {}
+        self._web_browser = None
+        self._web_profile = None
         self.app_launch_active = False
         self.system_maintenance_active = False
         self._last_render_key = None
@@ -469,6 +486,7 @@ class DesktopPet:
     # ---------- laço principal ----------
     def tick(self):
         now = time.monotonic()
+        self._drain_frontend_requests()
         if hasattr(self, "_ai_results"):
             self._drain_ai_results()
         if hasattr(self, "_provider_test_results"):
@@ -555,6 +573,340 @@ class DesktopPet:
             self._next_tick_at += TICK_MS / 1000
         delay = max(1, round((self._next_tick_at - schedule_now) * 1000))
         self.root.after(delay, self.tick)
+
+    def _drain_frontend_requests(self):
+        bridge = getattr(self, "_frontend_bridge", None)
+        if bridge is None:
+            return
+        for call in bridge.drain_requests():
+            try:
+                result = self._handle_frontend_call(call)
+            except ValueError as exc:
+                call.complete(error={"code": "invalid_operation", "message": str(exc)})
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "Falha em operação do painel web (%s)", type(exc).__name__,
+                )
+                call.complete(error={
+                    "code": "internal_error",
+                    "message": "Não consegui concluir a operação. Tente novamente.",
+                })
+            else:
+                if result is not None:
+                    call.complete(result=result)
+
+    @staticmethod
+    def _require_frontend_keys(payload, keys):
+        if set(payload) != set(keys):
+            raise ValueError("Os argumentos da operação não são válidos.")
+
+    def _handle_frontend_call(self, call):
+        payload = call.payload
+        if call.operation == "state.get":
+            self._require_frontend_keys(payload, ())
+            return self._frontend_state()
+        if call.operation == "chat.send":
+            self._require_frontend_keys(payload, ("message",))
+            return self._handle_frontend_chat(call, payload["message"])
+        if call.operation in ("history.delete", "history.clear"):
+            keys = ("index",) if call.operation == "history.delete" else ()
+            self._require_frontend_keys(payload, keys)
+            if self.ai_request_active:
+                raise ValueError("Aguarde a resposta atual antes de alterar o histórico.")
+            if call.operation == "history.clear":
+                previous = self.history
+                self.history = []
+                if not save_history(self.history):
+                    self.history = previous
+                    raise ValueError("Não consegui salvar a alteração no histórico.")
+            else:
+                index = payload["index"]
+                if type(index) is not int or not 0 <= index < len(self.history):
+                    raise ValueError("Essa mensagem não está mais disponível.")
+                removed = self.history.pop(index)
+                if not save_history(self.history):
+                    self.history.insert(index, removed)
+                    raise ValueError("Não consegui salvar a alteração no histórico.")
+            return {"message": "Histórico atualizado."}
+        if call.operation in ("reminder.add", "reminder.complete", "reminder.delete"):
+            reminders = self.settings.setdefault("reminders", [])
+            if call.operation == "reminder.add":
+                self._require_frontend_keys(payload, ("at", "text"))
+                stamp, text = payload["at"], payload["text"]
+                parsed = valid_reminder_time(stamp) if isinstance(stamp, str) else None
+                if parsed is None:
+                    raise ValueError("Informe uma data e horário válidos.")
+                if not isinstance(text, str) or not text.strip() or len(text.strip()) > 500:
+                    raise ValueError("O lembrete precisa ter entre 1 e 500 caracteres.")
+                if len(reminders) >= 100:
+                    raise ValueError("O limite de 100 lembretes foi atingido.")
+                reminders.append({"at": parsed.isoformat(timespec="minutes"), "text": text.strip(), "done": False})
+                rollback = lambda: reminders.pop()
+            else:
+                self._require_frontend_keys(payload, ("index",))
+                index = payload["index"]
+                if type(index) is not int or not 0 <= index < len(reminders):
+                    raise ValueError("Esse lembrete não está mais disponível.")
+                if not isinstance(reminders[index], dict):
+                    raise ValueError("Esse lembrete não é válido.")
+                if call.operation == "reminder.complete":
+                    previous = reminders[index].get("done", False)
+                    reminders[index]["done"] = True
+                    rollback = lambda: reminders[index].__setitem__("done", previous)
+                else:
+                    removed = reminders.pop(index)
+                    rollback = lambda: reminders.insert(index, removed)
+            if not save_settings(self.settings):
+                rollback()
+                raise ValueError("Não consegui salvar a alteração do lembrete.")
+            return {"message": "Lembrete atualizado."}
+        if call.operation == "focus.start":
+            self._require_frontend_keys(payload, ("goal", "focus_minutes", "break_minutes"))
+            goal = payload["goal"]
+            focus_minutes = payload["focus_minutes"]
+            break_minutes = payload["break_minutes"]
+            if not isinstance(goal, str) or len(goal) > 120:
+                raise ValueError("A prioridade deve ter até 120 caracteres.")
+            if type(focus_minutes) is not int or not 5 <= focus_minutes <= 180:
+                raise ValueError("O foco deve durar entre 5 e 180 minutos.")
+            if type(break_minutes) is not int or not 1 <= break_minutes <= 60:
+                raise ValueError("A pausa deve durar entre 1 e 60 minutos.")
+            if not self.start_focus(goal, focus_minutes, break_minutes):
+                raise ValueError("A Nova não está disponível para iniciar o foco agora.")
+            return {"message": "Sessão de foco iniciada."}
+        if call.operation == "focus.stop":
+            self._require_frontend_keys(payload, ())
+            if self.focus_mode == "idle":
+                raise ValueError("Não há uma sessão de foco ativa.")
+            self.stop_focus()
+            return {"message": "Sessão de foco encerrada."}
+        if call.operation == "app.confirm":
+            return self._confirm_frontend_action(payload)
+        raise ValueError("Operação não permitida.")
+
+    def _frontend_state(self):
+        pose_labels = {
+            "idle": "Descansando",
+            "walk_left": "Passeando",
+            "walk_right": "Passeando",
+            "wave": "Dando um oi",
+            "thinking": "Pensando em uma resposta",
+            "celebrate": "Comemorando",
+            "rest": "Em pausa",
+            "sleep": "Tirando um cochilo",
+            "curious": "Curiosa",
+            "yawn": "Com sono",
+            "angry": "Irritada com a parede",
+        }
+        history_start = max(0, len(self.history) - MAX_HISTORY_MESSAGES)
+        history = [
+            {
+                "index": index,
+                "role": item["role"],
+                "content": item["content"],
+                "timestamp": item.get("timestamp", ""),
+            }
+            for index, item in enumerate(self.history[history_start:], start=history_start)
+            if isinstance(item, dict)
+            and item.get("role") in ("user", "assistant")
+            and isinstance(item.get("content"), str)
+        ]
+        reminders = [
+            {"index": index, "at": item.get("at", ""), "text": item.get("text", ""), "done": bool(item.get("done", False))}
+            for index, item in enumerate(self.settings.get("reminders", []))
+            if isinstance(item, dict)
+        ]
+        provider = self.settings.get("ai_provider", "ollama")
+        model_key = f"{provider}_model"
+        return {
+            "history": history,
+            "ai_busy": bool(self.ai_request_active),
+            "pose": self._video_for_current_pose(),
+            "pose_label": pose_labels.get(self._video_for_current_pose(), "Disponível"),
+            "user_name": self.settings.get("user_name", ""),
+            "provider": provider,
+            "model": self.settings.get(model_key, ""),
+            "online_enabled": bool(self.settings.get("online_ai_enabled", False)),
+            "mode": self.settings.get("mode", "companhia"),
+            "focus_mode": self.focus_mode,
+            "focus_goal": self.focus_goal,
+            "reminders": reminders,
+        }
+
+    def _handle_frontend_chat(self, call, message):
+        if not isinstance(message, str):
+            raise ValueError("A mensagem precisa ser texto.")
+        question = message.strip()
+        if not question or len(question) > 4000:
+            raise ValueError("Escreva uma mensagem de até 4000 caracteres.")
+        if self.ai_request_active:
+            raise ValueError("A Nova já está respondendo. Aguarde antes de enviar outra mensagem.")
+
+        self._last_user_activity_at = time.monotonic()
+        date_answer = current_date_answer(question)
+        if date_answer:
+            answer = self._record_local_interaction(question, date_answer)
+            self.show_bubble(answer)
+            return {"answer": answer}
+        if is_open_calendar_request(question):
+            answer = self._record_local_interaction(question, "Abri o calendário para você.")
+            self.show_calendar()
+            self.show_bubble(answer)
+            return {"answer": answer}
+
+        app = self._matching_app(question)
+        if app:
+            if self.app_launch_active:
+                raise ValueError("Já estou abrindo um aplicativo.")
+            if self.settings.get("confirm_app_launch", True):
+                now = time.monotonic()
+                self._pending_frontend_actions = {
+                    key: value for key, value in self._pending_frontend_actions.items()
+                    if value["expires_at"] > now
+                }
+                if len(self._pending_frontend_actions) >= 16:
+                    raise ValueError("Há muitas confirmações pendentes. Cancele uma e tente novamente.")
+                confirmation_id = secrets.token_urlsafe(24)
+                self._pending_frontend_actions[confirmation_id] = {
+                    "question": question,
+                    "app": dict(app),
+                    "expires_at": now + 120,
+                }
+                return {
+                    "confirmation_required": True,
+                    "confirmation_id": confirmation_id,
+                    "question": question,
+                    "app_name": app.get("name", "aplicativo"),
+                    "command": app.get("command", ""),
+                }
+            self._start_app_launch(question, app)
+            return {"answer": f"A Nova está abrindo {app.get('name', 'o aplicativo')}."}
+
+        if self._is_app_open_request(question) and self._looks_like_app_target(question):
+            answer = (
+                "Não encontrei um aplicativo cadastrado que corresponda ao pedido. "
+                "Cadastre-o na aba Aplicativos e tente novamente. "
+                "Se era uma pergunta, comece com 'como...'."
+            )
+            answer = self._record_local_interaction(question, answer)
+            self.show_bubble(answer)
+            return {"answer": answer}
+
+        self.history.append({
+            "role": "user", "content": question,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        })
+        self.history = self.history[-MAX_HISTORY_MESSAGES:]
+        save_history(self.history)
+        request_history = list(self.history)
+        self.ai_request_active = True
+        self.state = "thinking"
+        self._show_idea_icon = False
+        self._thinking_started_at = time.monotonic()
+        self.show_bubble("pensando...", duration=999999)
+        self._frontend_calls[call.request_id] = call
+        threading.Thread(
+            target=self._ask_worker,
+            args=(
+                request_history,
+                list(self.settings.get("memories", [])),
+                dict(self.settings),
+                self.settings.get("user_name", "").strip()[:60],
+                call.request_id,
+            ),
+            name="nova-web-chat",
+            daemon=True,
+        ).start()
+        return None
+
+    def _confirm_frontend_action(self, payload):
+        self._require_frontend_keys(payload, ("confirmation_id", "confirmed"))
+        confirmation_id = payload["confirmation_id"]
+        confirmed = payload["confirmed"]
+        if not isinstance(confirmation_id, str) or len(confirmation_id) > 100 or type(confirmed) is not bool:
+            raise ValueError("A confirmação não é válida.")
+        action = self._pending_frontend_actions.pop(confirmation_id, None)
+        if action is None or action["expires_at"] <= time.monotonic():
+            raise ValueError("Essa confirmação expirou. Envie o pedido novamente.")
+        question, app = action["question"], action["app"]
+        if not confirmed:
+            answer = self._record_local_interaction(question, f"Tudo bem, não abri {app.get('name', 'o aplicativo')}.")
+            self.show_bubble(answer)
+            return {"message": "Abertura cancelada."}
+        if self.app_launch_active:
+            raise ValueError("Já estou abrindo outro aplicativo.")
+        self._start_app_launch(question, app)
+        return {"message": f"A Nova está abrindo {app.get('name', 'o aplicativo')}."}
+
+    @staticmethod
+    def _web_browser_command():
+        for candidate in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+            executable = shutil.which(candidate)
+            if not executable:
+                continue
+            resolved = Path(executable).resolve()
+            if candidate.startswith("google-chrome"):
+                bundled = resolved.parent / "chrome"
+                if bundled.is_file() and os.access(bundled, os.X_OK):
+                    return str(bundled)
+            return executable
+        return None
+
+    def _start_web_frontend(self):
+        if not WEB_FRONTEND_ENABLED:
+            raise RuntimeError("O painel web está desativado temporariamente.")
+        browser_process = getattr(self, "_web_browser", None)
+        if browser_process is not None and browser_process.poll() is None:
+            raise RuntimeError("O painel web já está aberto.")
+        if browser_process is not None:
+            self._stop_web_frontend()
+        browser = self._web_browser_command()
+        if not browser:
+            raise RuntimeError("Não encontrei Google Chrome ou Chromium para abrir o painel web.")
+        bridge = FrontendBridge(
+            PROJECT_ROOT / "frontend",
+            PROJECT_ROOT / "launchers" / "nova-icon.png",
+        )
+        bridge.start()
+        profile = None
+        try:
+            profile = tempfile.TemporaryDirectory(prefix="nova-web-profile-")
+            process = subprocess.Popen(
+                [
+                    browser,
+                    f"--user-data-dir={profile.name}",
+                    "--class=Nova",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    f"--app={bridge.launch_url}",
+                ],
+                close_fds=True,
+                env=self._child_process_env(),
+            )
+        except Exception:
+            bridge.close()
+            if profile is not None:
+                profile.cleanup()
+            raise
+        self._frontend_bridge = bridge
+        self._web_profile = profile
+        self._web_browser = process
+        self.root.after(500, self._check_web_browser)
+
+    def _check_web_browser(self):
+        if self._closing or self._web_browser is None:
+            return
+        if self._web_browser.poll() is not None:
+            logging.getLogger(__name__).info("Painel web fechado; a mascote continuará ativa.")
+            self._stop_web_frontend()
+            return
+        self.root.after(500, self._check_web_browser)
+
+    def open_web_frontend(self):
+        try:
+            self._start_web_frontend()
+        except (OSError, RuntimeError) as exc:
+            self.show_bubble(str(exc), duration=5000)
 
     def _choose_walk_direction(self, now=None):
         directions = [
@@ -813,7 +1165,7 @@ class DesktopPet:
         self._context_popup = popup
         popup.overrideredirect(True)
         popup.attributes("-topmost", True)
-        popup.configure(bg="#D8DEEA")
+        popup.configure(bg="#66cdaa")
         popup.bind("<Escape>", lambda _event: popup.destroy())
         popup.bind("<FocusOut>", lambda _event: popup.after_idle(
             lambda: popup.destroy() if popup.winfo_exists() and
@@ -821,19 +1173,19 @@ class DesktopPet:
         ))
 
         panel = tk.Frame(popup, bg="#F5F6FA", padx=8, pady=8,
-                         highlightthickness=1, highlightbackground="#D8DEEA")
+                         highlightthickness=1, highlightbackground="#66cdaa")
         panel.pack(fill="both", expand=True)
         title_bar = tk.Frame(panel, bg="#F5F6FA")
         title_bar.pack(fill="x", padx=4, pady=(1, 5))
         title_label = tk.Label(
             title_bar, text="Nova", font=("TkDefaultFont", 10, "bold"),
-            fg="#202B45", bg="#F5F6FA", anchor="w", cursor="fleur",
+            fg="#663399", bg="#F5F6FA", anchor="w", cursor="fleur",
         )
         title_label.pack(side="left", fill="x", expand=True, padx=3, pady=3)
         tk.Button(
             title_bar, text="×", command=lambda: popup.destroy(),
             relief="flat", bd=0, padx=7, pady=1, cursor="hand2",
-            font=("TkDefaultFont", 12, "bold"), fg="#68738A",
+            font=("TkDefaultFont", 12, "bold"), fg="#663399",
             bg="#F5F6FA", activebackground="#E7EAF1",
         ).pack(side="right")
 
@@ -861,9 +1213,9 @@ class DesktopPet:
                 popup.destroy()
 
         def action_button(label, command, primary=False):
-            bg = "#5269C8" if primary else "#FFFFFF"
+            bg = "#663399" if primary else "#FFFFFF"
             fg = "#FFFFFF" if primary else "#28334D"
-            hover = "#4056B2" if primary else "#E9EDF5"
+            hover = "#66cdaa" if primary else "#E9EDF5"
             button = tk.Button(
                 panel, text=label, anchor="w", command=lambda: (close_popup(), command()),
                 relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
@@ -893,7 +1245,7 @@ class DesktopPet:
         more_button = tk.Button(
             panel, text="Mostrar mais  ▾", command=toggle_more, anchor="w",
             relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
-            bg="#E9EDF5", fg="#536078", activebackground="#DDE3EF",
+            bg="#E9EDF5", fg="#663399", activebackground="#DDE3EF",
         )
         more_button.pack(fill="x", pady=(5, 0))
 
@@ -932,7 +1284,7 @@ class DesktopPet:
         behavior_button = tk.Button(
             behavior_group, text="Comportamento  ▾", command=toggle_behavior, anchor="w",
             relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
-            bg="#E9EDF5", fg="#536078", activebackground="#DDE3EF",
+            bg="#E9EDF5", fg="#663399", activebackground="#DDE3EF",
         )
         behavior_button.pack(fill="x")
 
@@ -997,50 +1349,87 @@ class DesktopPet:
         )
         save_settings(self.settings)
 
+    def _scroll_preferences_canvas(self, event):
+        widget = event.widget
+        while widget is not None:
+            canvas = self._preferences_scroll_canvases.get(str(widget))
+            if canvas is not None:
+                if getattr(event, "num", None) == 4:
+                    canvas.yview_scroll(-3, "units")
+                elif getattr(event, "num", None) == 5:
+                    canvas.yview_scroll(3, "units")
+                else:
+                    delta = int(-event.delta / 120) if abs(event.delta) >= 120 else int(-event.delta)
+                    if delta:
+                        canvas.yview_scroll(delta * 3, "units")
+                return "break"
+            widget = getattr(widget, "master", None)
+        return None
+
+    def _release_preferences_canvases(self, event, window, canvases):
+        if event.widget is not window:
+            return
+        for canvas in canvases:
+            self._preferences_scroll_canvases.pop(str(canvas), None)
+
     def open_autonomy_settings(self, selected_tab="behavior"):
+        if not hasattr(self, "_preferences_scroll_canvases"):
+            self._preferences_scroll_canvases = {}
+        if not getattr(self, "_preferences_scroll_binding_ready", False):
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                self.root.bind_all(sequence, self._scroll_preferences_canvas, add="+")
+            self._preferences_scroll_binding_ready = True
+        window_canvases = []
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
+        window.bind(
+            "<Destroy>",
+            lambda event: self._release_preferences_canvases(event, window, window_canvases),
+            add="+",
+        )
         window.title("Preferências da Nova")
         window.transient(self.root)
         window.attributes("-topmost", True)
         window.geometry("560x600")
         window.minsize(520, 550)
-        window.configure(bg="#E3E8F0")
+        window.configure(bg="#fdf5e6")
 
         style = ttk.Style(window)
-        style.configure("Autonomy.TFrame", background="#E3E8F0")
-        style.configure("Card.TFrame", background="#F5F7FA")
-        style.configure("Title.TLabel", background="#E3E8F0", foreground="#202B45", font=("TkDefaultFont", 14, "bold"))
-        style.configure("Subtitle.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
-        style.configure("CardTitle.TLabel", background="#F5F7FA", foreground="#26344A", font=("TkDefaultFont", 10, "bold"))
-        style.configure("Hint.TLabel", background="#F5F7FA", foreground="#58667C", font=("TkDefaultFont", 9))
-        style.configure("PageHint.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
-        style.configure("ComputerStatus.TLabel", background="#F5F7FA", foreground="#26344A", font=("TkDefaultFont", 10, "bold"))
-        style.configure("ComputerStatusError.TLabel", background="#F5F7FA", foreground="#B42318", font=("TkDefaultFont", 10, "bold"))
-        style.configure("ModeHint.TLabel", background="#F5F7FA", foreground="#58667C", font=("TkDefaultFont", 8))
-        style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
-        style.configure("Secondary.TButton", padding=(12, 8))
+        style.configure("Autonomy.TFrame", background="#fdf5e6")
+        style.configure("Card.TFrame", background="#f5fffa")
+        style.configure("Title.TLabel", background="#fdf5e6", foreground="#663399", font=("TkDefaultFont", 14, "bold"))
+        style.configure("Subtitle.TLabel", background="#fdf5e6", foreground="#663399", font=("TkDefaultFont", 9))
+        style.configure("CardTitle.TLabel", background="#f5fffa", foreground="#663399", font=("TkDefaultFont", 10, "bold"))
+        style.configure("Hint.TLabel", background="#f5fffa", foreground="#663399", font=("TkDefaultFont", 9))
+        style.configure("PageHint.TLabel", background="#fdf5e6", foreground="#663399", font=("TkDefaultFont", 9))
+        style.configure("ComputerStatus.TLabel", background="#f5fffa", foreground="#663399", font=("TkDefaultFont", 10, "bold"))
+        style.configure("ComputerStatusError.TLabel", background="#f5fffa", foreground="#663399", font=("TkDefaultFont", 10, "bold"))
+        style.configure("ModeHint.TLabel", background="#f5fffa", foreground="#663399", font=("TkDefaultFont", 8))
+        style.configure("Primary.TButton", background="#663399", foreground="#fdf5e6", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
+        style.map("Primary.TButton", background=[("active", "#66cdaa"), ("disabled", "#f5fffa")], foreground=[("active", "#663399"), ("disabled", "#663399")])
+        style.configure("Secondary.TButton", background="#66cdaa", foreground="#663399", padding=(12, 8))
+        style.map("Secondary.TButton", background=[("active", "#f5fffa")], foreground=[("active", "#663399")])
         style.configure("Nav.TButton", padding=(4, 2))
         style.configure(
-            "TabNav.TLabel", background="#E3E8F0", foreground="#202B45",
+            "TabNav.TLabel", background="#fdf5e6", foreground="#663399",
             font=("TkDefaultFont", 11, "bold"),
         )
         style.configure(
-            "Maintenance.Treeview", background="#F5F7FA", fieldbackground="#F5F7FA",
-            foreground="#26344A", rowheight=28, borderwidth=0,
+            "Maintenance.Treeview", background="#f5fffa", fieldbackground="#f5fffa",
+            foreground="#663399", rowheight=28, borderwidth=0,
         )
         style.configure(
-            "Maintenance.Treeview.Heading", background="#E3E8F0",
-            foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+            "Maintenance.Treeview.Heading", background="#fdf5e6",
+            foreground="#663399", font=("TkDefaultFont", 9, "bold"),
         )
         style.configure(
-            "History.Treeview", background="#F5F7FA", fieldbackground="#F5F7FA",
-            foreground="#26344A", rowheight=27, borderwidth=0,
+            "History.Treeview", background="#f5fffa", fieldbackground="#f5fffa",
+            foreground="#663399", rowheight=27, borderwidth=0,
         )
         style.configure(
-            "History.Treeview.Heading", background="#E3E8F0",
-            foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+            "History.Treeview.Heading", background="#fdf5e6",
+            foreground="#663399", font=("TkDefaultFont", 9, "bold"),
         )
-        style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
+        style.configure("Autonomy.TEntry", fieldbackground="#f5fffa", foreground="#663399", padding=4)
 
         outer = ttk.Frame(window, style="Autonomy.TFrame", padding=(22, 18, 22, 14))
         outer.pack(fill="both", expand=True)
@@ -1098,7 +1487,7 @@ class DesktopPet:
         def scrollable_tab():
             tab = ttk.Frame(notebook, style="Autonomy.TFrame")
             canvas = tk.Canvas(
-                tab, bg="#E3E8F0", bd=0, highlightthickness=0,
+                tab, bg="#fdf5e6", bd=0, highlightthickness=0,
                 yscrollincrement=24,
             )
             scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
@@ -1117,25 +1506,8 @@ class DesktopPet:
                     target.itemconfigure(item, width=event.width),
             )
 
-            def scroll_wheel(event, target=canvas):
-                widget = event.widget
-                while widget is not None:
-                    if widget is target:
-                        if getattr(event, "num", None) == 4:
-                            target.yview_scroll(-3, "units")
-                        elif getattr(event, "num", None) == 5:
-                            target.yview_scroll(3, "units")
-                        else:
-                            delta = int(-event.delta / 120) if abs(event.delta) >= 120 else int(-event.delta)
-                            if delta:
-                                target.yview_scroll(delta * 3, "units")
-                        return "break"
-                    widget = getattr(widget, "master", None)
-                return None
-
-            canvas.bind_all("<MouseWheel>", scroll_wheel, add="+")
-            canvas.bind_all("<Button-4>", scroll_wheel, add="+")
-            canvas.bind_all("<Button-5>", scroll_wheel, add="+")
+            self._preferences_scroll_canvases[str(canvas)] = canvas
+            window_canvases.append(canvas)
             return tab, content
 
         behavior_tab, behavior_content = scrollable_tab()
@@ -1422,11 +1794,11 @@ class DesktopPet:
             details_window.title("Detalhes da operação")
             details_window.transient(window)
             details_window.geometry("620x380")
-            details_window.configure(bg="#E3E8F0")
+            details_window.configure(bg="#fdf5e6")
             frame = ttk.Frame(details_window, style="Autonomy.TFrame", padding=14)
             frame.pack(fill="both", expand=True)
             output = tk.Text(frame, wrap="word", height=18, relief="flat", bd=0,
-                             bg="#F5F7FA", fg="#344054", font=("TkFixedFont", 9))
+                             bg="#f5fffa", fg="#663399", font=("TkFixedFont", 9))
             scrollbar = ttk.Scrollbar(frame, orient="vertical", command=output.yview)
             output.configure(yscrollcommand=scrollbar.set)
             output.pack(side="left", fill="both", expand=True)
@@ -1445,7 +1817,7 @@ class DesktopPet:
             dialog.title(title)
             dialog.transient(window)
             dialog.resizable(False, False)
-            dialog.configure(bg="#E3E8F0")
+            dialog.configure(bg="#fdf5e6")
             frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=20)
             frame.pack(fill="both", expand=True)
             ttk.Label(frame, text=title, style="Title.TLabel").pack(anchor="w")
@@ -1471,7 +1843,7 @@ class DesktopPet:
             dialog.transient(window)
             dialog.geometry("620x440")
             dialog.minsize(500, 350)
-            dialog.configure(bg="#E3E8F0")
+            dialog.configure(bg="#fdf5e6")
             frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=16)
             frame.pack(fill="both", expand=True)
             ttk.Label(frame, text=title, style="Title.TLabel").pack(anchor="w")
@@ -1525,32 +1897,6 @@ class DesktopPet:
             dialog.grab_set()
             dialog.focus_set()
 
-        def parse_upgradable_packages(output):
-            packages = []
-            for line in output.splitlines():
-                if "upgradable" not in line.lower() or "/" not in line:
-                    continue
-                fields = line.split()
-                if len(fields) < 2:
-                    continue
-                name = fields[0].split("/", 1)[0]
-                candidate = fields[1]
-                installed = ""
-                match = re.search(r"\[upgradable from: ([^\]]+)\]", line)
-                if match:
-                    installed = match.group(1)
-                packages.append((name, installed, candidate))
-            return packages
-
-        def parse_removable_packages(output):
-            packages = []
-            for line in output.splitlines():
-                fields = line.split()
-                if len(fields) >= 2 and fields[0] in ("Remv", "Purg"):
-                    version = fields[2].strip("[]") if len(fields) >= 3 else ""
-                    packages.append((fields[1], version, "Será removido"))
-            return packages
-
         def finish_maintenance(title, result, error, on_success=None):
             if not window.winfo_exists():
                 return
@@ -1602,28 +1948,14 @@ class DesktopPet:
             computer_progress.start(12)
 
             def worker():
-                output = []
-                error = None
                 try:
-                    for command in commands:
-                        completed = subprocess.run(
-                            command, capture_output=True, text=True, timeout=600,
-                            check=False, env=self._child_process_env(),
-                        )
-                        details = (completed.stdout or "") + (completed.stderr or "")
-                        if details.strip():
-                            output.append(details.strip())
-                        if completed.returncode != 0:
-                            error = details.strip() or f"O comando terminou com código {completed.returncode}."
-                            break
-                except subprocess.TimeoutExpired:
-                    error = "A operação demorou demais e foi interrompida."
-                except OSError as exc:
-                    error = f"Não consegui iniciar a ação: {exc}"
+                    result, error = run_commands(
+                        commands, env=self._child_process_env(), timeout=600,
+                    )
                 finally:
                     self.system_maintenance_active = False
                 self.root.after(0, lambda: finish_maintenance(
-                    title, "\n\n".join(output), error, on_success,
+                    title, result, error, on_success,
                 ))
 
             threading.Thread(target=worker, daemon=True).start()
@@ -1667,17 +1999,12 @@ class DesktopPet:
             computer_progress.start(12)
 
             def worker():
-                try:
-                    result = subprocess.run(
-                        ["apt-get", "-s", "autoremove"], capture_output=True,
-                        text=True, timeout=120, check=False,
-                        env=self._child_process_env(),
-                    )
-                    details = (result.stdout or "") + (result.stderr or "")
-                    error = details.strip() if result.returncode else None
-                except (OSError, subprocess.TimeoutExpired) as exc:
-                    details = ""
-                    error = f"Não consegui verificar a lista: {exc}"
+                details, error = run_commands(
+                    [["apt-get", "-s", "autoremove"]],
+                    env=self._child_process_env(), timeout=120,
+                )
+                if error:
+                    error = f"Não consegui verificar a lista: {error}"
                 self.system_maintenance_active = False
 
                 def show_preview():
@@ -1737,9 +2064,9 @@ class DesktopPet:
             list_frame.pack(fill="both", expand=True)
             listing = tk.Listbox(
                 list_frame, height=10, activestyle="none", relief="flat", bd=0,
-                highlightthickness=0, selectforeground="#202B45",
-                bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 10),
-                selectbackground="#C7D2EE", selectmode="browse",
+                highlightthickness=0, selectforeground="#663399",
+                bg="#f5fffa", fg="#663399", font=("TkDefaultFont", 10),
+                selectbackground="#66cdaa", selectmode="browse",
             )
             list_scrollbar = ttk.Scrollbar(
                 list_frame, orient="horizontal", command=listing.xview,
@@ -1812,7 +2139,7 @@ class DesktopPet:
         history_view = tk.Text(
             history_list_frame, height=10, wrap="word", relief="flat", bd=0,
             padx=10, pady=8, spacing1=2, spacing3=5,
-            bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 9),
+            bg="#f5fffa", fg="#663399", font=("TkDefaultFont", 9),
             cursor="arrow", takefocus=True,
         )
         history_scrollbar = ttk.Scrollbar(
@@ -1822,9 +2149,9 @@ class DesktopPet:
         history_view.pack(side="left", fill="both", expand=True)
         history_scrollbar.pack(side="right", fill="y")
         history_view.tag_configure(
-            "history_header", foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+            "history_header", foreground="#663399", font=("TkDefaultFont", 9, "bold"),
         )
-        history_view.tag_configure("history_selected", background="#DFE6FA")
+        history_view.tag_configure("history_selected", background="#66cdaa")
         history_entries = []
         selected_history = {"index": None}
 
@@ -1848,7 +2175,7 @@ class DesktopPet:
         history_detail_frame.pack(fill="x", pady=(0, 10))
         history_detail = tk.Text(
             history_detail_frame, height=5, wrap="word", relief="flat", bd=0,
-            bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 9),
+            bg="#f5fffa", fg="#663399", font=("TkDefaultFont", 9),
         )
         history_detail_scrollbar = ttk.Scrollbar(
             history_detail_frame, orient="vertical", command=history_detail.yview,
@@ -2044,7 +2371,7 @@ class DesktopPet:
         app_error = tk.StringVar()
         app_error_label = ttk.Label(
             app_form, textvariable=app_error, foreground="#B42318",
-            background="#F5F7FA", wraplength=360,
+            background="#f5fffa", wraplength=360,
         )
         app_error_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 5))
         app_buttons = ttk.Frame(app_form, style="Card.TFrame")
@@ -2086,7 +2413,7 @@ class DesktopPet:
             picker.attributes("-topmost", True)
             picker.geometry("460x500")
             picker.minsize(380, 360)
-            picker.configure(bg="#E3E8F0")
+            picker.configure(bg="#fdf5e6")
             content = ttk.Frame(picker, style="Autonomy.TFrame", padding=18)
             content.pack(fill="both", expand=True)
             ttk.Label(content, text="Selecionar aplicativo", style="Title.TLabel").pack(anchor="w")
@@ -2102,9 +2429,9 @@ class DesktopPet:
             result_frame.pack(fill="both", expand=True)
             result_list = tk.Listbox(
                 result_frame, activestyle="none", relief="flat", bd=0,
-                highlightthickness=0, selectforeground="#202B45",
-                bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 10),
-                selectbackground="#C7D2EE", selectmode="browse",
+                highlightthickness=0, selectforeground="#663399",
+                bg="#f5fffa", fg="#663399", font=("TkDefaultFont", 10),
+                selectbackground="#66cdaa", selectmode="browse",
             )
             scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=result_list.yview)
             horizontal_scrollbar = ttk.Scrollbar(
@@ -2715,13 +3042,24 @@ class DesktopPet:
             )
             if not messagebox.askyesno("Confirmar abertura", confirmation, parent=self.root):
                 return
+        self._start_app_launch(question, app)
+
+    def _start_app_launch(self, question, app):
+        if getattr(self, "app_launch_active", False):
+            return False
         self.app_launch_active = True
         self.show_bubble(f"Abrindo {app['name']}…", duration=999999)
-        threading.Thread(
-            target=self._app_launch_worker,
-            args=(question, app),
-            daemon=True,
-        ).start()
+        try:
+            threading.Thread(
+                target=self._app_launch_worker,
+                args=(question, app),
+                daemon=True,
+            ).start()
+        except RuntimeError:
+            self.app_launch_active = False
+            self.show_bubble("Não consegui iniciar a tarefa de abertura.", duration=3500)
+            return False
+        return True
 
     def _app_launch_worker(self, question, app):
         try:
@@ -2776,8 +3114,42 @@ class DesktopPet:
         argv = resolve_app_command(app["command"])
         subprocess.Popen(argv, close_fds=True, env=DesktopPet._child_process_env())
 
+    def _stop_web_frontend(self):
+        bridge = getattr(self, "_frontend_bridge", None)
+        self._frontend_bridge = None
+        if bridge is not None:
+            bridge.close()
+        browser = getattr(self, "_web_browser", None)
+        self._web_browser = None
+        if browser is not None and browser.poll() is None:
+            try:
+                browser.terminate()
+                browser.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    browser.kill()
+                    browser.wait(timeout=2)
+                except OSError as exc:
+                    logging.getLogger(__name__).warning(
+                        "Não consegui encerrar o painel (%s)", type(exc).__name__,
+                    )
+            except OSError as exc:
+                logging.getLogger(__name__).warning(
+                    "Não consegui encerrar o processo do painel (%s)", type(exc).__name__,
+                )
+        profile = getattr(self, "_web_profile", None)
+        self._web_profile = None
+        if profile is not None:
+            try:
+                profile.cleanup()
+            except OSError as exc:
+                logging.getLogger(__name__).warning(
+                    "Não consegui limpar o perfil temporário do painel (%s)", type(exc).__name__,
+                )
+
     def close_app(self):
         self._closing = True
+        self._stop_web_frontend()
         try:
             self.root.destroy()
         except tk.TclError:
@@ -2802,12 +3174,12 @@ class DesktopPet:
         dialog.transient(self.root)
         dialog.attributes("-topmost", True)
         dialog.resizable(False, False)
-        dialog.configure(bg="#E3E8F0")
+        dialog.configure(bg="#fdf5e6")
         style = ttk.Style(dialog)
-        style.configure("Autonomy.TFrame", background="#E3E8F0")
-        style.configure("Title.TLabel", background="#E3E8F0", foreground="#202B45", font=("TkDefaultFont", 14, "bold"))
-        style.configure("Subtitle.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
-        style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
+        style.configure("Autonomy.TFrame", background="#fdf5e6")
+        style.configure("Title.TLabel", background="#fdf5e6", foreground="#663399", font=("TkDefaultFont", 14, "bold"))
+        style.configure("Subtitle.TLabel", background="#fdf5e6", foreground="#663399", font=("TkDefaultFont", 9))
+        style.configure("Autonomy.TEntry", fieldbackground="#f5fffa", foreground="#663399", padding=4)
         style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
         style.configure("Secondary.TButton", padding=(12, 8))
         frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=20)
@@ -2955,25 +3327,25 @@ class DesktopPet:
         dialog.geometry(f"{width}x{height}+{x}+{y}")
 
         result = {"question": None}
-        background = "#F3F5F9"
+        background = "#fdf5e6"
         content = tk.Frame(dialog, bg=background, padx=18, pady=16)
         content.pack(fill="both", expand=True)
         tk.Label(
             content,
             text="Converse com a Nova",
             font=("TkDefaultFont", 13, "bold"),
-            fg="#202B45",
+            fg="#663399",
             bg=background,
         ).pack(anchor="w")
         tk.Label(
             content,
             text="Escreva sua pergunta abaixo",
             font=("TkDefaultFont", 9),
-            fg="#68738A",
+            fg="#663399",
             bg=background,
         ).pack(anchor="w", pady=(3, 10))
 
-        editor_border = tk.Frame(content, bg="#D8DEEA", padx=1, pady=1)
+        editor_border = tk.Frame(content, bg="#66cdaa", padx=1, pady=1)
         editor_border.pack(fill="both", expand=True)
         answer = tk.Text(
             editor_border,
@@ -2985,9 +3357,9 @@ class DesktopPet:
             padx=10,
             pady=8,
             font=("TkDefaultFont", 10),
-            fg="#202B45",
+            fg="#663399",
             bg="#FFFFFF",
-            insertbackground="#5269C8",
+            insertbackground="#663399",
         )
         answer.pack(fill="both", expand=True)
 
@@ -3013,9 +3385,9 @@ class DesktopPet:
             bd=0,
             padx=12,
             pady=7,
-            fg="#536078",
+            fg="#663399",
             bg=background,
-            activebackground="#E6EAF2",
+            activebackground="#66cdaa",
             cursor="hand2",
         ).pack(side="right")
         tk.Button(
@@ -3027,8 +3399,8 @@ class DesktopPet:
             padx=16,
             pady=7,
             fg="#FFFFFF",
-            bg="#5269C8",
-            activebackground="#4056B2",
+            bg="#663399",
+            activebackground="#66cdaa",
             activeforeground="#FFFFFF",
             cursor="hand2",
         ).pack(side="right", padx=(0, 6))
@@ -3039,15 +3411,19 @@ class DesktopPet:
         self.root.wait_window(dialog)
         return result["question"]
 
-    def _ask_worker(self, history, memories=None, settings=None, user_name=""):
+    def _ask_worker(self, history, memories=None, settings=None, user_name="", request_id=None):
         try:
             answer = AICore(settings=settings or self.settings).process_message(
                 history, memories=memories, user_name=user_name,
             )
-        except Exception:
-            logging.getLogger(__name__).exception("Falha inesperada ao consultar o provedor de IA")
+        except ProviderError as exc:
+            answer = str(exc)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Falha inesperada ao consultar o provedor de IA (%s)", type(exc).__name__,
+            )
             answer = "Tive um problema ao consultar a IA. Tente novamente daqui a pouco."
-        self._ai_results.put(answer)
+        self._ai_results.put((request_id, answer) if request_id else answer)
 
     def _provider_test_worker(self, provider_name, settings, window, status_var, button, button_state):
         try:
@@ -3075,15 +3451,24 @@ class DesktopPet:
 
     def _drain_ai_results(self):
         try:
-            answer = self._ai_results.get_nowait()
+            item = self._ai_results.get_nowait()
         except queue.Empty:
             return
+        request_id = None
+        if isinstance(item, tuple) and len(item) == 2:
+            request_id, answer = item
+        else:
+            answer = item
         if not self._closing:
-            self._show_answer(answer)
+            display_answer = self._show_answer(answer)
+            if request_id:
+                call = self._frontend_calls.pop(request_id, None)
+                if call is not None:
+                    call.complete(result={"answer": display_answer})
 
     def _show_answer(self, answer):
         if self._closing:
-            return
+            return ""
         self.ai_request_active = False
         self.history.append({
             "role": "assistant", "content": answer,
@@ -3097,11 +3482,11 @@ class DesktopPet:
         duration = min(max(6000, words * 400), 30000)
         if history_saved:
             self.show_bubble(answer, duration=duration)
+            return answer
         else:
-            self.show_bubble(
-                f"{answer}\n\nNão consegui salvar o histórico.",
-                duration=duration,
-            )
+            display_answer = f"{answer}\n\nNão consegui salvar o histórico."
+            self.show_bubble(display_answer, duration=duration)
+            return display_answer
 
     def run(self):
         self.root.mainloop()

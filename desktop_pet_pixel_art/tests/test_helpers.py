@@ -68,10 +68,8 @@ class TestHelperModules(unittest.TestCase):
                 calls = [
                     node for node in ast.walk(functions[function_name])
                     if isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "subprocess"
-                    and node.func.attr == "run"
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "run_commands"
                 ]
                 self.assertEqual(len(calls), 1)
                 env_arg = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "env")

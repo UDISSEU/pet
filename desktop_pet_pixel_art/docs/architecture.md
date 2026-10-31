@@ -4,9 +4,14 @@
 
 `src/desktop_pet.py` coordena a janela Tkinter, os estados da personagem, as interações e as rotinas periódicas. A interface é desenhada em pixel art com Pillow; OpenCV decodifica os vídeos de `assets/movements/` durante a inicialização.
 
+O painel web fica em `frontend/` e usa JavaScript sem framework, compilador ou dependências de runtime. Ele está temporariamente desativado enquanto sua finalidade é redefinida. Os arquivos do frontend e a ponte RPC foram preservados, mas a inicialização do navegador está bloqueada. A conversa, histórico, lembretes, foco, preferências e ferramentas seguem acessíveis pelas janelas Python/Tk da Nova.
+
 ## Módulos
 
 - `desktop_pet.py`: ciclo principal, janela, menu, diálogos, modos da mascote e integração entre os módulos.
+- `frontend_bridge.py`: servidor HTTP de loopback, arquivos estáticos allowlisted, sessão local de uso único e protocolo RPC versionado.
+- `system_maintenance.py`: execução limitada de sequências APT e interpretação das saídas de atualização e simulação de remoção, separadas da interface Tk.
+- `frontend/`: painel de chat e estado; usa `textContent` para apresentar conteúdo e não possui acesso a arquivos, chaves ou processos.
 - `animation.py`: decodifica vídeos, prepara quadros e remove o fundo claro.
 - `autonomy.py`: leitura e gravação de preferências, horários silenciosos, lembretes e busca de lançadores Linux `.desktop`.
 - `assistant_actions.py`: respostas locais para data e hora e reconhecimento do pedido para abrir o calendário.
@@ -24,6 +29,22 @@
 2. Se a solicitação corresponder a um app cadastrado, a Nova mostra o comando e pede confirmação.
 3. Outras perguntas são enviadas por `AICore` em uma thread de trabalho. Ollama é o padrão e fallback. Gemini/Groq só recebem contexto quando selecionados, ativados e com autorização de privacidade e confirmação explícita do nível gratuito. A resposta volta por uma fila; a thread não manipula widgets Tkinter.
 4. Preferências e histórico são gravados em arquivos JSON por substituição atômica.
+
+### Painel JavaScript
+
+```text
+frontend/app.js -- HTTP 127.0.0.1 + cookie HttpOnly --> frontend_bridge.py
+                                                          |
+                                                fila consumida pelo tick Tk
+                                                          |
+                             desktop_pet.py -> AICore / memória / persistência / ações
+```
+
+O servidor escolhe uma porta efêmera, aceita somente `127.0.0.1`, verifica `Host` e `Origin` e entrega no fragmento da URL uma credencial aleatória de uso único. O navegador troca essa credencial por um cookie `HttpOnly`, `SameSite=Strict`; o fragmento não é enviado em requisições HTTP. O servidor limita conexões simultâneas e aplica timeout de leitura para requisições incompletas. O protocolo v1 exige `{version, id, op, payload}` e permite somente `state.get`, `chat.send`, `app.confirm`, `focus.start`, `focus.stop`, operações de histórico e operações de lembretes. O núcleo valida os campos de cada operação. IDs correlacionam respostas, são rejeitados quando repetidos, e a fila/RPC tem limites e timeout. O servidor não expõe caminhos genéricos, execução de comandos ou endpoints para segredos.
+
+Quando reativado, o painel encaminha pedidos de abertura pela confirmação do núcleo com um identificador temporário de expiração e envia conversa ao mesmo `AICore`; consentimento de provedores online permanece no núcleo. No estado atual, o navegador não inicia.
+
+Para adicionar componentes, mantenha-os em `frontend/`, use as operações RPC existentes e apresente texto como conteúdo. Novas ações precisam de operação explícita com validação no Python; não adicione chamadas genéricas de shell, caminhos ou preferências paralelas no JavaScript.
 
 As memórias explícitas são selecionadas por relevância e adicionadas ao contexto como dados de referência, nunca como instruções. Preferências duplicadas são removidas ao carregar as configurações, sem alterar o formato JSON existente. O seletor de apps lê lançadores `*.desktop` dos diretórios XDG de aplicações; comandos são divididos em argumentos e executados sem shell.
 
@@ -53,3 +74,5 @@ Execute da raiz do projeto:
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
+
+O painel web não é iniciado no momento. Inicie a mascote com `./launchers/run-nova.sh`; `./launchers/run-nova-tk.sh` permanece como atalho para a mesma interface desktop. Testes com janela exigem sessão gráfica. Testes dos provedores externos dependem de credenciais e serviços e não são necessários para testar a ponte local.
