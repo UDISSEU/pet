@@ -37,6 +37,7 @@ import queue
 import random
 import re
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
@@ -46,7 +47,18 @@ from pathlib import Path
 from tkinter import messagebox
 from tkinter import ttk
 
-from animation import load_video_frames
+try:
+    from animation import load_video_frames
+    from PIL import Image, ImageDraw, ImageTk
+except ImportError as exc:
+    if exc.name in ("PIL", "cv2"):
+        dependency = "Pillow" if exc.name == "PIL" else "OpenCV"
+        print(
+            f"Falta a dependência {dependency}. Instale as dependências com ./install.sh.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    raise
 from autonomy import (
     is_quiet_now,
     find_installed_apps,
@@ -88,8 +100,6 @@ from ai.ai_core import AICore
 from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 from x11_helper import X11Helper
-
-from PIL import Image, ImageDraw, ImageTk
 
 # ---------------------------------------------------------------------------
 # Personagem

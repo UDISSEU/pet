@@ -79,6 +79,33 @@ class TestHelperModules(unittest.TestCase):
                 self.assertIsInstance(env_arg.func, ast.Attribute)
                 self.assertEqual(env_arg.func.attr, "_child_process_env")
 
+    def test_missing_pillow_or_opencv_shows_installer_hint_without_traceback(self):
+        script = '''
+import builtins, runpy, sys
+sys.path.insert(0, sys.argv[1])
+missing = sys.argv[2]
+original_import = builtins.__import__
+def import_without_dependency(name, *args, **kwargs):
+    if name == missing:
+        raise ModuleNotFoundError(f"No module named '{missing}'", name=missing)
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = import_without_dependency
+try:
+    runpy.run_path(sys.argv[3], run_name="__main__")
+except SystemExit as exc:
+    raise SystemExit(exc.code)
+'''
+        for missing, label in (("cv2", "OpenCV"), ("PIL", "Pillow")):
+            with self.subTest(dependency=label):
+                result = desktop_pet.subprocess.run(
+                    [sys.executable, "-c", script, str(SRC), missing, str(SRC / "desktop_pet.py")],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(label, result.stderr)
+                self.assertIn("./install.sh", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_autonomy_settings_round_trip_and_recover_invalid_data(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
