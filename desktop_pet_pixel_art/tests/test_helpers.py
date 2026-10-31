@@ -163,6 +163,26 @@ except SystemExit as exc:
         self.assertEqual(pet._matching_app("abrir Editor"), pet.settings["apps"][0])
         self.assertIsNone(pet._matching_app("o Editor está aberto"))
 
+    def test_app_open_target_accepts_polite_imperative_prefixes(self):
+        firefox = {"name": "Firefox", "command": "firefox"}
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {"apps": [firefox]}
+        for request in (
+            "Inicie o Firefox",
+            "Quero abrir o Firefox",
+            "Consegue abrir o firefox?",
+            "Execute o Firefox",
+            "Você pode abrir o Firefox",
+            "voce pode abrir o Firefox",
+            "Preciso abrir o Firefox",
+            "Gostaria de abrir o Firefox",
+        ):
+            with self.subTest(request=request):
+                self.assertEqual(pet._matching_app(request), firefox)
+        for question in ("como abrir o Firefox?", "qual app abre o Firefox?"):
+            with self.subTest(question=question):
+                self.assertIsNone(pet._matching_app(question))
+
     def test_app_open_intent_recognizes_portuguese_verb_forms_case_insensitively(self):
         app = {
             "name": "Sober",

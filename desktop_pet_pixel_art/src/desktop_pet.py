@@ -2663,8 +2663,11 @@ class DesktopPet:
     @staticmethod
     def _app_open_target(question):
         match = re.match(
-            r"^\s*(?:(?:pode|poderia)\s+)?(?:(?:por\s+favor)[,:]?\s+)?"
-            r"(?:abre|abra|abrir|inicia|iniciar|executa|executar)\s+(.+?)\s*[.!?]*\s*$",
+            r"^\s*(?:(?:quero|preciso)\s+|gostaria\s+de\s+|"
+            r"voc(?:e|ê)\s+pode\s+|consegue\s+|pode\s+|poderia\s+)?"
+            r"(?:(?:por\s+favor)[,:]?\s+)?"
+            r"(?:abre|abra|abrir|inicia|inicie|iniciar|executa|execute|executar)"
+            r"\s+(.+?)\s*[.!?]*\s*$",
             question,
             re.IGNORECASE,
         )
