@@ -589,7 +589,7 @@ class DesktopPet:
     def check_idle_yawn(self):
         if self._closing:
             return
-        idle_long_enough = time.monotonic() - self._last_user_activity_at >= 900
+        idle_long_enough = time.monotonic() - self._last_user_activity_at >= 300
         available = (
             self.settings.get("routine_idle_yawn")
             and idle_long_enough and self.state == "walk"
@@ -1161,13 +1161,13 @@ class DesktopPet:
         focus_goal = tk.StringVar()
         focus_minutes = tk.StringVar(value=str(self.settings.get("focus_minutes", 25)))
         break_minutes = tk.StringVar(value=str(self.settings.get("break_minutes", 5)))
-        routine_greeting = tk.BooleanVar(value=self.settings.get("routine_greeting", False))
-        routine_context = tk.BooleanVar(value=self.settings.get("routine_context", False))
-        routine_idle_yawn = tk.BooleanVar(value=self.settings.get("routine_idle_yawn", False))
-        routine_focus_celebration = tk.BooleanVar(value=self.settings.get("routine_focus_celebration", False))
-        routine_note = tk.BooleanVar(value=self.settings.get("routine_note", False))
-        routine_surprise = tk.BooleanVar(value=self.settings.get("routine_surprise", False))
-        routine_evening = tk.BooleanVar(value=self.settings.get("routine_evening", False))
+        routine_greeting = tk.BooleanVar(value=self.settings.get("routine_greeting", True))
+        routine_context = tk.BooleanVar(value=self.settings.get("routine_context", True))
+        routine_idle_yawn = tk.BooleanVar(value=self.settings.get("routine_idle_yawn", True))
+        routine_focus_celebration = tk.BooleanVar(value=self.settings.get("routine_focus_celebration", True))
+        routine_note = tk.BooleanVar(value=self.settings.get("routine_note", True))
+        routine_surprise = tk.BooleanVar(value=self.settings.get("routine_surprise", True))
+        routine_evening = tk.BooleanVar(value=self.settings.get("routine_evening", True))
         evening_time = tk.StringVar(value=self.settings.get("evening_time", "20:30"))
         speech = tk.BooleanVar(value=self.auto_speech_var.get())
         observe = tk.BooleanVar(value=self.observe_apps_var.get())
@@ -1368,7 +1368,7 @@ class DesktopPet:
             variable=routine_context,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(
-            routine_card, text="Bocejar depois de 15 minutos sem interação",
+            routine_card, text="Bocejar depois de 5 minutos sem interação",
             variable=routine_idle_yawn,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(
@@ -1376,7 +1376,7 @@ class DesktopPet:
             variable=routine_focus_celebration,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(
-            routine_card, text="Recadinho ocasional (intervalo mínimo de 4 horas)",
+            routine_card, text="Recadinho ocasional (intervalo mínimo de 30 minutos)",
             variable=routine_note,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(
@@ -2440,7 +2440,7 @@ class DesktopPet:
         now = time.time()
         available = (
             self.settings.get("routine_note")
-            and now - self.settings.get("last_note_at", 0) >= 4 * 60 * 60
+            and now - self.settings.get("last_note_at", 0) >= 30 * 60
             and not self._is_quiet_time() and self.focus_mode == "idle"
             and not self.busy and not self.dragging and not self.ai_request_active
             and not self.is_covered()

@@ -134,6 +134,19 @@ except SystemExit as exc:
             path.write_text("not json", encoding="utf-8")
             self.assertEqual(load_settings(path)["mode"], "companhia")
 
+    def test_settings_trim_and_deduplicate_memories_case_insensitively(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            path.write_text(json.dumps({"memories": [
+                " Prefere respostas curtas ", "prefere respostas curtas",
+                "Tem um gato", "", None,
+            ]}), encoding="utf-8")
+
+            self.assertEqual(
+                load_settings(path)["memories"],
+                ["Prefere respostas curtas", "Tem um gato"],
+            )
+
     def test_focus_and_routine_settings_are_sanitized(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
