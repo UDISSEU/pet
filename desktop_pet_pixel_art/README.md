@@ -16,6 +16,12 @@ O Tkinter também precisa estar instalado no sistema. Em Debian ou Ubuntu:
 sudo apt install python3-tk python3-dbus
 ```
 
+`python-xlib` é opcional: sem ela, a Nova inicia e conversa, mas os recursos dependentes de X11 (observar janelas, transparência por forma e posicionamento sobre outras janelas) ficam indisponíveis. Para habilitá-los no ambiente virtual:
+
+```bash
+.venv/bin/python -m pip install 'python-xlib>=0.33'
+```
+
 ## Iniciar
 
 ```bash
@@ -56,6 +62,7 @@ Para Groq ou Mistral, repita o comando usando o prompt correspondente (`Chave Gr
 
 - Histórico da conversa: `~/.desktop_pet_history.json`.
 - Preferências, memórias, lembretes, sessões de foco e apps cadastrados: `~/.config/desktop_pet/settings.json`.
+- Se um desses arquivos contiver JSON inválido, a Nova preserva uma cópia com sufixo `.corrupt-*` antes de gravar dados novos. Se não puder ler ou preservar o arquivo, bloqueia a gravação e registra o motivo no log.
 - As memórias são incluídas no contexto enviado ao Ollama local. Elas podem ser removidas pela interface.
 - Memórias repetidas são consolidadas ao carregar as preferências; o arquivo JSON mantém o formato atual. Memórias selecionadas entram no contexto como dados de referência, nunca como instruções.
 - O provedor, autorização de contexto online e modelos ficam em `settings.json`; nenhuma chave de API é armazenada ali. As chaves dos provedores podem ficar no cofre do sistema.

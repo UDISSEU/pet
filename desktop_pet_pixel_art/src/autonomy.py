@@ -2,12 +2,21 @@
 
 import configparser
 import json
+import logging
 import os
 import shlex
 import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from json_persistence import (
+    block_replacement,
+    mark_valid,
+    may_replace,
+    preserve_corrupt_file,
+)
+
+logger = logging.getLogger(__name__)
 
 SETTINGS_PATH = Path.home() / ".config" / "desktop_pet" / "settings.json"
 DEFAULT_SETTINGS = {
@@ -48,8 +57,21 @@ DEFAULT_SETTINGS = {
 def load_settings(path=SETTINGS_PATH):
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except FileNotFoundError:
+        mark_valid(path)
         data = {}
+    except OSError as exc:
+        block_replacement(path, type(exc).__name__)
+        data = {}
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        preserve_corrupt_file(path, type(exc).__name__)
+        data = {}
+    else:
+        if not isinstance(data, dict):
+            preserve_corrupt_file(path, "raiz JSON não é um objeto")
+            data = {}
+        else:
+            mark_valid(path)
     result = dict(DEFAULT_SETTINGS)
     if isinstance(data, dict):
         result.update(data)
@@ -152,6 +174,9 @@ def load_settings(path=SETTINGS_PATH):
 
 
 def save_settings(settings, path=SETTINGS_PATH):
+    if not may_replace(path):
+        logger.error("Gravação das configurações bloqueada para preservar %s", path.name)
+        return False
     temporary_path = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -23,6 +23,7 @@ from autonomy import (
     valid_reminder_time,
 )
 import desktop_pet
+import json_persistence
 from desktop_pet import DesktopPet
 import ollama_client
 from ollama_client import ask_local_ai, load_history, save_history
@@ -133,6 +134,11 @@ except SystemExit as exc:
             ])
             path.write_text("not json", encoding="utf-8")
             self.assertEqual(load_settings(path)["mode"], "companhia")
+            backups = list(Path(tmpdir).glob("settings.json.corrupt-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), "not json")
+            self.assertTrue(save_settings(load_settings(path), path))
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), "not json")
 
     def test_settings_trim_and_deduplicate_memories_case_insensitively(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -146,6 +152,19 @@ except SystemExit as exc:
                 load_settings(path)["memories"],
                 ["Prefere respostas curtas", "Tem um gato"],
             )
+
+    def test_settings_corruption_is_not_replaced_when_backup_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            original = "not recoverable JSON"
+            path.write_text(original, encoding="utf-8")
+            with mock.patch(
+                "json_persistence.shutil.copyfileobj",
+                side_effect=OSError("backup unavailable"),
+            ):
+                self.assertEqual(load_settings(path)["mode"], "companhia")
+                self.assertFalse(save_settings(load_settings(path), path))
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
 
     def test_focus_and_routine_settings_are_sanitized(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -669,9 +688,12 @@ except SystemExit as exc:
             path = Path(tmpdir) / "history.json"
             path.write_text("{not valid json}", encoding="utf-8")
             self.assertEqual(load_history(path), [])
+            backup = next(Path(tmpdir).glob("history.json.corrupt-*"))
+            self.assertEqual(backup.read_text(encoding="utf-8"), "{not valid json}")
 
             history = [{"role": "user", "content": "Oi"}]
             self.assertTrue(save_history(history, path))
+            self.assertEqual(backup.read_text(encoding="utf-8"), "{not valid json}")
             self.assertEqual(load_history(path), history)
 
     def test_history_rejects_invalid_shapes_and_filters_invalid_messages(self):
@@ -705,6 +727,8 @@ except SystemExit as exc:
             unreadable_path.write_text("[]", encoding="utf-8")
             with mock.patch.object(Path, "read_text", side_effect=OSError("sem acesso")):
                 self.assertEqual(load_history(unreadable_path), [])
+            self.assertFalse(save_history([], unreadable_path))
+            self.assertEqual(unreadable_path.read_text(encoding="utf-8"), "[]")
 
             invalid_save_path = Path(tmpdir) / "missing" / "history.json"
             with self.assertLogs(ollama_client.logger, level="WARNING"):
