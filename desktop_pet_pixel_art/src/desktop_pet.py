@@ -25,8 +25,8 @@ Como rodar:
 Como usar:
     Clique e segure       -> pega ela, arrasta rápido pra ver o balanço "de carro"
     Soltar o clique         -> ela volta ao normal
-    Clique simples (sem arrastar) -> fecha o balão de fala mais cedo
-    Duplo clique             -> abre a caixa de pergunta
+    Clique simples (sem arrastar) -> acena
+    Duplo clique             -> dança
     Clique direito             -> menu (perguntar / falar algo / esquecer conversa / fechar)
 """
 
@@ -41,7 +41,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from datetime import datetime, timedelta, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import messagebox
 from tkinter import ttk
@@ -86,15 +86,20 @@ from config import (
     ICONS_DIR,
     LOGIC_STEP_MS,
     MAX_HISTORY_MESSAGES,
+    ONE_SHOT_VIDEOS,
     REMINDER_ANIMATION_SECONDS,
     SCALE,
     SCREEN_MARGIN,
     TICK_MS,
+    THUMBS_UP_ANIMATION_SECONDS,
     VIDEO_FRAME_INTERVAL_MS,
+    VIDEO_FALLBACKS,
     VIDEO_REACTION_SECONDS,
     VANISHING_ANIMATION_SECONDS,
     MOVEMENT_VIDEOS,
+    VIDEO_LOOP_WINDOWS,
     PROJECT_ROOT,
+    resolve_movement_path,
     WALK_ACCELERATION,
     WALK_DIRECTION_VECTORS,
     WALK_SPEED,
@@ -102,6 +107,7 @@ from config import (
     WALK_DIRECTION_CHANGE_MIN_SECONDS,
     WIDTH,
 )
+from animation import frame_index_at_elapsed
 from ollama_client import load_history, save_history
 from personality import (
     can_speak_spontaneously,
@@ -118,6 +124,16 @@ from x11_helper import X11Helper
 # Personagem
 # ---------------------------------------------------------------------------
 class DesktopPet:
+    @property
+    def state(self):
+        return getattr(self, "_state", "idle")
+
+    @state.setter
+    def state(self, value):
+        self._state = value
+        self._state_generation = getattr(self, "_state_generation", 0) + 1
+        self._state_started_at = time.monotonic()
+
     def __init__(self):
         self.history = load_history()
         self.settings = load_settings()
@@ -310,48 +326,60 @@ class DesktopPet:
             return None
 
     def _video_for_current_pose(self, now=None):
-        if self.state == "focused":
-            return "focused"
         if now is None:
             now = time.monotonic()
-        if now < getattr(self, "_reminder_animation_until", 0.0):
-            return "reminder"
-        if self.state == "celebrating":
-            return "celebrate"
-        if self.state == "cheering":
-            return "cheering"
-        if self.state == "greeting":
-            return "wave"
-        if self.state == "thumbs_up":
-            return "thumbs_up"
-        if self.state == "vanishing":
-            return "vanishing"
-        if self.state == "resting":
-            return "rest"
-        if getattr(self, "focus_mode", "idle") == "break":
-            return "rest"
-        if self.state == "curious":
-            return "curious"
-        if self.state == "yawning":
-            return "yawn"
-        if self.state == "sitting":
-            return "sleep"
-        if self.state == "thinking":
-            return "thinking"
-        if self.state == "held":
-            return "idle"
-        if self.state == "walk":
+        if self.state == "focused":
+            video = "focused"
+        elif now < getattr(self, "_reminder_animation_until", 0.0):
+            video = "reminder"
+        elif self.state == "celebrating":
+            video = "celebrate"
+        elif self.state == "cheering":
+            video = "cheering"
+        elif self.state == "greeting":
+            video = "wave"
+        elif self.state == "thumbs_up":
+            video = "thumbs_up"
+        elif self.state == "vanishing":
+            video = "vanishing"
+        elif self.state == "resting":
+            video = "rest"
+        elif getattr(self, "focus_mode", "idle") == "break":
+            video = "rest"
+        elif self.state == "curious":
+            video = "curious"
+        elif self.state == "yawning":
+            video = "yawn"
+        elif self.state == "sitting":
+            video = "sleep"
+        elif self.state == "thinking":
+            video = "thinking"
+        elif self.state == "held":
+            video = "idle"
+        elif self.state == "walk":
             if self.stay_in_place_var.get():
-                return "idle"
-            if now is None:
-                now = time.monotonic()
-            if now < self._irritated_until:
-                return "angry"
-            if self.busy:
-                return "wave"
-            walk_velocity_x = getattr(self, "_walk_velocity_x", 0.0)
-            direction = walk_velocity_x if abs(walk_velocity_x) > 0.5 else self.walk_dx
-            return "walk_left" if direction < 0 else "walk_right"
+                video = "idle"
+            elif now < self._irritated_until:
+                video = "angry"
+            elif self.busy:
+                video = "wave"
+            else:
+                walk_velocity_x = getattr(self, "_walk_velocity_x", 0.0)
+                direction = walk_velocity_x if abs(walk_velocity_x) > 0.5 else self.walk_dx
+                video = "walk_left" if direction < 0 else "walk_right"
+        else:
+            video = self.state
+        return self._video_with_fallback(video)
+
+    @staticmethod
+    def _video_with_fallback(video):
+        seen = set()
+        while video not in seen:
+            seen.add(video)
+            filename = MOVEMENT_VIDEOS.get(video)
+            if filename and resolve_movement_path(filename).is_file():
+                return video
+            video = VIDEO_FALLBACKS.get(video, "idle")
         return "idle"
 
     def _current_video_frame(self, now=None):
@@ -359,19 +387,30 @@ class DesktopPet:
             now = time.monotonic()
         video = self._video_for_current_pose(now)
         frames = self.video_frames[video]
+        if not frames:
+            raise ValueError(f"A animação {video} está sem quadros.")
         if video == "angry":
             elapsed_ms = (now - self._irritated_started_at) * 1000
-        elif video in ("thinking", "reminder", "thumbs_up", "vanishing"):
+        elif video in ONE_SHOT_VIDEOS or video == "thinking":
             started_at = {
                 "thinking": self._thinking_started_at,
+                "focused": getattr(self, "_focused_started_at", now),
                 "reminder": self._reminder_started_at,
                 "thumbs_up": self._thumbs_up_started_at,
                 "vanishing": self._vanishing_started_at,
             }[video]
             elapsed_ms = (now - started_at) * 1000
+        elif self.state != "walk":
+            elapsed_ms = (now - self._state_started_at) * 1000
         else:
             elapsed_ms = self.animation_time_ms
-        frame_index = int(elapsed_ms / VIDEO_FRAME_INTERVAL_MS) % len(frames)
+        frame_index = frame_index_at_elapsed(
+            elapsed_ms,
+            len(frames),
+            loop_window=VIDEO_LOOP_WINDOWS.get(video),
+            one_shot=video in ONE_SHOT_VIDEOS,
+            fps=1000 / VIDEO_FRAME_INTERVAL_MS,
+        )
         return video, frame_index, frames[frame_index]
 
     def render_frame(self):
@@ -716,13 +755,39 @@ class DesktopPet:
         if not self._closing and self.state == expected_state:
             self.state = final_state
 
+    def _schedule_pose_callback(self, delay_ms, expected_state, callback):
+        generation = self._state_generation
+        return self.root.after(
+            delay_ms,
+            lambda: self._run_pose_callback(
+                expected_state, generation, callback
+            ),
+        )
+
+    def _run_pose_callback(self, expected_state, generation, callback):
+        if (
+            self._closing
+            or self.state != expected_state
+            or self._state_generation != generation
+        ):
+            return False
+        callback()
+        return True
+
+    def _schedule_pose_return(self, delay_ms, expected_state, final_state="walk"):
+        return self._schedule_pose_callback(
+            delay_ms,
+            expected_state,
+            lambda: self._finish_temporary_pose(expected_state, final_state),
+        )
+
     def _show_oops(self, duration=5000):
         if not self._interaction_speech_allowed():
             return False
         self.state = "curious"
         if not self._show_personality_line("oops", duration=duration):
             return False
-        self.root.after(3500, self.finish_curious)
+        self._schedule_pose_callback(3500, "curious", self.finish_curious)
         return True
 
     def _interaction_speech_allowed(self, allow_drag=False):
@@ -756,16 +821,19 @@ class DesktopPet:
             self._user_requested_vanish = True
         line = self._show_personality_line(category, duration=5000)
         if animation == "vanishing":
-            self.root.after(
+            self._schedule_pose_callback(
                 round(VANISHING_ANIMATION_SECONDS * 1000),
+                "vanishing",
                 self._hide_after_vanishing,
             )
         else:
-            duration = 4000 if animation == "celebrate" else 5000
-            self.root.after(
-                duration,
-                lambda: self._finish_temporary_pose(state),
-            )
+            if animation == "thumbs_up":
+                duration = round(THUMBS_UP_ANIMATION_SECONDS * 1000)
+            elif animation == "celebrate":
+                duration = 4000
+            else:
+                duration = 5000
+            self._schedule_pose_return(duration, state)
         return line
 
     def maybe_curious(self):
@@ -777,7 +845,7 @@ class DesktopPet:
                 and not self._is_quiet_time() and not self.is_covered()
                 and not self.bubble_text and random.random() < 0.5):
             self.state = "curious"
-            self.root.after(3500, self.finish_curious)
+            self._schedule_pose_callback(3500, "curious", self.finish_curious)
         self.root.after(random.randint(45000, 90000), self.maybe_curious)
 
     def check_idle_yawn(self):
@@ -792,7 +860,7 @@ class DesktopPet:
         if available and random.random() < 0.2 and can_speak_spontaneously():
             self.state = "yawning"
             self._show_personality_line("yawning", duration=5000, spontaneous=True)
-            self.root.after(5000, self.finish_surprise)
+            self._schedule_pose_callback(5000, "yawning", self.finish_surprise)
             self._last_user_activity_at = time.monotonic()
         self.root.after(300000, self.check_idle_yawn)
 
@@ -827,9 +895,8 @@ class DesktopPet:
                             if self._show_personality_line(
                                 app_key, duration=duration, spontaneous=True
                             ):
-                                self.root.after(
-                                    duration,
-                                    lambda: self._finish_temporary_pose("celebrating"),
+                                self._schedule_pose_return(
+                                    duration, "celebrating"
                                 )
                     else:
                         self._show_personality_line(
@@ -1098,9 +1165,8 @@ class DesktopPet:
             return
         self.state = "greeting"
         if self._show_personality_line("click", duration=2500):
-            self.root.after(
-                round(VIDEO_REACTION_SECONDS * 1000),
-                lambda: self._finish_temporary_pose("greeting"),
+            self._schedule_pose_return(
+                round(VIDEO_REACTION_SECONDS * 1000), "greeting"
             )
 
     def _handle_double_click(self):
@@ -1114,7 +1180,9 @@ class DesktopPet:
             return
         self.state = "celebrating"
         if self._show_personality_line("dance", duration=4000):
-            self.root.after(4000, self.finish_celebration)
+            self._schedule_pose_callback(
+                4000, "celebrating", self.finish_celebration
+            )
 
     def _clear_double_click_guard(self):
         self._ignore_next_click = False
@@ -2752,7 +2820,11 @@ class DesktopPet:
         self._miss_you_pending = False
         self.settings["last_context_date"] = datetime.now().astimezone().date().isoformat()
         save_settings(self.settings)
-        self.root.after(round(VIDEO_REACTION_SECONDS * 1000), self.finish_greeting)
+        self._schedule_pose_callback(
+            round(VIDEO_REACTION_SECONDS * 1000),
+            "greeting",
+            self.finish_greeting,
+        )
 
     def finish_greeting(self):
         if not self._closing and self.state == "greeting":
@@ -2777,7 +2849,11 @@ class DesktopPet:
         self._miss_you_pending = False
         self.settings["last_context_date"] = today
         save_settings(self.settings)
-        self.root.after(round(VIDEO_REACTION_SECONDS * 1000), self.finish_greeting)
+        self._schedule_pose_callback(
+            round(VIDEO_REACTION_SECONDS * 1000),
+            "greeting",
+            self.finish_greeting,
+        )
 
     def check_occasional_note(self):
         if self._closing:
@@ -2810,9 +2886,7 @@ class DesktopPet:
         if available and random.random() < 0.04:
             if self._show_spontaneous_pose("dance", "celebrating", duration=4000):
                 self._last_dance_at = now
-                self.root.after(
-                    4000, lambda: self._finish_temporary_pose("celebrating")
-                )
+                self._schedule_pose_return(4000, "celebrating")
         self.root.after(60000, self.check_idle_dance)
 
     def check_healthy_break(self):
@@ -2831,8 +2905,8 @@ class DesktopPet:
         ):
             self._last_break_tip_at = now
             self._thumbs_up_started_at = now
-            self.root.after(
-                4000, lambda: self._finish_temporary_pose("thumbs_up")
+            self._schedule_pose_return(
+                round(THUMBS_UP_ANIMATION_SECONDS * 1000), "thumbs_up"
             )
         self.root.after(300000, self.check_healthy_break)
 
@@ -2850,7 +2924,9 @@ class DesktopPet:
             save_settings(self.settings)
             self.state = "yawning"
             record_spontaneous_speech()
-            self.root.after(2500, self._finish_evening_routine)
+            self._schedule_pose_callback(
+                2500, "yawning", self._finish_evening_routine
+            )
         self.root.after(30000, self.check_daily_routine)
 
     def _finish_evening_routine(self):
@@ -2902,7 +2978,9 @@ class DesktopPet:
             if shown:
                 self.settings["last_surprise_date"] = today
                 save_settings(self.settings)
-                self.root.after(6500, self.finish_surprise)
+                self._schedule_pose_callback(
+                    6500, self.state, self.finish_surprise
+                )
         self.root.after(300000, self.check_daily_surprise)
 
     def finish_surprise(self):
@@ -2921,6 +2999,7 @@ class DesktopPet:
         self.break_minutes = int(break_minutes)
         self.focus_mode = "focus"
         self._focus_routine_started_at = time.monotonic()
+        self._focused_started_at = self._focus_routine_started_at
         self.state = "focused"
         self.sit_win_id = None
         line = pick_line(
@@ -2961,7 +3040,11 @@ class DesktopPet:
             "focus_done", duration=12_000, spontaneous=True, allow_focus=True
         )
         if self.state == "thumbs_up":
-            self.root.after(4500, self.enter_focus_break)
+            self._schedule_pose_callback(
+                round(THUMBS_UP_ANIMATION_SECONDS * 1000),
+                "thumbs_up",
+                self.enter_focus_break,
+            )
         self._focus_job = self.root.after(self.break_minutes * 60_000, self.finish_break)
 
     def enter_focus_break(self):
@@ -2977,7 +3060,9 @@ class DesktopPet:
         self.state = "celebrating"
         self._show_personality_line("break_end", duration=7000, spontaneous=True)
         self.focus_goal = ""
-        self.root.after(4000, self.finish_celebration)
+        self._schedule_pose_callback(
+            4000, "celebrating", self.finish_celebration
+        )
 
     def _finish_focus_routine_timer(self):
         started_at = getattr(self, "_focus_routine_started_at", None)
@@ -3086,11 +3171,10 @@ class DesktopPet:
                     self.state = "thumbs_up" if success else "curious"
                     if success:
                         self._thumbs_up_started_at = time.monotonic()
-                    self.root.after(
-                        3000,
-                        lambda: self._finish_temporary_pose(
-                            "thumbs_up" if success else "curious"
-                        ),
+                    self._schedule_pose_return(
+                        round(THUMBS_UP_ANIMATION_SECONDS * 1000)
+                        if success else 3000,
+                        "thumbs_up" if success else "curious",
                     )
                 answer = self._record_local_interaction(question, answer)
                 self.show_bubble(answer)
@@ -3262,7 +3346,9 @@ class DesktopPet:
             self._record_local_interaction(question, answer)
             if self._interaction_speech_allowed():
                 self.state = "curious"
-                self.root.after(3500, self.finish_curious)
+                self._schedule_pose_callback(
+                    3500, "curious", self.finish_curious
+                )
                 self.show_bubble(answer)
             return
         self.history.append({
@@ -3461,7 +3547,7 @@ class DesktopPet:
                 "oops", name=self.settings.get("user_name", ""),
                 rng=random, history=self._speech_history,
             )
-            self.root.after(3500, self.finish_curious)
+            self._schedule_pose_callback(3500, "curious", self.finish_curious)
         words = max(len(answer.split()), 1)
         duration = min(max(6000, words * 400), 30000)
         if history_saved:

@@ -633,6 +633,40 @@ except SystemExit as exc:
                 pet._irritated_until = irritated_until
                 self.assertEqual(pet._video_for_current_pose(now=1), expected)
 
+    def test_stale_temporary_pose_timer_cannot_override_a_newer_action(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._closing = False
+        pet.state = "curious"
+        stale_generation = pet._state_generation
+
+        pet.state = "walk"
+        pet.state = "curious"
+        callback = mock.Mock()
+
+        self.assertFalse(
+            pet._run_pose_callback("curious", stale_generation, callback)
+        )
+        callback.assert_not_called()
+        self.assertEqual(pet.state, "curious")
+
+    def test_one_shot_pose_holds_its_last_video_frame(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.state = "thumbs_up"
+        pet._thumbs_up_started_at = 100.0
+        pet._thinking_started_at = 100.0
+        pet._reminder_started_at = 100.0
+        pet._vanishing_started_at = 100.0
+        pet._reminder_animation_until = 0.0
+        pet.video_frames = {"thumbs_up": ["first", "middle", "last"]}
+
+        self.assertEqual(
+            pet._current_video_frame(now=200.0),
+            ("thumbs_up", 2, "last"),
+        )
+
+    def test_missing_video_uses_its_configured_fallback(self):
+        self.assertEqual(DesktopPet._video_with_fallback("oops"), "curious")
+
     def test_staying_in_place_uses_idle_pose(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet.state = "walk"

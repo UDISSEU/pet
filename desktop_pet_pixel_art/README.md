@@ -84,3 +84,7 @@ O desenho, a conversa e as animações funcionam sem recursos específicos do X1
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
+
+Os vídeos são carregados em segundo plano. Cada clipe usa uma caixa e uma escala comuns a todos os quadros, com os pés alinhados pela mesma âncora; marcas pequenas e isoladas no canto inferior direito são filtradas numa margem de 12% da largura por 8% da altura, sem apagar componentes grandes da personagem. As janelas de repetição com menor diferença visual ficam em `VIDEO_LOOP_WINDOWS`; foco, lembrete, joinha e desaparecimento reproduzem uma vez e seguram o último quadro até a transição de estado. `VIDEO_FALLBACKS` indica a animação existente a usar quando um vídeo futuro estiver ausente.
+
+Para validar a reprodução manualmente, inicie a Nova e observe alguns ciclos andando para os dois lados; compare os pés e o tamanho da personagem durante caminhada, aceno e balão de pensamento; clique, arraste e conclua uma sessão de foco; confirme que um erro de carregamento não interrompe a interface e que as poses temporárias cedem a uma interação nova. A suíte automatizada valida recorte, escala, margem do canto, seleção de quadros e callbacks obsoletos; ela não substitui a conferência visual em cada compositor.

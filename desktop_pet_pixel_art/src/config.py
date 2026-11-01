@@ -56,6 +56,32 @@ MOVEMENT_VIDEOS = {
     "vanishing": "desmaterializando.mp4",
 }
 
+VIDEO_FALLBACKS = {
+    "oops": "curious",
+    "talking": "wave",
+    "goodnight": "yawn",
+    "tip_break": "rest",
+    "pet_heart": "thumbs_up",
+}
+
+# Low-difference seams selected from the existing decoded clips (seconds).
+# One-shot clips intentionally use their full duration instead.
+VIDEO_LOOP_WINDOWS = {
+    "idle": (2.125, 5.042),
+    "walk_right": (1.417, 4.042),
+    "walk_left": (2.375, 4.417),
+    "wave": (2.542, 5.167),
+    "celebrate": (3.292, 5.625),
+    "cheering": (5.875, 7.375),
+    "yawn": (1.417, 3.708),
+    "sleep": (4.167, 5.875),
+    "angry": (0.875, 2.375),
+    "thinking": (1.917, 4.25),
+    "curious": (2.417, 5.417),
+    "rest": (1.458, 3.083),
+}
+ONE_SHOT_VIDEOS = frozenset({"focused", "reminder", "thumbs_up", "vanishing"})
+
 WIDTH = 140
 BASE_HEIGHT = 190
 SCREEN_MARGIN = 40
@@ -75,6 +101,7 @@ VIDEO_DECODE_MAX_W = 248
 VIDEO_DECODE_MAX_H = 352
 VIDEO_REACTION_SECONDS = 2.5
 REMINDER_ANIMATION_SECONDS = 8.0
+THUMBS_UP_ANIMATION_SECONDS = 8.0
 VANISHING_ANIMATION_SECONDS = 8.0
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
