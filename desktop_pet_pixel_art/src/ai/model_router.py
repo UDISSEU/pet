@@ -7,6 +7,7 @@ from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 
 logger = logging.getLogger(__name__)
+SUPPORTED_PROVIDERS = {"ollama", "gemini", "groq", "mistral"}
 
 
 class ModelRouter:
@@ -20,6 +21,8 @@ class ModelRouter:
             raise ProviderError("Já existe uma solicitação de IA em andamento.")
         try:
             selected = self.settings.get("ai_provider", "ollama")
+            if selected not in SUPPORTED_PROVIDERS:
+                raise ProviderError("O provedor selecionado não é reconhecido. Confira as preferências de IA.")
             online_allowed = (
                 selected in ("gemini", "groq", "mistral")
                 and self.settings.get("online_ai_enabled", False)
@@ -28,18 +31,31 @@ class ModelRouter:
             )
             if selected in ("gemini", "groq", "mistral") and not online_allowed:
                 selected = "ollama"
-            provider = self.provider_factory(selected, self.settings)
+            try:
+                provider = self.provider_factory(selected, self.settings)
+            except Exception as exc:
+                raise ProviderError("A configuração do provedor selecionado é inválida.") from exc
+            if selected != "ollama" and not provider.is_available():
+                raise ProviderError(
+                    "A chave do provedor online selecionado não está configurada. "
+                    "Configure-a ou escolha outro provedor nas preferências."
+                )
             try:
                 timeout = min(12, self._timeout()) if selected != "ollama" else self._timeout()
                 return provider.generate(messages, system_prompt, timeout=timeout)
-            except ProviderError as exc:
-                logger.warning("Provedor %s indisponível; verificando contingência local", selected)
+            except Exception as exc:
+                logger.warning(
+                    "Provedor %s falhou (%s); verificando contingência local",
+                    selected, type(exc).__name__,
+                )
                 if selected == "ollama":
-                    raise
-                fallback = self.provider_factory("ollama", self.settings)
+                    if isinstance(exc, ProviderError):
+                        raise
+                    raise ProviderError("Não foi possível consultar a IA local.") from exc
                 try:
+                    fallback = self.provider_factory("ollama", self.settings)
                     return fallback.generate(messages, system_prompt, timeout=min(10, self._timeout()))
-                except ProviderError as fallback_error:
+                except Exception as fallback_error:
                     raise ProviderError(
                         "O provedor online falhou e a IA local também está indisponível. "
                         "Confira a conexão, a chave e o Ollama."

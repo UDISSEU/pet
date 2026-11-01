@@ -2,7 +2,7 @@
 
 ## Visão geral
 
-`src/desktop_pet.py` coordena a janela Tkinter, os estados da personagem, as interações e as rotinas periódicas. A interface é desenhada em pixel art com Pillow; OpenCV decodifica os vídeos de `assets/movements/` durante a inicialização.
+`src/desktop_pet.py` coordena a janela Tkinter, os estados da personagem, as interações e as rotinas periódicas. A interface é desenhada em pixel art com Pillow. Um quadro de prévia do vídeo idle é decodificado na abertura; `AnimationLoader` carrega o restante em uma thread daemon e entrega quadros por fila para a thread Tkinter.
 
 O painel web fica em `frontend/` e usa JavaScript sem framework, compilador ou dependências de runtime. Ele está temporariamente desativado enquanto sua finalidade é redefinida. Os arquivos do frontend e a ponte RPC foram preservados, mas a inicialização do navegador está bloqueada. A conversa, histórico, lembretes, foco, preferências e ferramentas seguem acessíveis pelas janelas Python/Tk da Nova.
 
@@ -13,22 +13,27 @@ O painel web fica em `frontend/` e usa JavaScript sem framework, compilador ou d
 - `system_maintenance.py`: execução limitada de sequências APT e interpretação das saídas de atualização e simulação de remoção, separadas da interface Tk.
 - `frontend/`: painel de chat e estado; usa `textContent` para apresentar conteúdo e não possui acesso a arquivos, chaves ou processos.
 - `animation.py`: decodifica vídeos, prepara quadros e remove o fundo claro.
+- `animation_loader.py`: carrega as sequências completas em segundo plano; mantém a prévia caso um vídeo individual falhe e não acessa widgets Tkinter.
+- `app_intents.py`: reconhece e associa pedidos de abertura de aplicativos sem executar comandos.
 - `autonomy.py`: leitura e gravação de preferências, horários silenciosos, lembretes e busca de lançadores Linux `.desktop`.
+- `json_persistence.py`: faz cópias não destrutivas de JSONs inválidos e bloqueia gravação quando não consegue preservar o original.
 - `assistant_actions.py`: respostas locais para data e hora e reconhecimento do pedido para abrir o calendário.
 - `calendar_view.py`: calendário mensal local; não sincroniza com contas externas.
 - `config.py`: caminhos dos assets, animações e parâmetros padrão.
 - `ollama_client.py`: API e persistência do histórico JSON legado.
 - `keyring_secret.py`: leitura e gravação de chaves Gemini, Groq e Mistral no cofre Secret Service do ambiente de desktop.
 - `providers/`: provedores independentes via HTTP; não adicionam SDKs à aplicação.
-- `ai/`: personalidade, contexto e roteamento; `AICore` conecta a conversa à seleção de provedor.
+- `ai/`: personalidade, contexto e roteamento; `AICore` conecta a conversa à seleção de provedor. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
 - `x11_helper.py`: observação da janela ativa e geometria de janelas em ambientes X11. O módulo falha de forma segura se X11 ou `python-xlib` não estiverem disponíveis.
+
+As dependências obrigatórias estão em `requirements.txt`. `python-xlib` é opcional e pode ser instalado separadamente para habilitar recursos que dependem de X11; sua ausência não impede os recursos gerais da mascote.
 
 ## Fluxo da conversa
 
 1. A interface recebe a pergunta e verifica primeiro os comandos locais de data e calendário.
 2. Se a solicitação corresponder a um app cadastrado, a Nova mostra o comando e pede confirmação.
-3. Outras perguntas são enviadas por `AICore` em uma thread de trabalho. Ollama é o padrão e fallback. Gemini/Groq só recebem contexto quando selecionados, ativados e com autorização de privacidade e confirmação explícita do nível gratuito. A resposta volta por uma fila; a thread não manipula widgets Tkinter.
-4. Preferências e histórico são gravados em arquivos JSON por substituição atômica.
+3. Outras perguntas são processadas por `ai.request_handler.answer_request` em uma thread de trabalho. Ollama é o padrão e fallback. Gemini/Groq/Mistral só recebem contexto quando selecionados, ativados e com autorização de privacidade e confirmação explícita do nível gratuito. A resposta volta por uma fila; a thread não manipula widgets Tkinter.
+4. Preferências e histórico são gravados em arquivos JSON por substituição atômica. Ao encontrar JSON inválido, a Nova guarda uma cópia `*.corrupt-*` antes de permitir uma nova gravação. Se não conseguir criar essa cópia, bloqueia a substituição.
 
 ### Painel JavaScript
 
@@ -75,4 +80,4 @@ Execute da raiz do projeto:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-O painel web não é iniciado no momento. Inicie a mascote com `./launchers/run-nova.sh`; `./launchers/run-nova-tk.sh` permanece como atalho para a mesma interface desktop. Testes com janela exigem sessão gráfica. Testes dos provedores externos dependem de credenciais e serviços e não são necessários para testar a ponte local.
+O painel web não é iniciado no momento. Inicie a mascote com `./launchers/run-nova.sh`; `./launchers/run-nova-tk.sh` permanece como atalho para a mesma interface desktop. O CI usa Python 3.12 com Tkinter e Xvfb. Testes com janela exigem sessão gráfica; testes de integração com provedores usam mocks, portanto uma sessão Ollama, chaves e internet não são necessárias. A ponte local pode ser testada sem credenciais de provedores externos.

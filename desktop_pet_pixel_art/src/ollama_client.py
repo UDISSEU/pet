@@ -7,6 +7,12 @@ import urllib.request
 
 from assistant_actions import current_datetime_context
 from config import HISTORY_PATH, OLLAMA_MODEL, OLLAMA_URL, SYSTEM_PROMPT
+from json_persistence import (
+    block_replacement,
+    mark_valid,
+    may_replace,
+    preserve_corrupt_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +21,16 @@ def load_history(path=HISTORY_PATH):
     if path.exists():
         try:
             history = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except OSError as exc:
+            block_replacement(path, type(exc).__name__)
+            return []
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            preserve_corrupt_file(path, type(exc).__name__)
             return []
         if not isinstance(history, list):
+            preserve_corrupt_file(path, "raiz JSON não é uma lista")
             return []
+        mark_valid(path)
         return [
             message
             for message in history
@@ -26,10 +38,14 @@ def load_history(path=HISTORY_PATH):
             and message.get("role") in ("user", "assistant")
             and isinstance(message.get("content"), str)
         ]
+    mark_valid(path)
     return []
 
 
 def save_history(history, path=HISTORY_PATH):
+    if not may_replace(path):
+        logger.error("Gravação do histórico bloqueada para preservar %s", path.name)
+        return False
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(

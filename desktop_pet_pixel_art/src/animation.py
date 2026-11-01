@@ -60,6 +60,23 @@ def load_video_frames(filename):
     return frames
 
 
+def load_video_preview(filename):
+    """Decode only the first frame, so the desktop can render immediately."""
+    path = resolve_movement_path(filename)
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        capture.release()
+        raise OSError(f"Não foi possível abrir o vídeo de movimento: {path}")
+    try:
+        success, frame = capture.read()
+    finally:
+        capture.release()
+    if not success:
+        raise ValueError(f"O vídeo de movimento não contém quadros: {path}")
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return prepare_video_frame(Image.fromarray(rgb), path.name)
+
+
 def prepare_video_frame(frame, description):
     frame = remove_video_background(frame.convert("RGBA"))
     bounds = frame.getchannel("A").getbbox()

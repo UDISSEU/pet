@@ -44,14 +44,13 @@ import tempfile
 import threading
 import time
 import tkinter as tk
-import unicodedata
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
 from tkinter import ttk
 
 try:
-    from animation import load_video_frames
+    from animation_loader import AnimationLoader
     from PIL import Image, ImageDraw, ImageTk
 except ImportError as exc:
     if exc.name in ("PIL", "cv2", "numpy"):
@@ -71,6 +70,12 @@ from autonomy import (
     valid_reminder_time,
 )
 from assistant_actions import current_date_answer, is_open_calendar_request
+from app_intents import (
+    app_open_target as parse_app_open_target,
+    is_app_open_request as parse_app_open_request,
+    looks_like_app_target as parse_app_target,
+    match_registered_app,
+)
 from calendar_view import open_calendar_window
 from config import (
     APP_COMMENTS,
@@ -100,7 +105,7 @@ from config import (
 )
 from frontend_bridge import FrontendBridge, RpcCall
 from ollama_client import load_history, save_history
-from ai.ai_core import AICore
+from ai.request_handler import answer_request
 from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 from system_maintenance import (
@@ -207,9 +212,10 @@ class DesktopPet:
         self.ai_request_active = False
         self._dismiss_job = None
         self._hidden = False
+        self._animation_loader = AnimationLoader(MOVEMENT_VIDEOS)
+        idle_preview = self._animation_loader.preview("idle")
         self.video_frames = {
-            name: load_video_frames(filename)
-            for name, filename in MOVEMENT_VIDEOS.items()
+            name: [idle_preview] for name in MOVEMENT_VIDEOS
         }
         self._video_frame_cache = {}
         self.drag_tilt = 0.0
@@ -243,6 +249,7 @@ class DesktopPet:
         self._context_popup = None
 
         self.render_and_show()
+        self._animation_loader.start()
         self._last_tick_at = time.monotonic()
         self._next_tick_at = self._last_tick_at + TICK_MS / 1000
         self.root.after(TICK_MS, self.tick)
@@ -497,6 +504,7 @@ class DesktopPet:
     def tick(self):
         now = time.monotonic()
         self._drain_frontend_requests()
+        self._drain_animation_results()
         if hasattr(self, "_ai_results"):
             self._drain_ai_results()
         if hasattr(self, "_provider_test_results"):
@@ -917,6 +925,21 @@ class DesktopPet:
             self._start_web_frontend()
         except (OSError, RuntimeError) as exc:
             self.show_bubble(str(exc), duration=5000)
+
+    def _drain_animation_results(self):
+        loader = getattr(self, "_animation_loader", None)
+        if loader is None:
+            return
+        changed = False
+        for name, frames, error in loader.drain():
+            if error is not None:
+                # Keep the already-renderable preview if a video is damaged.
+                continue
+            self.video_frames[name] = frames
+            changed = True
+        if changed and not self._closing:
+            self._video_frame_cache.clear()
+            self.render_and_show()
 
     def _choose_walk_direction(self, now=None):
         directions = [
@@ -2945,55 +2968,6 @@ class DesktopPet:
         self.show_bubble("Sessão encerrada. Vamos no seu ritmo.", duration=4500)
 
     def _matching_app(self, question):
-        def normalize(value):
-            decomposed = unicodedata.normalize("NFKD", value.casefold())
-            return "".join(char for char in decomposed if not unicodedata.combining(char))
-
-        target = self._app_open_target(question)
-        if not target:
-            return None
-        normalized_question = normalize(target)
-
-        def contains_phrase(text, phrase):
-            return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text))
-
-        def match_apps(apps, allow_partial=False):
-            named_apps = [
-                (app, normalize(app.get("name", "").strip()))
-                for app in apps
-                if isinstance(app, dict)
-                and isinstance(app.get("name"), str)
-                and app["name"].strip()
-            ]
-            exact_matches = [
-                (app, name) for app, name in named_apps
-                if contains_phrase(normalized_question, name)
-            ]
-            if exact_matches:
-                return max(exact_matches, key=lambda item: len(item[1]))[0], True
-
-            # O alias Google é específico do Chrome; palavras soltas podem ser
-            # assunto da pergunta e não identificam um aplicativo com segurança.
-            google_matches = [
-                app for app, name in named_apps
-                if name == "google chrome" and contains_phrase(normalized_question, "google")
-            ]
-            google_candidates = [
-                app for app, name in named_apps
-                if contains_phrase(name, "google") and contains_phrase(normalized_question, "google")
-            ]
-            if len(google_matches) == 1 and len(google_candidates) == 1:
-                return google_matches[0], True
-            if allow_partial:
-                partial_matches = [
-                    app for app, name in named_apps
-                    if any(contains_phrase(normalized_question, word) for word in re.findall(r"\w+", name))
-                ]
-                if len(partial_matches) == 1:
-                    return partial_matches[0], True
-                return None, bool(partial_matches)
-            return None, False
-
         def get_installed_apps():
             if getattr(self, "_installed_apps_cache", None) is None:
                 try:
@@ -3002,74 +2976,22 @@ class DesktopPet:
                     self._installed_apps_cache = []
             return self._installed_apps_cache
 
-        saved_match, has_saved_candidate = match_apps(self.settings.get("apps", []), allow_partial=True)
-        if saved_match:
-            if not saved_match.get("desktop_file"):
-                saved_name = normalize(saved_match["name"])
-                system_app = next(
-                    (
-                        item for item in get_installed_apps()
-                        if normalize(item.get("name", "")) == saved_name
-                        and item.get("desktop_file")
-                    ),
-                    None,
-                )
-                if system_app:
-                    saved_match = {**saved_match, "desktop_file": system_app["desktop_file"]}
-            return saved_match
-        if has_saved_candidate:
-            return None
-
-        # Se o app ainda não foi cadastrado manualmente, procura entre os .desktop
-        # instalados. O resultado continua validado por resolve_app_command.
-        installed_match, _has_candidate = match_apps(get_installed_apps())
-        if installed_match:
-            return installed_match
-        return None
+        return match_registered_app(
+            question,
+            self.settings.get("apps", []),
+            get_installed_apps,
+        )
 
     @staticmethod
     def _app_open_target(question):
-        match = re.match(
-            r"^\s*(?:(?:quero|preciso)\s+|gostaria\s+de\s+|"
-            r"voc(?:e|ê)\s+pode\s+|consegue\s+|pode\s+|poderia\s+)?"
-            r"(?:(?:por\s+favor)[,:]?\s+)?"
-            r"(?:abre|abra|abrir|inicia|inicie|iniciar|executa|execute|executar)"
-            r"\s+(.+?)\s*[.!?]*\s*$",
-            question,
-            re.IGNORECASE,
-        )
-        return match.group(1).strip() if match else ""
+        return parse_app_open_target(question)
 
     @classmethod
     def _is_app_open_request(cls, question):
-        return bool(cls._app_open_target(question))
+        return parse_app_open_request(question)
 
     def _looks_like_app_target(self, question):
-        target = self._app_open_target(question)
-        if not target:
-            return False
-        words = re.findall(r"[\w.+-]+", target)
-        if not words:
-            return False
-        articles = {"o", "a", "os", "as", "um", "uma", "uns", "umas", "the"}
-        while words and words[0].casefold() in articles:
-            words.pop(0)
-        if not words:
-            return False
-        non_app_targets = {
-            "codigo", "code", "sql", "script", "arquivo", "ficheiro", "html",
-            "csv", "json", "python", "javascript", "css", "texto",
-            "teste", "test", "projeto", "pandas", "jupyter", "notebook",
-            "query", "dados",
-        }
-        normalized_words = [
-            "".join(c for c in unicodedata.normalize("NFKD", word.casefold())
-                    if not unicodedata.combining(c))
-            for word in words
-        ]
-        if len(words) == 1:
-            return normalized_words[0] not in non_app_targets
-        return any(word[:1].isupper() for word in words)
+        return parse_app_target(question)
 
     def _confirm_open_app(self, question, app):
         if getattr(self, "app_launch_active", False):
@@ -3190,6 +3112,9 @@ class DesktopPet:
     def close_app(self):
         self._closing = True
         self._stop_web_frontend()
+        loader = getattr(self, "_animation_loader", None)
+        if loader is not None:
+            loader.close()
         try:
             self.root.destroy()
         except tk.TclError:
@@ -3452,17 +3377,10 @@ class DesktopPet:
         return result["question"]
 
     def _ask_worker(self, history, memories=None, settings=None, user_name="", request_id=None):
-        try:
-            answer = AICore(settings=settings or self.settings).process_message(
-                history, memories=memories, user_name=user_name,
-            )
-        except ProviderError as exc:
-            answer = str(exc)
-        except Exception as exc:
-            logging.getLogger(__name__).warning(
-                "Falha inesperada ao consultar o provedor de IA (%s)", type(exc).__name__,
-            )
-            answer = "Tive um problema ao consultar a IA. Tente novamente daqui a pouco."
+        answer = answer_request(
+            history, memories=memories, settings=settings or self.settings,
+            user_name=user_name,
+        )
         self._ai_results.put((request_id, answer) if request_id else answer)
 
     def _provider_test_worker(self, provider_name, settings, window, status_var, button, button_state):
