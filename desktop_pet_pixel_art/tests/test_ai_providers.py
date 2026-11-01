@@ -111,7 +111,7 @@ class TestAIProviders(unittest.TestCase):
         ))
         self.assertEqual(
             answer_request([], settings={"ai_provider": "gemini"}, core_factory=lambda **_kw: core),
-            "A chave do provedor online não está configurada.",
+            "A IA não conseguiu responder agora. Tente novamente daqui a pouco.",
         )
 
     def test_request_handler_sanitizes_unexpected_errors(self):
