@@ -293,10 +293,20 @@ class DesktopPet:
             return None
 
     def _video_for_current_pose(self, now=None):
+        if now is None:
+            now = time.monotonic()
+        if self.state == "teleporting":
+            return "teleport"
+        if self.state == "reminding":
+            return "reminder"
+        if self.state == "approval":
+            return "approval"
+        if self.state == "sitting" and now < getattr(self, "_approval_until", 0):
+            return "approval"
         if self.state == "focused":
-            return "idle"
+            return "study"
         if self.state == "celebrating":
-            return "celebrate"
+            return getattr(self, "_celebration_video", "celebrate")
         if self.state == "greeting":
             return "wave"
         if getattr(self, "focus_mode", "idle") == "break":
@@ -1058,17 +1068,37 @@ class DesktopPet:
             if windows:
                 target = random.choice(windows)
                 max_offset = max(target["w"] - WIDTH, 0)
-                self.x = target["x"] + random.randint(0, max_offset)
-                self.y = target["y"] - BASE_HEIGHT + 20
-                self.x = max(0, min(self.x, self.screen_w - WIDTH))
-                self.root.geometry(f"+{int(self.x)}+{int(self.y)}")
-
-                self.state = "sitting"
+                target_x = max(0, min(target["x"] + random.randint(0, max_offset), self.screen_w - WIDTH))
+                target_y = max(0, min(target["y"] - BASE_HEIGHT + 20, self.screen_h - BASE_HEIGHT))
                 self.sit_win_id = target["id"]
+                if abs(target_y - self.y) > 20:
+                    self._teleport_to(target_x, target_y)
+                else:
+                    self.x, self.y = target_x, target_y
+                    self.root.geometry(f"+{int(self.x)}+{int(self.y)}")
+                    self.state = "sitting"
                 self.show_bubble(random.choice(SIT_DOWN_LINES), duration=2500)
                 sit_time = random.randint(15000, 35000)
                 self.root.after(sit_time, self._sit_timeout)
         self.root.after(random.randint(35000, 70000), self.maybe_sit)
+
+    def _teleport_to(self, x, y):
+        """Toca a desmaterialização ao mudar de altura sem caminhar."""
+        self.state = "teleporting"
+
+        def relocate():
+            if self._closing or self.state != "teleporting":
+                return
+            self.x, self.y = x, y
+            self._window_x, self._window_y = int(x), int(y)
+            self.root.geometry(f"+{self._window_x}+{self._window_y}")
+
+        def finish():
+            if not self._closing and self.state == "teleporting":
+                self.state = "sitting"
+
+        self.root.after(1000, relocate)
+        self.root.after(2000, finish)
 
     def _sit_timeout(self):
         if self.state == "sitting":
@@ -2717,8 +2747,14 @@ class DesktopPet:
                 due.append(item.get("text", "Você tem um lembrete."))
         if due:
             save_settings(self.settings)
+            self.state = "reminding"
             self.show_bubble("Lembrete: " + "; ".join(due), duration=12000)
+            self.root.after(12000, self.finish_reminder)
         self.root.after(15000, self.check_reminders)
+
+    def finish_reminder(self):
+        if not self._closing and self.state == "reminding":
+            self.state = "walk"
 
     def show_start_greeting(self):
         if (self._closing or self._routine_greeted or self._is_quiet_time()
@@ -2822,6 +2858,7 @@ class DesktopPet:
                 ))
             else:
                 self.state = "celebrating"
+                self._celebration_video = "dance"
                 line = random.choice((
                     "Passei só pra deixar um oi pra você!",
                     "Uma pausa pequena também conta. Como você está?",
@@ -2860,9 +2897,11 @@ class DesktopPet:
         if self._closing or self.focus_mode != "focus":
             return
         self.focus_mode = "break"
+        celebrate = getattr(self, "settings", {}).get("routine_focus_celebration")
+        self._approval_until = time.monotonic() + 4.5 if not celebrate else 0
+        self._celebration_video = "celebrate"
         self.state = (
-            "celebrating" if getattr(self, "settings", {}).get("routine_focus_celebration")
-            else "sitting"
+            "celebrating" if celebrate else "sitting"
         )
         self.show_bubble(
             f"Boa! Foco concluído. Descanse por {self.break_minutes} min: olhe para longe e se alongue.",
@@ -2882,6 +2921,7 @@ class DesktopPet:
             return
         self.focus_mode = "idle"
         self.state = "celebrating"
+        self._celebration_video = "celebrate"
         self.show_bubble("Pausa encerrada! Mandou bem — quando quiser, começamos outra sessão.", duration=7000)
         self.focus_goal = ""
         self.root.after(4500, self.finish_celebration)
