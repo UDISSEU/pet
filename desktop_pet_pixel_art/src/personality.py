@@ -256,8 +256,8 @@ APP_COMMENTS = {
     "chromium": ("Navegando por aí?", "Encontrou algo interessante?", "Boa pesquisa!", "Muitas abas abertas?", "Descobrindo novidades?", "A internet está cheia de caminhos."),
     "code": ("Bora codar!", "Código novo?", "Analista de dados on!", "Uma linha por vez.", "Debugando com carinho?", "Que projeto está tomando forma?"),
     "sublime": ("Editando código?", "Uma linha por vez.", "Código novo?", "Debugando com carinho?", "Que projeto está tomando forma?", "Bora codar!"),
-    "terminal": ("Modo terminal ativado.", "Linha de comando é vida!", "Um comando por vez.", "O terminal está sob controle?", "Bora codar!", "Analista de dados on!"),
-    "xterm": ("Modo terminal ativado.", "Um comando por vez.", "O terminal está sob controle?", "Linha de comando é vida!", "Bora codar!", "Analista de dados on!"),
+    "terminal": ("Modo terminal ativado.", "Linha de comando é vida!", "Um comando por vez.", "O terminal está sob controle?", "Com calma e um comando de cada vez.", "Tudo certo nesse terminal?"),
+    "xterm": ("Modo terminal ativado.", "Um comando por vez.", "O terminal está sob controle?", "Linha de comando é vida!", "Com calma e um comando de cada vez.", "Tudo certo nesse terminal?"),
     "thunar": ("Organizando arquivos?", "Tudo no seu lugar?", "Faxina digital em andamento?", "Que pastas bonitas!", "Seu cantinho está organizado.", "Encontrou o arquivo?"),
     "nautilus": ("Organizando arquivos?", "Tudo no seu lugar?", "Faxina digital em andamento?", "Que pastas bonitas!", "Seu cantinho está organizado.", "Encontrou o arquivo?"),
     "files": ("Vendo seus arquivos?", "Tudo no seu lugar?", "Encontrou o que procurava?", "Seu cantinho está organizado.", "Faxina digital em andamento?", "Que pastas bonitas!"),
@@ -266,6 +266,10 @@ APP_COMMENTS = {
     "spotify": ("Boa música?", "Qual será a trilha de hoje?", "Uma canção para acompanhar.", "Música deixa o dia mais leve.", "Dancinha no ritmo?", "Curte essa música!"),
     "music": ("Boa música?", "Qual será a trilha de hoje?", "Uma canção para acompanhar.", "Música deixa o dia mais leve.", "Dancinha no ritmo?", "Curte essa música!"),
     "rhythmbox": ("Boa música?", "Qual será a trilha de hoje?", "Uma canção para acompanhar.", "Música deixa o dia mais leve.", "Dancinha no ritmo?", "Curte essa música!"),
+    "vlc": ("Curtindo um vídeo?", "Pausa para os olhos também vale.", "Boa sessão de cinema!", "Esse vídeo parece interessante.", "Não esquece de piscar!", "Aproveitando seu momento?"),
+    "mpv": ("Curtindo um vídeo?", "Pausa para os olhos também vale.", "Boa sessão de cinema!", "Esse vídeo parece interessante.", "Não esquece de piscar!", "Aproveitando seu momento?"),
+    "celluloid": ("Curtindo um vídeo?", "Pausa para os olhos também vale.", "Boa sessão de cinema!", "Esse vídeo parece interessante.", "Não esquece de piscar!", "Aproveitando seu momento?"),
+    "totem": ("Curtindo um vídeo?", "Pausa para os olhos também vale.", "Boa sessão de cinema!", "Esse vídeo parece interessante.", "Não esquece de piscar!", "Aproveitando seu momento?"),
 }
 GENERIC_COMMENTS = (
     "Vendo o que você está fazendo.",
@@ -275,6 +279,7 @@ GENERIC_COMMENTS = (
     "Espero que esteja tudo bem.",
     "Um oi da sua Nova!",
 )
+SPEECH_POOLS["generic_app_comment"] = GENERIC_COMMENTS
 
 SPEECH_LINES = SPEECH_POOLS["idle_chatter"]
 SIT_DOWN_LINES = SPEECH_POOLS["sit_down"][:3]
@@ -299,7 +304,7 @@ def pick_line(category, name="", hour=None, rng=random, history=None):
     """Choose a short line, avoiding the last three selections in its history."""
     if category == "greeting":
         category = _greeting_category(hour)
-    lines = SPEECH_POOLS.get(category, ())
+    lines = SPEECH_POOLS.get(category, APP_COMMENTS.get(category, ()))
     recent = _recent_lines if history is None else history
     candidates = lines or _FALLBACK_LINES
     available = [line for line in candidates if line not in recent[-3:]]

@@ -80,7 +80,8 @@ class TestPersonality(unittest.TestCase):
         self.assertNotIn("Bora codar!", SPEECH_POOLS["idle_chatter"])
         self.assertNotIn("Analista de dados on!", SPEECH_POOLS["idle_chatter"])
         self.assertTrue(any("Bora codar!" in line for line in APP_COMMENTS["code"]))
-        self.assertTrue(any("Analista de dados on!" in line for line in APP_COMMENTS["terminal"]))
+        self.assertTrue(any("Analista de dados on!" in line for line in APP_COMMENTS["code"]))
+        self.assertFalse(any("Analista de dados on!" in line for line in APP_COMMENTS["terminal"]))
 
     def test_new_settings_are_defaulted_and_validated(self):
         self.assertTrue(DEFAULT_SETTINGS["routine_dance"])

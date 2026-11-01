@@ -30,12 +30,12 @@ sudo apt install python3-tk python3-dbus
 
 ## Usar
 
-- Arraste a Nova para movê-la.
-- Dê um duplo clique ou abra o menu com o botão direito e escolha **Perguntar** para conversar.
+- Clique na Nova para receber um aceno; dê um duplo clique para vê-la dançar. Cinco ou mais cliques rápidos deixam a Nova irritada. Arraste-a para movê-la: ela comenta quando é pega e quando é solta.
+- Abra o menu com o botão direito e escolha **Perguntar** para conversar. Cumprimentos, elogios, piadas, dança, aceno, joinha, descanso e esconde-esconde também são respondidos localmente, sem chamar o modelo.
 - No menu, escolha **Calendário** para abrir o calendário local.
 - Em **Foco e rotina**, escolha uma prioridade e a duração da sessão. A Nova usa a animação de estudo durante o foco, dá um joinha ao concluir e dança ao fim da pausa.
 - Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps.
-- Na aba **Foco e rotina**, você pode ativar o aceno ao iniciar, comentários por período do dia, bocejo após cinco minutos sem interação, comemoração ao concluir o foco e recadinhos ocasionais com intervalo mínimo de 30 minutos.
+- Na aba **Foco e rotina**, você pode ativar o aceno ao iniciar, comentários por período do dia, bocejo após cinco minutos sem interação, comemoração ao concluir o foco, recadinhos ocasionais (intervalo mínimo de 30 minutos), dança espontânea e lembretes de pausa saudável. A rotina da noite também pode ser desligada. As falas espontâneas respeitam o horário silencioso e o modo selecionado.
 - Na aba **Meu Computador**, confira atualizações, atualize pacotes e revise limpezas do APT. A autenticação é feita pelo Linux; a remoção de pacotes mostra uma prévia antes de pedir confirmação.
 - Na aba **Histórico**, consulte mensagens com data e hora e apague uma mensagem selecionada ou todo o histórico.
 - Na aba **Aplicativos**, pesquise apps Linux instalados ou cadastre um comando manualmente. Selecione um item cadastrado para editá-lo.
@@ -62,6 +62,7 @@ Para Groq ou Mistral, repita o comando usando o prompt correspondente (`Chave Gr
 
 - Histórico da conversa: `~/.desktop_pet_history.json`.
 - Preferências, memórias, lembretes, sessões de foco e apps cadastrados: `~/.config/desktop_pet/settings.json`.
+- A Nova guarda também a data da última visita e um contador de interações para variar os cumprimentos; não armazena texto digitado nesses metadados.
 - Se um desses arquivos contiver JSON inválido, a Nova preserva uma cópia com sufixo `.corrupt-*` antes de gravar dados novos. Se não puder ler ou preservar o arquivo, bloqueia a gravação e registra o motivo no log.
 - As memórias são incluídas no contexto enviado ao Ollama local. Elas podem ser removidas pela interface.
 - Memórias repetidas são consolidadas ao carregar as preferências; o arquivo JSON mantém o formato atual. Memórias selecionadas entram no contexto como dados de referência, nunca como instruções.

@@ -43,6 +43,7 @@ MOVEMENT_VIDEOS = {
     "walk_left": "andar.esquerda.mp4",
     "wave": "acenando.mp4",
     "celebrate": "dancando.mp4",
+    "cheering": "comemorando.mp4",
     "yawn": "bocejando.mp4",
     "sleep": "dormindo.mp4",
     "angry": "irritada.mp4",

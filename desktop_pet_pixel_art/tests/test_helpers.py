@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from config import MOVEMENTS_DIR, MOVEMENT_VIDEOS, SYSTEM_PROMPT, resolve_movement_path
+from personality import SPEECH_POOLS
 from autonomy import (
     find_installed_apps,
     is_quiet_now,
@@ -34,6 +35,13 @@ def run_thread_immediately(*, target, args, daemon):
     thread = mock.Mock()
     thread.start.side_effect = lambda: target(*args)
     return thread
+
+
+def prepare_app_result_pet(pet):
+    pet.busy = False
+    pet._speech_history = []
+    pet.root = mock.Mock()
+    pet._interaction_speech_allowed = mock.Mock(return_value=True)
 
 
 class TestHelperModules(unittest.TestCase):
@@ -283,6 +291,8 @@ except SystemExit as exc:
         pet.ai_request_active = False
         pet._app_launch_results = queue.Queue()
         pet._closing = False
+        prepare_app_result_pet(pet)
+        pet._record_interaction = mock.Mock()
         pet._ask_question = mock.Mock(return_value="Pode abrir o Google?")
         pet._record_local_interaction = mock.Mock(return_value="Aberto!")
         pet.show_bubble = mock.Mock()
@@ -301,8 +311,13 @@ except SystemExit as exc:
         self.assertEqual(popen.call_args.args[0], ["fake-browser", "--new-window"])
         self.assertEqual(popen.call_args.kwargs["close_fds"], True)
         self.assertFalse(any(key.endswith("_API_KEY") for key in popen.call_args.kwargs["env"]))
-        pet._record_local_interaction.assert_called_once_with(
-            "Pode abrir o Google?", "Aberto!"
+        pet._record_local_interaction.assert_called_once()
+        self.assertEqual(
+            pet._record_local_interaction.call_args.args[0], "Pode abrir o Google?"
+        )
+        self.assertIn(
+            pet._record_local_interaction.call_args.args[1],
+            SPEECH_POOLS["app_launch_ok"],
         )
 
     def test_legacy_saved_app_recovers_its_desktop_launcher_by_exact_name(self):
@@ -331,6 +346,8 @@ except SystemExit as exc:
         pet.ai_request_active = False
         pet._app_launch_results = queue.Queue()
         pet._closing = False
+        prepare_app_result_pet(pet)
+        pet._record_interaction = mock.Mock()
         pet._ask_question = mock.Mock(return_value="Abra a Calculadora")
         pet._record_local_interaction = mock.Mock(return_value="Aberto!")
         pet.show_bubble = mock.Mock()
@@ -359,8 +376,13 @@ except SystemExit as exc:
             env=mock.ANY,
         )
         self.assertFalse(any(key.endswith("_API_KEY") for key in run.call_args.kwargs["env"]))
-        pet._record_local_interaction.assert_called_once_with(
-            "Abra a Calculadora", "Aberto!"
+        pet._record_local_interaction.assert_called_once()
+        self.assertEqual(
+            pet._record_local_interaction.call_args.args[0], "Abra a Calculadora"
+        )
+        self.assertIn(
+            pet._record_local_interaction.call_args.args[1],
+            SPEECH_POOLS["app_launch_ok"],
         )
 
     def test_imperative_opens_saved_app_instead_of_ai(self):
@@ -372,6 +394,8 @@ except SystemExit as exc:
         pet._ask_question = mock.Mock(return_value="Abra Sober")
         pet._app_launch_results = queue.Queue()
         pet._closing = False
+        prepare_app_result_pet(pet)
+        pet._record_interaction = mock.Mock()
         pet._record_local_interaction = mock.Mock(return_value="Aberto!")
         pet.show_bubble = mock.Mock()
 
@@ -415,6 +439,7 @@ except SystemExit as exc:
         pet.settings = {"confirm_app_launch": False}
         pet._app_launch_results = queue.Queue()
         pet._closing = False
+        prepare_app_result_pet(pet)
         pet._record_local_interaction = mock.Mock(side_effect=lambda _q, answer: answer)
         pet.show_bubble = mock.Mock()
         app = {
@@ -432,8 +457,8 @@ except SystemExit as exc:
             pet._drain_app_launch_results()
 
         answer = pet._record_local_interaction.call_args.args[1]
-        self.assertIn("Não consegui abrir Example App", answer)
-        self.assertIn("launcher failed", answer)
+        self.assertIn(answer, SPEECH_POOLS["oops"])
+        self.assertNotIn("launcher failed", answer)
         self.assertEqual(pet.show_bubble.call_args.args[0], answer)
 
     def test_slow_desktop_launch_is_reported_as_still_in_progress(self):
@@ -496,6 +521,11 @@ except SystemExit as exc:
         pet.ai_request_active = False
         pet._ask_question = mock.Mock(return_value="Abra o Paint")
         pet._record_local_interaction = mock.Mock(side_effect=lambda _q, answer: answer)
+        pet._record_interaction = mock.Mock()
+        pet._speech_history = []
+        pet._closing = False
+        pet.root = mock.Mock()
+        pet._interaction_speech_allowed = mock.Mock(return_value=True)
         pet.show_bubble = mock.Mock()
 
         with mock.patch.object(desktop_pet.threading, "Thread") as thread:
@@ -503,8 +533,7 @@ except SystemExit as exc:
 
         thread.assert_not_called()
         answer = pet._record_local_interaction.call_args.args[1]
-        self.assertIn("Cadastre-o na aba Aplicativos", answer)
-        self.assertIn("Se era uma pergunta, comece com 'como...'", answer)
+        self.assertIn(answer, SPEECH_POOLS["oops"])
         pet.show_bubble.assert_called_once_with(answer)
 
     def test_confirmation_setting_defaults_to_confirmation_and_is_sanitized(self):
@@ -693,6 +722,10 @@ except SystemExit as exc:
         pet.ai_request_active = False
         pet.dragging = False
         pet.state = "walk"
+        pet.settings = {"user_name": "", "routine_focus_celebration": False}
+        pet._speech_history = []
+        pet.busy = False
+        pet._can_speak_spontaneously = mock.Mock(return_value=True)
         pet.sit_win_id = 123
         pet.root = mock.Mock()
         pet.show_bubble = mock.Mock()

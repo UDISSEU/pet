@@ -41,7 +41,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from datetime import datetime
+from datetime import datetime, timedelta, timedelta
 from pathlib import Path
 from tkinter import messagebox
 from tkinter import ttk
@@ -66,7 +66,11 @@ from autonomy import (
     save_settings,
     valid_reminder_time,
 )
-from assistant_actions import current_date_answer, is_open_calendar_request
+from assistant_actions import (
+    current_date_answer,
+    is_open_calendar_request,
+    local_personality_intent,
+)
 from app_intents import (
     app_open_target as parse_app_open_target,
     is_app_open_request as parse_app_open_request,
@@ -85,10 +89,6 @@ from config import (
     REMINDER_ANIMATION_SECONDS,
     SCALE,
     SCREEN_MARGIN,
-    SIT_DOWN_LINES,
-    SPEECH_LINES,
-    STAND_CLOSED_LINES,
-    STAND_TIMEOUT_LINES,
     TICK_MS,
     VIDEO_FRAME_INTERVAL_MS,
     VIDEO_REACTION_SECONDS,
@@ -103,7 +103,13 @@ from config import (
     WIDTH,
 )
 from ollama_client import load_history, save_history
-from ai.request_handler import answer_request
+from personality import (
+    can_speak_spontaneously,
+    pick_line,
+    record_spontaneous_speech,
+    reset_personality_state,
+)
+from ai.request_handler import PROVIDER_FAILURE_MESSAGE, answer_request
 from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 from x11_helper import X11Helper
@@ -115,6 +121,19 @@ class DesktopPet:
     def __init__(self):
         self.history = load_history()
         self.settings = load_settings()
+        reset_personality_state()
+        self._speech_history = []
+        self._click_timestamps = []
+        self._pending_click_job = None
+        self._ignore_next_click = False
+        self._pickup_until = 0.0
+        self._pickup_spoken = False
+        self._last_dance_at = time.monotonic()
+        self._last_break_tip_at = time.monotonic()
+        self._focus_routine_started_at = None
+        self._focus_mid_job = None
+        self._miss_you_pending = False
+        self._update_visit_metadata()
         self._user_name_dialog = None
         self._installed_apps_cache = None
         self.x11 = X11Helper()
@@ -251,6 +270,8 @@ class DesktopPet:
         self.root.after(300000, self.check_daily_surprise)
         self.root.after(300000, self.check_idle_yawn)
         self.root.after(300000, self.check_occasional_note)
+        self.root.after(60000, self.check_idle_dance)
+        self.root.after(300000, self.check_healthy_break)
         if not self.settings.get("user_name"):
             self.root.after(1200, self.ask_user_name)
         if self.settings.get("routine_greeting"):
@@ -297,12 +318,16 @@ class DesktopPet:
             return "reminder"
         if self.state == "celebrating":
             return "celebrate"
+        if self.state == "cheering":
+            return "cheering"
         if self.state == "greeting":
             return "wave"
         if self.state == "thumbs_up":
             return "thumbs_up"
         if self.state == "vanishing":
             return "vanishing"
+        if self.state == "resting":
+            return "rest"
         if getattr(self, "focus_mode", "idle") == "break":
             return "rest"
         if self.state == "curious":
@@ -567,7 +592,7 @@ class DesktopPet:
 
         if self.state == "sitting" and self.sit_win_id is not None:
             if not self.x11.window_exists(self.sit_win_id):
-                self._stand_up(random.choice(STAND_CLOSED_LINES))
+                self._stand_up("stand_closed")
 
         if self.behind_mode and self.step // 50 > previous_step // 50:
             try:
@@ -614,17 +639,143 @@ class DesktopPet:
         )
 
     def random_speech(self):
-        if (self.auto_speech_var.get() and not self._is_quiet_time()
-                and self.focus_mode == "idle" and not self.busy and not self.is_covered()):
-            self.show_bubble(random.choice(SPEECH_LINES), duration=3000)
+        if (self.auto_speech_var.get() and self.state == "walk"
+                and self._can_speak_spontaneously()):
+            self._show_personality_line("idle_chatter", duration=3500, spontaneous=True)
         interval = (30000, 60000) if self.settings["mode"] == "proativa" else (90000, 150000)
         self.root.after(random.randint(*interval), self.random_speech)
+
+    def _update_visit_metadata(self):
+        today = datetime.now().astimezone().date()
+        previous = self.settings.get("last_seen_date", "")
+        try:
+            previous_date = datetime.strptime(previous, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            previous_date = None
+        self._miss_you_pending = bool(
+            previous_date is not None and (today - previous_date).days >= 2
+        )
+        self.settings["last_seen_date"] = today.isoformat()
+        if not save_settings(self.settings):
+            logging.getLogger(__name__).warning(
+                "Não foi possível salvar a data da última visita da Nova."
+            )
+
+    def _record_interaction(self):
+        self.settings["interaction_count"] = self.settings.get("interaction_count", 0) + 1
+        self.settings["last_seen_date"] = datetime.now().astimezone().date().isoformat()
+        if not save_settings(self.settings):
+            logging.getLogger(__name__).warning(
+                "Não foi possível salvar os metadados da interação da Nova."
+            )
+
+    def _can_speak_spontaneously(self, allow_focus=False):
+        return (
+            not self._closing
+            and self.settings.get("mode") != "quietinha"
+            and not self._is_quiet_time()
+            and (
+                self.focus_mode == "idle"
+                or allow_focus and self.focus_mode in ("focus", "break")
+            )
+            and not self.busy
+            and not self.dragging
+            and not self.ai_request_active
+            and not self.is_covered()
+        )
+
+    def _show_personality_line(
+        self, category, duration=5000, spontaneous=False, allow_focus=False
+    ):
+        if spontaneous:
+            if (not self._can_speak_spontaneously(allow_focus=allow_focus)
+                    or not can_speak_spontaneously()):
+                return False
+        elif self._closing:
+            return False
+        line = pick_line(
+            category,
+            name=self.settings.get("user_name", ""),
+            rng=random,
+            history=self._speech_history,
+        )
+        if spontaneous:
+            record_spontaneous_speech()
+        self.show_bubble(line, duration=duration)
+        return True
+
+    def _show_spontaneous_pose(self, category, state, duration=5000):
+        if not self._can_speak_spontaneously() or not can_speak_spontaneously():
+            return False
+        self.state = state
+        if not self._show_personality_line(category, duration, spontaneous=True):
+            return False
+        return True
+
+    def _finish_temporary_pose(self, expected_state, final_state="walk"):
+        if not self._closing and self.state == expected_state:
+            self.state = final_state
+
+    def _show_oops(self, duration=5000):
+        if not self._interaction_speech_allowed():
+            return False
+        self.state = "curious"
+        if not self._show_personality_line("oops", duration=duration):
+            return False
+        self.root.after(3500, self.finish_curious)
+        return True
+
+    def _interaction_speech_allowed(self, allow_drag=False):
+        return (
+            not self._closing
+            and self.settings.get("mode") != "quietinha"
+            and not self._is_quiet_time()
+            and self.focus_mode == "idle"
+            and not self.busy
+            and (allow_drag or not self.dragging)
+            and not self.ai_request_active
+            and not self.is_covered()
+        )
+
+    def _handle_local_personality(self, category, animation):
+        if not self._interaction_speech_allowed():
+            return False
+        state = {
+            "wave": "greeting",
+            "celebrate": "celebrating",
+            "thumbs_up": "thumbs_up",
+            "sleep": "sitting",
+            "rest": "resting",
+            "vanishing": "vanishing",
+        }[animation]
+        self.state = state
+        if animation == "thumbs_up":
+            self._thumbs_up_started_at = time.monotonic()
+        if animation == "vanishing":
+            self._vanishing_started_at = time.monotonic()
+            self._user_requested_vanish = True
+        line = self._show_personality_line(category, duration=5000)
+        if animation == "vanishing":
+            self.root.after(
+                round(VANISHING_ANIMATION_SECONDS * 1000),
+                self._hide_after_vanishing,
+            )
+        else:
+            duration = 4000 if animation == "celebrate" else 5000
+            self.root.after(
+                duration,
+                lambda: self._finish_temporary_pose(state),
+            )
+        return line
 
     def maybe_curious(self):
         if self._closing:
             return
         if (self.state == "walk" and self.focus_mode == "idle" and not self.busy
-                and not self.dragging and not self.bubble_text and random.random() < 0.5):
+                and not self.dragging and not self.ai_request_active
+                and self.settings.get("mode") != "quietinha"
+                and not self._is_quiet_time() and not self.is_covered()
+                and not self.bubble_text and random.random() < 0.5):
             self.state = "curious"
             self.root.after(3500, self.finish_curious)
         self.root.after(random.randint(45000, 90000), self.maybe_curious)
@@ -636,13 +787,11 @@ class DesktopPet:
         available = (
             self.settings.get("routine_idle_yawn")
             and idle_long_enough and self.state == "walk"
-            and self.focus_mode == "idle" and not self.busy
-            and not self.dragging and not self.ai_request_active
-            and not self._is_quiet_time() and not self.is_covered()
+            and self._can_speak_spontaneously()
         )
-        if available and random.random() < 0.2:
+        if available and random.random() < 0.2 and can_speak_spontaneously():
             self.state = "yawning"
-            self.show_bubble(random.choice(("Haaam... hora de espreguiçar.", "Um bocejo e já volto!")), duration=5000)
+            self._show_personality_line("yawning", duration=5000, spontaneous=True)
             self.root.after(5000, self.finish_surprise)
             self._last_user_activity_at = time.monotonic()
         self.root.after(300000, self.check_idle_yawn)
@@ -656,22 +805,36 @@ class DesktopPet:
 
     # ---------- observar apps abertos ----------
     def observe_apps(self):
-        if (self.observe_apps_var.get() and not self._is_quiet_time()
-            and self.focus_mode == "idle" and not self.busy and self.x11.ok
-            and self.state != "sitting" and not self.is_covered()):
+        if (self.observe_apps_var.get() and self._can_speak_spontaneously()
+                and self.state == "walk" and self.x11.ok):
             info = self.x11.get_active_window_info()
             if info:
                 klass, name = info
                 haystack = f"{klass} {name}".lower()
-                comment = None
-                for key, options in APP_COMMENTS.items():
+                app_key = None
+                for key in APP_COMMENTS:
                     if key in haystack:
-                        comment = random.choice(options)
+                        app_key = key
                         break
-                if comment is None and random.random() < 0.4:
-                    comment = random.choice(GENERIC_COMMENTS)
-                if comment:
-                    self.show_bubble(comment, duration=2800)
+                if app_key is None and random.random() < 0.4:
+                    app_key = "generic_app_comment"
+                if app_key:
+                    music_apps = ("spotify", "music", "rhythmbox")
+                    duration = 3500
+                    if app_key in music_apps:
+                        if self._can_speak_spontaneously() and can_speak_spontaneously():
+                            self.state = "celebrating"
+                            if self._show_personality_line(
+                                app_key, duration=duration, spontaneous=True
+                            ):
+                                self.root.after(
+                                    duration,
+                                    lambda: self._finish_temporary_pose("celebrating"),
+                                )
+                    else:
+                        self._show_personality_line(
+                            app_key, duration=2800, spontaneous=True
+                        )
         interval = (45000, 90000) if self.settings["mode"] == "proativa" else (90000, 180000)
         self.root.after(random.randint(*interval), self.observe_apps)
 
@@ -719,7 +882,9 @@ class DesktopPet:
     def peekaboo(self):
         if (self.peekaboo_var.get() and not self._is_quiet_time() and self.focus_mode == "idle"
                 and not self.behind_mode and not self.dragging and not self.busy
-                and not self._hidden and self.state != "sitting"):
+                and not self.ai_request_active and self.state == "walk"
+                and not self._hidden and self.settings.get("mode") != "quietinha"
+                and self.is_covered() is False):
             self.state = "vanishing"
             self._vanishing_started_at = time.monotonic()
             self.root.after(
@@ -731,9 +896,13 @@ class DesktopPet:
     def _hide_after_vanishing(self):
         if self._closing or self.state != "vanishing":
             return
-        if (not self.peekaboo_var.get() or self._is_quiet_time()
-                or self.focus_mode != "idle" or self.behind_mode
-                or self.dragging or self.busy):
+        user_requested = getattr(self, "_user_requested_vanish", False)
+        self._user_requested_vanish = False
+        if (self._is_quiet_time() or self.focus_mode != "idle"
+                or self.behind_mode or self.dragging or self.busy
+                or self.ai_request_active or self.is_covered()
+                or self.settings.get("mode") == "quietinha"
+                or not user_requested and not self.peekaboo_var.get()):
             self.state = "walk"
             return
         self.state = "walk"
@@ -752,15 +921,18 @@ class DesktopPet:
             self.root.lift()
         except tk.TclError:
             pass
-        if self.auto_speech_var.get() and not self.busy and random.random() < 0.5:
-            self.show_bubble("Cadê eu? Ah, aqui!", duration=2200)
+        if (self.auto_speech_var.get() and self.state == "walk"
+                and self._can_speak_spontaneously() and can_speak_spontaneously()):
+            self._show_personality_line(
+                "peekaboo", duration=2500, spontaneous=True
+            )
 
     # ---------- sentar cansada em cima de uma janela ----------
     def maybe_sit(self):
-        if (self.auto_sit_var.get() and not self._is_quiet_time() and self.focus_mode == "idle"
+        if (self.auto_sit_var.get() and self._can_speak_spontaneously()
                 and not self.stay_in_place_var.get()
-                and not self.dragging and not self.busy and self.state == "walk"
-                and self.x11.ok and random.random() < 0.7):
+                and self.state == "walk" and self.x11.ok
+                and can_speak_spontaneously() and random.random() < 0.7):
             windows = self.x11.get_open_windows(exclude_win_id=self.root.winfo_id())
             if windows:
                 target = random.choice(windows)
@@ -772,19 +944,24 @@ class DesktopPet:
 
                 self.state = "sitting"
                 self.sit_win_id = target["id"]
-                self.show_bubble(random.choice(SIT_DOWN_LINES), duration=2500)
+                self._show_personality_line(
+                    "sit_down", duration=2500, spontaneous=True
+                )
                 sit_time = random.randint(15000, 35000)
                 self.root.after(sit_time, self._sit_timeout)
         self.root.after(random.randint(35000, 70000), self.maybe_sit)
 
     def _sit_timeout(self):
         if self.state == "sitting":
-            self._stand_up(random.choice(STAND_TIMEOUT_LINES))
+            self._stand_up("stand_timeout")
 
     def _stand_up(self, line):
         self.state = "walk"
         self.sit_win_id = None
-        self.show_bubble(line, duration=2200)
+        if line in ("stand_timeout", "stand_closed"):
+            self._show_personality_line(line, duration=2200, spontaneous=True)
+        else:
+            self.show_bubble(line, duration=2200)
 
     # ---------- balão de fala ----------
     def show_bubble(self, text, duration=None):
@@ -821,12 +998,22 @@ class DesktopPet:
         self._last_drag_pointer_x = self.root.winfo_pointerx()
         self._last_drag_event_at = time.monotonic()
         self._last_drag_motion_at = self._last_drag_event_at
+        self._pickup_spoken = False
         if self.state == "sitting":
             self.sit_win_id = None
         self.state = "held"
         self.drag_offset = (event.x, event.y)
 
     def do_drag(self, event):
+        if not self.was_drag:
+            if self._pending_click_job is not None:
+                self.root.after_cancel(self._pending_click_job)
+                self._pending_click_job = None
+            self._pickup_spoken = False
+            if self._interaction_speech_allowed(allow_drag=True):
+                self._show_personality_line("pickup", duration=1400)
+                self._pickup_until = time.monotonic() + 1.4
+                self._pickup_spoken = True
         self.was_drag = True
         now = time.monotonic()
         pointer_x = self.root.winfo_pointerx()
@@ -842,10 +1029,15 @@ class DesktopPet:
         self.root.geometry(f"+{int(self.x)}+{int(self.y)}")
 
     def stop_drag(self, event):
+        ignore_click = self._ignore_next_click
+        if ignore_click:
+            self._ignore_next_click = False
+        was_drag = self.was_drag
         self.dragging = False
         self.drag_target_tilt = 0.0
         self._last_drag_pointer_x = None
-        self.state = "walk"
+        if self.state == "held":
+            self.state = self._post_drag_state()
         focus_widget = self._drag_focus_widget
         self._drag_focus_widget = None
         if focus_widget is not None:
@@ -854,11 +1046,81 @@ class DesktopPet:
                     focus_widget.focus_set()
             except tk.TclError:
                 pass
-        if not self.was_drag and self.bubble_text:
+        if ignore_click:
+            return
+        if was_drag:
+            self._record_interaction()
+            if self._pickup_spoken:
+                delay = max(0, round((self._pickup_until - time.monotonic()) * 1000))
+                self.root.after(delay, self._speak_drop)
+        else:
+            self._handle_simple_click()
+
+    def _speak_drop(self):
+        if self._interaction_speech_allowed():
+            self._show_personality_line("drop", duration=2500)
+
+    def _post_drag_state(self):
+        if self.focus_mode == "focus":
+            return "focused"
+        if self.focus_mode == "break":
+            return "sitting"
+        return "walk"
+
+    def _handle_simple_click(self):
+        now = time.monotonic()
+        self._click_timestamps = [
+            timestamp for timestamp in self._click_timestamps
+            if now - timestamp <= 3.0
+        ]
+        self._click_timestamps.append(now)
+        self._record_interaction()
+        if len(self._click_timestamps) >= 5:
+            if self._pending_click_job is not None:
+                self.root.after_cancel(self._pending_click_job)
+                self._pending_click_job = None
+            self._irritated_started_at = now
+            self._irritated_until = now + VIDEO_REACTION_SECONDS
+            if self.busy and not self.ai_request_active:
+                self.hide_bubble()
+            if self._interaction_speech_allowed():
+                self._show_personality_line("rapid_click", duration=2500)
+            return
+        if self.busy and not self.ai_request_active:
             self.hide_bubble()
+        if self._pending_click_job is not None:
+            return
+        self._pending_click_job = self.root.after(600, self._finish_simple_click)
+
+    def _finish_simple_click(self):
+        self._pending_click_job = None
+        if not self._interaction_speech_allowed():
+            return
+        self.state = "greeting"
+        if self._show_personality_line("click", duration=2500):
+            self.root.after(
+                round(VIDEO_REACTION_SECONDS * 1000),
+                lambda: self._finish_temporary_pose("greeting"),
+            )
+
+    def _handle_double_click(self):
+        self._ignore_next_click = True
+        self.root.after(1000, self._clear_double_click_guard)
+        if self._pending_click_job is not None:
+            self.root.after_cancel(self._pending_click_job)
+            self._pending_click_job = None
+        self._record_interaction()
+        if not self._interaction_speech_allowed(allow_drag=True):
+            return
+        self.state = "celebrating"
+        if self._show_personality_line("dance", duration=4000):
+            self.root.after(4000, self.finish_celebration)
+
+    def _clear_double_click_guard(self):
+        self._ignore_next_click = False
 
     def say_something(self):
-        self.show_bubble(random.choice(SPEECH_LINES), duration=3000)
+        self._show_personality_line("idle_chatter", duration=3500)
 
     def show_menu(self, event):
         self._last_user_activity_at = time.monotonic()
@@ -1227,6 +1489,8 @@ class DesktopPet:
         routine_note = tk.BooleanVar(value=self.settings.get("routine_note", True))
         routine_surprise = tk.BooleanVar(value=self.settings.get("routine_surprise", True))
         routine_evening = tk.BooleanVar(value=self.settings.get("routine_evening", True))
+        routine_dance = tk.BooleanVar(value=self.settings.get("routine_dance", True))
+        routine_break_tip = tk.BooleanVar(value=self.settings.get("routine_break_tip", True))
         evening_time = tk.StringVar(value=self.settings.get("evening_time", "20:30"))
         speech = tk.BooleanVar(value=self.auto_speech_var.get())
         observe = tk.BooleanVar(value=self.observe_apps_var.get())
@@ -1441,6 +1705,14 @@ class DesktopPet:
         ttk.Checkbutton(
             routine_card, text="Uma surpresa aleatória por dia (fala e aceno)",
             variable=routine_surprise,
+        ).pack(anchor="w", pady=4)
+        ttk.Checkbutton(
+            routine_card, text="Dancinha espontânea (somente companhia/proativa)",
+            variable=routine_dance,
+        ).pack(anchor="w", pady=4)
+        ttk.Checkbutton(
+            routine_card, text="Lembrete de pausa saudável a cada 50 minutos",
+            variable=routine_break_tip,
         ).pack(anchor="w", pady=4)
         evening_row = ttk.Frame(routine_card, style="Card.TFrame")
         evening_row.pack(fill="x", pady=(5, 0))
@@ -2290,9 +2562,10 @@ class DesktopPet:
                     {"name": name, "command": command, "desktop_file": desktop_file},
                     question="",
                 )
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            except (OSError, ValueError, subprocess.SubprocessError):
                 app_error_label.configure(foreground="#B42318")
-                app_error.set(f"Não consegui iniciar {name}: {exc}")
+                app_error.set("Não consegui iniciar esse aplicativo agora.")
+                self._show_oops()
                 return
             app_error_label.configure(foreground="#287247")
             app_error.set(f"Comando enviado ao sistema para abrir {name}.")
@@ -2388,6 +2661,8 @@ class DesktopPet:
                 routine_note=routine_note.get(),
                 routine_surprise=routine_surprise.get(),
                 routine_evening=routine_evening.get(), evening_time=evening_time.get(),
+                routine_dance=routine_dance.get(),
+                routine_break_tip=routine_break_tip.get(),
                 ai_provider=ai_provider.get(), online_ai_enabled=online_ai_enabled.get(),
                 allow_online_data=allow_online_data.get(),
                 confirm_free_tier=confirm_free_tier.get(), ai_timeout=timeout_value,
@@ -2440,11 +2715,16 @@ class DesktopPet:
         if self._closing:
             return
         now = time.time()
+        available = (
+            self.state == "walk"
+            and self._can_speak_spontaneously()
+            and can_speak_spontaneously()
+        )
         due = []
         for item in self.settings.get("reminders", []):
             parsed = valid_reminder_time(item.get("at")) if isinstance(item, dict) else None
-            if (parsed and not item.get("done") and parsed.timestamp() <= now
-                    and not self._is_quiet_time() and self.focus_mode == "idle"):
+            if (available and parsed and not item.get("done")
+                    and parsed.timestamp() <= now):
                 item["done"] = True
                 due.append(item.get("text", "Você tem um lembrete."))
         if due:
@@ -2453,49 +2733,51 @@ class DesktopPet:
             self._reminder_animation_until = (
                 self._reminder_started_at + REMINDER_ANIMATION_SECONDS
             )
-            self.show_bubble("Lembrete: " + "; ".join(due), duration=12000)
+            line = pick_line(
+                "reminder_due", name=self.settings.get("user_name", ""),
+                rng=random, history=self._speech_history,
+            )
+            record_spontaneous_speech()
+            self.show_bubble(f"{line} {'; '.join(due)}", duration=12000)
         self.root.after(15000, self.check_reminders)
 
     def show_start_greeting(self):
-        if (self._closing or self._routine_greeted or self._is_quiet_time()
-                or not self.settings.get("user_name")):
+        if self._closing or self._routine_greeted or not self.settings.get("routine_greeting"):
+            return
+        category = "miss_you" if self._miss_you_pending else "greeting"
+        if not self._show_spontaneous_pose(category, "greeting", duration=6500):
+            self.root.after(60000, self.show_start_greeting)
             return
         self._routine_greeted = True
-        hour = datetime.now().astimezone().hour
-        if hour < 12:
-            greeting = f"Bom dia, {self.settings['user_name']}! Qual é sua prioridade de hoje?"
-        elif hour < 18:
-            greeting = f"Oi, {self.settings['user_name']}! Quer escolher uma prioridade para hoje?"
-        else:
-            greeting = f"Boa noite, {self.settings['user_name']}! Espero que seu dia tenha ido bem."
-        self.state = "greeting"
-        self.show_bubble(greeting, duration=7000)
-        self.root.after(5000, self.finish_greeting)
+        self._miss_you_pending = False
+        self.settings["last_context_date"] = datetime.now().astimezone().date().isoformat()
+        save_settings(self.settings)
+        self.root.after(round(VIDEO_REACTION_SECONDS * 1000), self.finish_greeting)
 
     def finish_greeting(self):
         if not self._closing and self.state == "greeting":
             self.state = "walk"
 
     def show_context_greeting(self):
-        if self._closing or self._is_quiet_time() or not self.settings.get("user_name"):
+        if self._closing or not self.settings.get("routine_context"):
             return
         now = datetime.now().astimezone()
         today = now.date().isoformat()
         if self.settings.get("last_context_date") == today:
             return
-        if self.busy or self.focus_mode != "idle":
+        if self._routine_greeted:
+            self.settings["last_context_date"] = today
+            save_settings(self.settings)
+            return
+        category = "miss_you" if self._miss_you_pending else "greeting"
+        if not self._show_spontaneous_pose(category, "greeting", duration=6500):
             self.root.after(60000, self.show_context_greeting)
             return
-        hour = now.hour
-        if hour < 12:
-            line = f"Bom dia, {self.settings['user_name']}! Que bom ter você por aqui."
-        elif hour < 18:
-            line = f"Boa tarde, {self.settings['user_name']}! Espero que seu dia esteja indo bem."
-        else:
-            line = f"Boa noite, {self.settings['user_name']}! Vamos com calma por aí."
+        self._routine_greeted = True
+        self._miss_you_pending = False
         self.settings["last_context_date"] = today
         save_settings(self.settings)
-        self.show_bubble(line, duration=6000)
+        self.root.after(round(VIDEO_REACTION_SECONDS * 1000), self.finish_greeting)
 
     def check_occasional_note(self):
         if self._closing:
@@ -2504,19 +2786,55 @@ class DesktopPet:
         available = (
             self.settings.get("routine_note")
             and now - self.settings.get("last_note_at", 0) >= 30 * 60
-            and not self._is_quiet_time() and self.focus_mode == "idle"
-            and not self.busy and not self.dragging and not self.ai_request_active
-            and not self.is_covered()
+            and self.state == "walk"
+            and self._can_speak_spontaneously()
         )
         if available and random.random() < 0.08:
             self.settings["last_note_at"] = int(now)
             save_settings(self.settings)
-            self.show_bubble(random.choice((
-                "Só passando pra lembrar que você está fazendo o seu melhor.",
-                "Espero que você esteja se tratando com carinho hoje.",
-                "Oi, estou aqui se quiser uma companhia.",
-            )), duration=6000)
+            self._show_personality_line("compliment", duration=6000, spontaneous=True)
         self.root.after(300000, self.check_occasional_note)
+
+    def check_idle_dance(self):
+        if self._closing:
+            return
+        now = time.monotonic()
+        available = (
+            self.settings.get("routine_dance")
+            and self.settings.get("mode") in ("companhia", "proativa")
+            and self.state == "walk"
+            and now - self._last_dance_at >= 20 * 60
+            and self._can_speak_spontaneously()
+            and can_speak_spontaneously()
+        )
+        if available and random.random() < 0.04:
+            if self._show_spontaneous_pose("dance", "celebrating", duration=4000):
+                self._last_dance_at = now
+                self.root.after(
+                    4000, lambda: self._finish_temporary_pose("celebrating")
+                )
+        self.root.after(60000, self.check_idle_dance)
+
+    def check_healthy_break(self):
+        if self._closing:
+            return
+        now = time.monotonic()
+        available = (
+            self.settings.get("routine_break_tip")
+            and now - self._last_break_tip_at >= 50 * 60
+            and self.state == "walk"
+            and self._can_speak_spontaneously()
+            and can_speak_spontaneously()
+        )
+        if available and self._show_spontaneous_pose(
+            "break_tip", "thumbs_up", duration=6500
+        ):
+            self._last_break_tip_at = now
+            self._thumbs_up_started_at = now
+            self.root.after(
+                4000, lambda: self._finish_temporary_pose("thumbs_up")
+            )
+        self.root.after(300000, self.check_healthy_break)
 
     def check_daily_routine(self):
         if self._closing:
@@ -2526,11 +2844,39 @@ class DesktopPet:
         if (self.settings.get("routine_evening")
                 and self.settings.get("last_evening_date") != today
                 and now.strftime("%H:%M") >= self.settings.get("evening_time", "20:30")
-                and not self._is_quiet_time() and self.focus_mode == "idle"):
+                and self.state == "walk" and self._can_speak_spontaneously()
+                and can_speak_spontaneously()):
             self.settings["last_evening_date"] = today
             save_settings(self.settings)
-            self.show_bubble("Hora de encerrar: confira seus lembretes e descanse um pouco.", duration=9000)
+            self.state = "yawning"
+            record_spontaneous_speech()
+            self.root.after(2500, self._finish_evening_routine)
         self.root.after(30000, self.check_daily_routine)
+
+    def _finish_evening_routine(self):
+        if self._closing or self.state != "yawning":
+            return
+        if not self._can_speak_spontaneously():
+            self.state = "walk"
+            return
+        self.state = "sitting" if self._quiet_time_approaching() else "walk"
+        self._show_personality_line("evening_wrap", duration=9000)
+
+    def _quiet_time_approaching(self):
+        now = datetime.now().astimezone()
+        try:
+            quiet_start = datetime.strptime(
+                self.settings.get("quiet_start", "22:00"), "%H:%M"
+            ).time()
+        except (TypeError, ValueError):
+            return False
+        next_start = now.replace(
+            hour=quiet_start.hour, minute=quiet_start.minute,
+            second=0, microsecond=0,
+        )
+        if next_start <= now:
+            next_start += timedelta(days=1)
+        return next_start - now <= timedelta(minutes=30)
 
     def check_daily_surprise(self):
         if self._closing:
@@ -2540,36 +2886,27 @@ class DesktopPet:
         available = (
             self.settings.get("routine_surprise")
             and self.settings.get("last_surprise_date") != today
-            and not self._is_quiet_time()
-            and self.focus_mode == "idle"
-            and not self.busy
-            and not self.dragging
-            and not self.ai_request_active
-            and not self.is_covered()
+            and self.state == "walk"
+            and self._can_speak_spontaneously()
+            and can_speak_spontaneously()
         )
         if available and random.random() < 0.15:
-            self.settings["last_surprise_date"] = today
-            save_settings(self.settings)
-            if random.choice(("wave", "yawn")) == "yawn":
-                self.state = "yawning"
-                line = random.choice((
-                    "Haaam... pausa pra espreguiçar!",
-                    "Quase dormi aqui... como você está?",
-                ))
+            if random.choice(("cheering", "yawning")) == "yawning":
+                shown = self._show_spontaneous_pose(
+                    "yawning", "yawning", duration=6500
+                )
             else:
-                self.state = "celebrating"
-                line = random.choice((
-                    "Passei só pra deixar um oi pra você!",
-                    "Uma pausa pequena também conta. Como você está?",
-                    "Surpresinha do dia: você está indo muito bem!",
-                    "Oi! Trouxe um aceno e um pouquinho de companhia.",
-                ))
-            self.show_bubble(line, duration=6500)
-            self.root.after(6500, self.finish_surprise)
+                shown = self._show_spontaneous_pose(
+                    "surprise", "cheering", duration=6500
+                )
+            if shown:
+                self.settings["last_surprise_date"] = today
+                save_settings(self.settings)
+                self.root.after(6500, self.finish_surprise)
         self.root.after(300000, self.check_daily_surprise)
 
     def finish_surprise(self):
-        if not self._closing and self.state in ("celebrating", "yawning"):
+        if not self._closing and self.state in ("celebrating", "cheering", "yawning"):
             self.state = "walk"
 
     def start_focus(self, goal, focus_minutes, break_minutes):
@@ -2583,13 +2920,31 @@ class DesktopPet:
         self.focus_minutes = int(focus_minutes)
         self.break_minutes = int(break_minutes)
         self.focus_mode = "focus"
+        self._focus_routine_started_at = time.monotonic()
         self.state = "focused"
         self.sit_win_id = None
+        line = pick_line(
+            "focus_start", name=self.settings.get("user_name", ""),
+            rng=random, history=self._speech_history,
+        )
         self.show_bubble(
-            f"Foco por {self.focus_minutes} min: {self.focus_goal}", duration=6500
+            f"{line} Prioridade: {self.focus_goal}.", duration=6500
+        )
+        self.root.after(
+            self.focus_minutes * 30_000, self._focus_midpoint
         )
         self._focus_job = self.root.after(self.focus_minutes * 60_000, self.finish_focus)
         return True
+
+    def _focus_midpoint(self):
+        if self._closing or self.focus_mode != "focus" or self.state != "focused":
+            return
+        if not self._can_speak_spontaneously(allow_focus=True) or not can_speak_spontaneously():
+            self.root.after(30000, self._focus_midpoint)
+            return
+        self._show_personality_line(
+            "focus_mid", duration=5000, spontaneous=True, allow_focus=True
+        )
 
     def finish_focus(self):
         self._focus_job = None
@@ -2602,9 +2957,8 @@ class DesktopPet:
         )
         if self.state == "thumbs_up":
             self._thumbs_up_started_at = time.monotonic()
-        self.show_bubble(
-            f"Boa! Foco concluído. Descanse por {self.break_minutes} min: olhe para longe e se alongue.",
-            duration=12_000,
+        self._show_personality_line(
+            "focus_done", duration=12_000, spontaneous=True, allow_focus=True
         )
         if self.state == "thumbs_up":
             self.root.after(4500, self.enter_focus_break)
@@ -2618,11 +2972,20 @@ class DesktopPet:
         self._focus_job = None
         if self._closing or self.focus_mode != "break":
             return
+        self._finish_focus_routine_timer()
         self.focus_mode = "idle"
         self.state = "celebrating"
-        self.show_bubble("Pausa encerrada! Mandou bem — quando quiser, começamos outra sessão.", duration=7000)
+        self._show_personality_line("break_end", duration=7000, spontaneous=True)
         self.focus_goal = ""
-        self.root.after(4500, self.finish_celebration)
+        self.root.after(4000, self.finish_celebration)
+
+    def _finish_focus_routine_timer(self):
+        started_at = getattr(self, "_focus_routine_started_at", None)
+        if started_at is not None:
+            self._last_break_tip_at = getattr(
+                self, "_last_break_tip_at", started_at
+            ) + max(0.0, time.monotonic() - started_at)
+            self._focus_routine_started_at = None
 
     def finish_celebration(self):
         if not self._closing and self.state == "celebrating":
@@ -2631,6 +2994,7 @@ class DesktopPet:
     def stop_focus(self):
         if self.focus_mode == "idle":
             return
+        self._finish_focus_routine_timer()
         if self._focus_job is not None:
             try:
                 self.root.after_cancel(self._focus_job)
@@ -2690,22 +3054,46 @@ class DesktopPet:
     def _app_launch_worker(self, question, app):
         try:
             self._launch_app(app, question)
-            answer = "Aberto!"
+            success = True
         except subprocess.TimeoutExpired:
-            answer = f"A abertura de {app['name']} ainda está em andamento."
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            answer = f"Não consegui abrir {app['name']}: {exc}"
-        self._app_launch_results.put((question, answer))
+            self._app_launch_results.put((
+                question,
+                f"A abertura de {app.get('name', 'app')} ainda está em andamento.",
+            ))
+            return
+        except (OSError, ValueError, subprocess.SubprocessError):
+            success = False
+        self._app_launch_results.put((question, success))
 
     def _drain_app_launch_results(self):
         try:
-            question, answer = self._app_launch_results.get_nowait()
+            question, success = self._app_launch_results.get_nowait()
         except queue.Empty:
             return
         self.app_launch_active = False
         if not self._closing:
-            answer = self._record_local_interaction(question, answer)
-            self.show_bubble(answer)
+            if getattr(self, "busy", False):
+                self.hide_bubble()
+            if self._interaction_speech_allowed():
+                if isinstance(success, str):
+                    answer = success
+                else:
+                    category = "app_launch_ok" if success else "oops"
+                    answer = pick_line(
+                        category, name=self.settings.get("user_name", ""),
+                        rng=random, history=getattr(self, "_speech_history", []),
+                    )
+                    self.state = "thumbs_up" if success else "curious"
+                    if success:
+                        self._thumbs_up_started_at = time.monotonic()
+                    self.root.after(
+                        3000,
+                        lambda: self._finish_temporary_pose(
+                            "thumbs_up" if success else "curious"
+                        ),
+                    )
+                answer = self._record_local_interaction(question, answer)
+                self.show_bubble(answer)
 
     @staticmethod
     def _child_process_env():
@@ -2835,12 +3223,16 @@ class DesktopPet:
     # ---------- integração com a IA local ----------
     def ask_menu(self, event=None):
         self._last_user_activity_at = time.monotonic()
+        if event is not None:
+            self._handle_double_click()
+            return "break"
         if self.ai_request_active:
             self.show_bubble("Já estou respondendo sua pergunta!", duration=2500)
             return
         question = self._ask_question()
         if not question:
             return
+        self._record_interaction()
         date_answer = current_date_answer(question)
         if date_answer:
             answer = self._record_local_interaction(question, date_answer)
@@ -2853,18 +3245,25 @@ class DesktopPet:
             self.show_calendar()
             self.show_bubble(answer)
             return
+        local_intent = local_personality_intent(question)
+        if local_intent:
+            category, animation = local_intent
+            self._handle_local_personality(category, animation)
+            return
         app = self._matching_app(question)
         if app:
             self._confirm_open_app(question, app)
             return
         if self._is_app_open_request(question) and self._looks_like_app_target(question):
-            answer = (
-                "Não encontrei um aplicativo cadastrado que corresponda ao pedido. "
-                "Cadastre-o na aba Aplicativos e tente novamente. "
-                "Se era uma pergunta, comece com 'como...'."
+            answer = pick_line(
+                "oops", name=self.settings.get("user_name", ""),
+                rng=random, history=self._speech_history,
             )
             self._record_local_interaction(question, answer)
-            self.show_bubble(answer)
+            if self._interaction_speech_allowed():
+                self.state = "curious"
+                self.root.after(3500, self.finish_curious)
+                self.show_bubble(answer)
             return
         self.history.append({
             "role": "user", "content": question,
@@ -3054,8 +3453,15 @@ class DesktopPet:
         })
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
         history_saved = save_history(self.history)
-        self.state = "walk"
+        failed = answer == PROVIDER_FAILURE_MESSAGE
+        self.state = "curious" if failed else "walk"
         self._show_idea_icon = True
+        if failed:
+            answer = pick_line(
+                "oops", name=self.settings.get("user_name", ""),
+                rng=random, history=self._speech_history,
+            )
+            self.root.after(3500, self.finish_curious)
         words = max(len(answer.split()), 1)
         duration = min(max(6000, words * 400), 30000)
         if history_saved:
