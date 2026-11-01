@@ -25,6 +25,10 @@ SPEECH_POOLS = {
         "Um carinho em forma de companhia.",
         "Já bebeu uma aguinha hoje?",
         "Vai no seu tempo; cada passo conta.",
+        "Só um oi baixinho para alegrar seu cantinho.",
+        "Estou por aqui, sem pressa e sem cobrança.",
+        "Que bom compartilhar esse pedacinho do dia.",
+        "Se quiser uma pausa, posso fazer companhia.",
     ),
     "greeting_morning": (
         "Bom dia, {nome}! Que seu começo seja gentil.",
@@ -57,6 +61,14 @@ SPEECH_POOLS = {
         "Oi, que bom receber sua visita.",
         "Pode falar comigo quando quiser.",
         "Acenei de volta! Tudo bem por aí?",
+    ),
+    "wake": (
+        "Oi, voltei! Espero que você tenha descansado também.",
+        "Acordei! Que bom ter você por aqui.",
+        "Um espreguiçar e já estou com você.",
+        "Oi! Vamos voltar com calma?",
+        "Descansei um pouquinho. Como posso acompanhar você?",
+        "Prontinha para fazer companhia de novo.",
     ),
     "rapid_click": (
         "Calma, meu bem! Um clique de cada vez.",

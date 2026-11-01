@@ -90,6 +90,7 @@ from config import (
     REMINDER_ANIMATION_SECONDS,
     SCALE,
     SCREEN_MARGIN,
+    STARTUP_IDLE_SECONDS,
     TICK_MS,
     THUMBS_UP_ANIMATION_SECONDS,
     VIDEO_FRAME_INTERVAL_MS,
@@ -218,7 +219,7 @@ class DesktopPet:
         self.was_drag = False
         self.drag_offset = (0, 0)
         self._drag_focus_widget = None
-        self.state = "walk"  # walk | held | thinking | sitting
+        self.state = "idle"
         self.busy = False
         self.focus_mode = "idle"  # idle | focus | break
         self.focus_goal = ""
@@ -277,6 +278,9 @@ class DesktopPet:
         self._last_tick_at = time.monotonic()
         self._next_tick_at = self._last_tick_at + TICK_MS / 1000
         self.root.after(TICK_MS, self.tick)
+        self.root.after(
+            round(STARTUP_IDLE_SECONDS * 1000), self._finish_startup_idle
+        )
         self.root.after(random.randint(6000, 12000), self.random_speech)
         self.root.after(random.randint(15000, 30000), self.observe_apps)
         self.root.after(random.randint(30000, 60000), self.peekaboo)
@@ -291,7 +295,10 @@ class DesktopPet:
         if not self.settings.get("user_name"):
             self.root.after(1200, self.ask_user_name)
         if self.settings.get("routine_greeting"):
-            self.root.after(2500, self.show_start_greeting)
+            self.root.after(
+                round((STARTUP_IDLE_SECONDS + 1) * 1000),
+                self.show_start_greeting,
+            )
         if self.settings.get("routine_context"):
             self.root.after(7000, self.show_context_greeting)
         self.root.after(random.randint(30000, 60000), self.maybe_curious)
@@ -676,6 +683,10 @@ class DesktopPet:
             WALK_DIRECTION_CHANGE_MIN_SECONDS,
             WALK_DIRECTION_CHANGE_MAX_SECONDS,
         )
+
+    def _finish_startup_idle(self):
+        if not self._closing and self.state == "idle":
+            self.state = "walk"
 
     def random_speech(self):
         if (self.auto_speech_var.get() and self.state == "walk"
@@ -1163,8 +1174,10 @@ class DesktopPet:
         self._pending_click_job = None
         if not self._interaction_speech_allowed():
             return
+        waking_up = self.state in ("sitting", "resting")
         self.state = "greeting"
-        if self._show_personality_line("click", duration=2500):
+        category = "wake" if waking_up else "click"
+        if self._show_personality_line(category, duration=2500):
             self._schedule_pose_return(
                 round(VIDEO_REACTION_SECONDS * 1000), "greeting"
             )

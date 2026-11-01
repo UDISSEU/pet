@@ -1,6 +1,7 @@
 """Persistência e regras simples de autonomia da Nova."""
 
 import configparser
+import fcntl
 import json
 import logging
 import os
@@ -194,18 +195,53 @@ def load_settings(path=SETTINGS_PATH):
 
 
 def save_settings(settings, path=SETTINGS_PATH):
+    path = Path(path)
     if not may_replace(path):
         logger.error("Gravação das configurações bloqueada para preservar %s", path.name)
         return False
     temporary_path = None
+    lock_fd = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.with_name(f".{path.name}.lock")
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        payload = dict(settings)
+        user_name = payload.get("user_name")
+        if not isinstance(user_name, str) or not user_name.strip():
+            try:
+                saved_settings = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                saved_settings = {}
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                if isinstance(exc, (UnicodeDecodeError, json.JSONDecodeError)):
+                    backup = preserve_corrupt_file(path, type(exc).__name__)
+                    if backup is not None:
+                        saved_settings = {}
+                    else:
+                        logger.error(
+                            "Não foi possível preservar as configurações atuais (%s); gravação cancelada",
+                            type(exc).__name__,
+                        )
+                        return False
+                else:
+                    logger.error(
+                        "Não foi possível preservar as configurações atuais (%s); gravação cancelada",
+                        type(exc).__name__,
+                    )
+                    return False
+            if isinstance(saved_settings, dict):
+                saved_name = saved_settings.get("user_name")
+                if isinstance(saved_name, str) and saved_name.strip():
+                    payload["user_name"] = saved_name
+
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=path.parent,
             prefix=f".{path.name}.", suffix=".tmp", delete=False,
         ) as stream:
             temporary_path = stream.name
-            json.dump(settings, stream, ensure_ascii=False, indent=2)
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary_path, path)
@@ -217,6 +253,10 @@ def save_settings(settings, path=SETTINGS_PATH):
             except OSError:
                 pass
         return False
+    finally:
+        if lock_fd is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
 
 def is_quiet_now(start, end, now=None):

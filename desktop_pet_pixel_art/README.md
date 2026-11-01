@@ -30,7 +30,8 @@ sudo apt install python3-tk python3-dbus
 
 ## Usar
 
-- Clique na Nova para receber um aceno; dê um duplo clique para vê-la dançar. Cinco ou mais cliques rápidos deixam a Nova irritada. Arraste-a para movê-la: ela comenta quando é pega e quando é solta.
+- Ao iniciar, a Nova fica parada por cerca de 3 segundos antes de começar a caminhar; a saudação configurada vem depois.
+- Clique na Nova para receber um aceno; se ela estiver descansando, o aceno vem acompanhado de uma fala de despertar. Dê um duplo clique para vê-la dançar. Cinco ou mais cliques rápidos deixam a Nova irritada. Arraste-a para movê-la: ela comenta quando é pega e quando é solta.
 - Abra o menu com o botão direito e escolha **Perguntar** para conversar. Cumprimentos, elogios, piadas, dança, aceno, joinha, descanso e esconde-esconde também são respondidos localmente, sem chamar o modelo.
 - No menu, escolha **Calendário** para abrir o calendário local.
 - Em **Foco e rotina**, escolha uma prioridade e a duração da sessão. A Nova usa a animação de estudo durante o foco, dá um joinha ao concluir e dança ao fim da pausa.

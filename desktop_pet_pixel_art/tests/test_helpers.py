@@ -148,6 +148,22 @@ except SystemExit as exc:
             self.assertTrue(save_settings(load_settings(path), path))
             self.assertEqual(backups[0].read_text(encoding="utf-8"), "not json")
 
+    def test_stale_settings_save_does_not_clear_saved_user_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            settings = load_settings(path)
+            settings["user_name"] = "Ada"
+            self.assertTrue(save_settings(settings, path))
+
+            stale_settings = load_settings(path)
+            stale_settings["user_name"] = ""
+            stale_settings["mode"] = "proativa"
+            self.assertTrue(save_settings(stale_settings, path))
+
+            saved = load_settings(path)
+        self.assertEqual(saved["user_name"], "Ada")
+        self.assertEqual(saved["mode"], "proativa")
+
     def test_settings_trim_and_deduplicate_memories_case_insensitively(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"
@@ -680,6 +696,56 @@ except SystemExit as exc:
                 self.assertEqual(
                     DesktopPet._video_with_fallback("talking"), "wave"
                 )
+
+    def test_clicking_a_resting_nova_uses_a_wake_line_and_wave(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._pending_click_job = "click-timer"
+        pet._interaction_speech_allowed = mock.Mock(return_value=True)
+        pet._show_personality_line = mock.Mock(return_value=True)
+        pet._schedule_pose_return = mock.Mock()
+        pet.state = "sitting"
+
+        pet._finish_simple_click()
+
+        self.assertEqual(pet.state, "greeting")
+        pet._show_personality_line.assert_called_once_with(
+            "wake", duration=2500
+        )
+        pet._schedule_pose_return.assert_called_once_with(
+            round(desktop_pet.VIDEO_REACTION_SECONDS * 1000), "greeting"
+        )
+
+    def test_clicking_an_active_nova_uses_the_regular_click_reaction(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._pending_click_job = "click-timer"
+        pet._interaction_speech_allowed = mock.Mock(return_value=True)
+        pet._show_personality_line = mock.Mock(return_value=True)
+        pet._schedule_pose_return = mock.Mock()
+        pet.state = "walk"
+
+        pet._finish_simple_click()
+
+        pet._show_personality_line.assert_called_once_with(
+            "click", duration=2500
+        )
+
+    def test_startup_idle_transitions_to_walking_after_the_delay(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._closing = False
+        pet.state = "idle"
+
+        pet._finish_startup_idle()
+
+        self.assertEqual(pet.state, "walk")
+
+    def test_startup_idle_does_not_override_an_interaction(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._closing = False
+        pet.state = "thinking"
+
+        pet._finish_startup_idle()
+
+        self.assertEqual(pet.state, "thinking")
 
     def test_staying_in_place_uses_idle_pose(self):
         pet = DesktopPet.__new__(DesktopPet)
