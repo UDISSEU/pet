@@ -8,7 +8,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from animation import load_video_preview
+from animation import load_video_frames, load_video_preview
 from animation_loader import AnimationLoader
 from config import MOVEMENT_VIDEOS, VIDEO_MAX_H, VIDEO_MAX_W
 
@@ -19,6 +19,18 @@ class TestAnimationLoader(unittest.TestCase):
         self.assertEqual(frame.size, (VIDEO_MAX_W, VIDEO_MAX_H))
         self.assertEqual(frame.mode, "RGBA")
         self.assertIsNotNone(frame.getchannel("A").getbbox())
+
+    def test_new_animations_decode_all_frames(self):
+        for name in ("focused", "reminder", "thumbs_up", "vanishing", "celebrate"):
+            with self.subTest(animation=name):
+                frames = load_video_frames(MOVEMENT_VIDEOS[name])
+                self.assertTrue(frames)
+                self.assertEqual(frames[0].size, (VIDEO_MAX_W, VIDEO_MAX_H))
+                self.assertIsNotNone(frames[0].getchannel("A").getbbox())
+                if name == "vanishing":
+                    self.assertTrue(
+                        any(frame.getchannel("A").getbbox() is None for frame in frames)
+                    )
 
     def test_full_videos_load_off_thread_and_results_are_drained(self):
         finished = threading.Event()

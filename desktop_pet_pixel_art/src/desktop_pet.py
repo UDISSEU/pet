@@ -82,6 +82,7 @@ from config import (
     ICONS_DIR,
     LOGIC_STEP_MS,
     MAX_HISTORY_MESSAGES,
+    REMINDER_ANIMATION_SECONDS,
     SCALE,
     SCREEN_MARGIN,
     SIT_DOWN_LINES,
@@ -91,6 +92,7 @@ from config import (
     TICK_MS,
     VIDEO_FRAME_INTERVAL_MS,
     VIDEO_REACTION_SECONDS,
+    VANISHING_ANIMATION_SECONDS,
     MOVEMENT_VIDEOS,
     PROJECT_ROOT,
     WALK_ACCELERATION,
@@ -208,6 +210,10 @@ class DesktopPet:
         self._last_drag_motion_at = 0.0
         self._irritated_until = 0.0
         self._irritated_started_at = 0.0
+        self._reminder_started_at = 0.0
+        self._reminder_animation_until = 0.0
+        self._thumbs_up_started_at = 0.0
+        self._vanishing_started_at = 0.0
 
         self.label.bind("<Button-1>", self.start_drag)
         self.label.bind("<B1-Motion>", self.do_drag)
@@ -284,11 +290,19 @@ class DesktopPet:
 
     def _video_for_current_pose(self, now=None):
         if self.state == "focused":
-            return "idle"
+            return "focused"
+        if now is None:
+            now = time.monotonic()
+        if now < getattr(self, "_reminder_animation_until", 0.0):
+            return "reminder"
         if self.state == "celebrating":
             return "celebrate"
         if self.state == "greeting":
             return "wave"
+        if self.state == "thumbs_up":
+            return "thumbs_up"
+        if self.state == "vanishing":
+            return "vanishing"
         if getattr(self, "focus_mode", "idle") == "break":
             return "rest"
         if self.state == "curious":
@@ -322,8 +336,14 @@ class DesktopPet:
         frames = self.video_frames[video]
         if video == "angry":
             elapsed_ms = (now - self._irritated_started_at) * 1000
-        elif video == "thinking":
-            elapsed_ms = (now - self._thinking_started_at) * 1000
+        elif video in ("thinking", "reminder", "thumbs_up", "vanishing"):
+            started_at = {
+                "thinking": self._thinking_started_at,
+                "reminder": self._reminder_started_at,
+                "thumbs_up": self._thumbs_up_started_at,
+                "vanishing": self._vanishing_started_at,
+            }[video]
+            elapsed_ms = (now - started_at) * 1000
         else:
             elapsed_ms = self.animation_time_ms
         frame_index = int(elapsed_ms / VIDEO_FRAME_INTERVAL_MS) % len(frames)
@@ -700,14 +720,30 @@ class DesktopPet:
         if (self.peekaboo_var.get() and not self._is_quiet_time() and self.focus_mode == "idle"
                 and not self.behind_mode and not self.dragging and not self.busy
                 and not self._hidden and self.state != "sitting"):
-            self._hidden = True
-            try:
-                self.root.attributes("-topmost", False)
-                self.root.lower()
-            except tk.TclError:
-                pass
-            self.root.after(random.randint(3000, 7000), self._reappear)
+            self.state = "vanishing"
+            self._vanishing_started_at = time.monotonic()
+            self.root.after(
+                round(VANISHING_ANIMATION_SECONDS * 1000),
+                self._hide_after_vanishing,
+            )
         self.root.after(random.randint(40000, 80000), self.peekaboo)
+
+    def _hide_after_vanishing(self):
+        if self._closing or self.state != "vanishing":
+            return
+        if (not self.peekaboo_var.get() or self._is_quiet_time()
+                or self.focus_mode != "idle" or self.behind_mode
+                or self.dragging or self.busy):
+            self.state = "walk"
+            return
+        self.state = "walk"
+        self._hidden = True
+        try:
+            self.root.attributes("-topmost", False)
+            self.root.lower()
+        except tk.TclError:
+            pass
+        self.root.after(random.randint(3000, 7000), self._reappear)
 
     def _reappear(self):
         self._hidden = False
@@ -2413,6 +2449,10 @@ class DesktopPet:
                 due.append(item.get("text", "Você tem um lembrete."))
         if due:
             save_settings(self.settings)
+            self._reminder_started_at = time.monotonic()
+            self._reminder_animation_until = (
+                self._reminder_started_at + REMINDER_ANIMATION_SECONDS
+            )
             self.show_bubble("Lembrete: " + "; ".join(due), duration=12000)
         self.root.after(15000, self.check_reminders)
 
@@ -2557,19 +2597,21 @@ class DesktopPet:
             return
         self.focus_mode = "break"
         self.state = (
-            "celebrating" if getattr(self, "settings", {}).get("routine_focus_celebration")
+            "thumbs_up" if getattr(self, "settings", {}).get("routine_focus_celebration")
             else "sitting"
         )
+        if self.state == "thumbs_up":
+            self._thumbs_up_started_at = time.monotonic()
         self.show_bubble(
             f"Boa! Foco concluído. Descanse por {self.break_minutes} min: olhe para longe e se alongue.",
             duration=12_000,
         )
-        if self.state == "celebrating":
+        if self.state == "thumbs_up":
             self.root.after(4500, self.enter_focus_break)
         self._focus_job = self.root.after(self.break_minutes * 60_000, self.finish_break)
 
     def enter_focus_break(self):
-        if not self._closing and self.focus_mode == "break" and self.state == "celebrating":
+        if not self._closing and self.focus_mode == "break" and self.state == "thumbs_up":
             self.state = "sitting"
 
     def finish_break(self):

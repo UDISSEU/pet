@@ -554,13 +554,33 @@ except SystemExit as exc:
         self.assertTrue(resolved.exists())
         self.assertEqual(resolved, MOVEMENTS_DIR / filename)
 
+    def test_new_movement_videos_are_registered(self):
+        expected = {
+            "focused": "estudando.mp4",
+            "reminder": "lembrete_visual.mp4",
+            "thumbs_up": "joinha.mp4",
+            "vanishing": "desmaterializando.mp4",
+            "celebrate": "dancando.mp4",
+        }
+        for animation, filename in expected.items():
+            with self.subTest(animation=animation):
+                self.assertEqual(MOVEMENT_VIDEOS[animation], filename)
+                self.assertTrue(resolve_movement_path(filename).is_file())
+
     def test_video_selection_matches_pet_state_and_direction(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet._irritated_until = 0
         pet.busy = False
         pet.walk_dx = 1
+        pet.focus_mode = "idle"
+        pet.state = "walk"
+        pet._reminder_animation_until = 0.0
         pet.stay_in_place_var = mock.Mock()
         pet.stay_in_place_var.get.return_value = False
+
+        pet._reminder_animation_until = 2.0
+        self.assertEqual(pet._video_for_current_pose(now=1), "reminder")
+        pet._reminder_animation_until = 0.0
 
         cases = (
             ("walking right", "walk", "walk_right", 1, False, 0),
@@ -569,6 +589,10 @@ except SystemExit as exc:
             ("irritated while busy", "walk", "angry", 1, True, 2),
             ("sitting", "sitting", "sleep", 1, False, 0),
             ("thinking", "thinking", "thinking", 1, False, 0),
+            ("focused", "focused", "focused", 1, False, 0),
+            ("thumbs up", "thumbs_up", "thumbs_up", 1, False, 0),
+            ("vanishing", "vanishing", "vanishing", 1, False, 0),
+            ("celebrating", "celebrating", "celebrate", 1, False, 0),
             ("held", "held", "idle", 1, False, 0),
             ("unknown state", "unknown", "idle", 1, False, 0),
         )

@@ -13,6 +13,7 @@ from config import (
     VIDEO_DECODE_MAX_W,
     VIDEO_MAX_H,
     VIDEO_MAX_W,
+    MOVEMENT_VIDEOS,
     resolve_movement_path,
 )
 
@@ -30,6 +31,7 @@ def load_video_frames(filename):
     frames = []
     source_frame = 0
     next_sample_at_ms = 0.0
+    allow_empty_frames = path.name == MOVEMENT_VIDEOS["vanishing"]
     try:
         while True:
             success, frame = capture.read()
@@ -49,7 +51,11 @@ def load_video_frames(filename):
                         interpolation=cv2.INTER_AREA,
                     )
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frames.append(prepare_video_frame(Image.fromarray(rgb), path.name))
+                frames.append(prepare_video_frame(
+                    Image.fromarray(rgb),
+                    path.name,
+                    allow_empty=allow_empty_frames,
+                ))
                 next_sample_at_ms += VIDEO_FRAME_INTERVAL_MS
             source_frame += 1
     finally:
@@ -77,10 +83,12 @@ def load_video_preview(filename):
     return prepare_video_frame(Image.fromarray(rgb), path.name)
 
 
-def prepare_video_frame(frame, description):
+def prepare_video_frame(frame, description, allow_empty=False):
     frame = remove_video_background(frame.convert("RGBA"))
     bounds = frame.getchannel("A").getbbox()
     if bounds is None:
+        if allow_empty:
+            return Image.new("RGBA", (VIDEO_MAX_W, VIDEO_MAX_H), (0, 0, 0, 0))
         raise ValueError(f"Nenhum personagem encontrado no vídeo {description}.")
     frame = frame.crop(bounds)
     scale = min(VIDEO_MAX_W / frame.width, VIDEO_MAX_H / frame.height)
