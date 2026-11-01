@@ -81,7 +81,9 @@ def prepare_video_frame(frame, description):
     frame = remove_video_background(frame.convert("RGBA"))
     bounds = frame.getchannel("A").getbbox()
     if bounds is None:
-        raise ValueError(f"Nenhum personagem encontrado no vídeo {description}.")
+        # Alguns vídeos, como o efeito de desmaterialização, terminam com
+        # quadros vazios. Mantê-los transparentes faz parte da animação.
+        return Image.new("RGBA", (VIDEO_MAX_W, VIDEO_MAX_H), (0, 0, 0, 0))
     frame = frame.crop(bounds)
     scale = min(VIDEO_MAX_W / frame.width, VIDEO_MAX_H / frame.height)
     if scale != 1:

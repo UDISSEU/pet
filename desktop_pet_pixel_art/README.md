@@ -25,13 +25,21 @@ sudo apt install python3-tk python3-dbus
 ## Iniciar
 
 ```bash
-.venv/bin/python src/desktop_pet.py
+./launchers/run-nova.sh
+```
+
+O lançador abre somente a mascote na área de trabalho. O painel web está temporariamente desativado enquanto sua finalidade é redefinida; seus arquivos foram preservados. A conversa, as preferências e as ferramentas continuam disponíveis pelas janelas Python da Nova, sem iniciar navegador.
+
+O lançador Tk também está disponível como atalho:
+
+```bash
+./launchers/run-nova-tk.sh
 ```
 
 ## Usar
 
 - Arraste a Nova para movê-la.
-- Dê um duplo clique ou abra o menu com o botão direito e escolha **Perguntar** para conversar.
+- Dê um duplo clique ou abra o menu com o botão direito e escolha **Conversar** para abrir a conversa nativa.
 - No menu, escolha **Calendário** para abrir o calendário local.
 - Em **Foco e rotina**, escolha uma prioridade e a duração da sessão. Ao terminar, a Nova descansa e avisa quando a pausa acabar.
 - Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps.
@@ -72,6 +80,7 @@ O desenho, a conversa e as animações funcionam sem recursos específicos do X1
 ## Estrutura do projeto
 
 - `src/`: aplicação e módulos; consulte [a visão da arquitetura](docs/architecture.md).
+- `frontend/`: apresentação do painel web; não contém chaves, acesso a arquivos privados ou execução de comandos.
 - `assets/movements/`: vídeos usados nas animações.
 - `assets/personagem/`: quadros e folhas de sprites originais.
 - `assets/icons/` e `assets/references/`: ícones e referências visuais.
@@ -83,3 +92,5 @@ O desenho, a conversa e as animações funcionam sem recursos específicos do X1
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
+
+Os testes da ponte usam HTTP local; alguns ambientes isolados podem impedir a abertura de sockets. Os testes não iniciam navegadores, apps do sistema nem enviam dados a provedores. A validação visual requer uma sessão gráfica e Chrome/Chromium.
