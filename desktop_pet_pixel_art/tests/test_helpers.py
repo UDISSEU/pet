@@ -665,7 +665,21 @@ except SystemExit as exc:
         )
 
     def test_missing_video_uses_its_configured_fallback(self):
-        self.assertEqual(DesktopPet._video_with_fallback("oops"), "curious")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "wave.mp4").touch()
+            with mock.patch.object(
+                desktop_pet,
+                "MOVEMENT_VIDEOS",
+                {"talking": "talking.mp4", "wave": "wave.mp4"},
+            ), mock.patch.object(
+                desktop_pet,
+                "resolve_movement_path",
+                side_effect=lambda filename: root / filename,
+            ):
+                self.assertEqual(
+                    DesktopPet._video_with_fallback("talking"), "wave"
+                )
 
     def test_staying_in_place_uses_idle_pose(self):
         pet = DesktopPet.__new__(DesktopPet)
