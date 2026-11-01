@@ -2,6 +2,15 @@ from pathlib import Path
 
 from PIL import ImageFont
 
+from personality import (
+    APP_COMMENTS,
+    GENERIC_COMMENTS,
+    SIT_DOWN_LINES,
+    SPEECH_LINES,
+    STAND_CLOSED_LINES,
+    STAND_TIMEOUT_LINES,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = PROJECT_ROOT / "assets"
 MOVEMENTS_DIR = ASSETS_DIR / "movements"
@@ -66,42 +75,6 @@ VIDEO_DECODE_MAX_H = 352
 VIDEO_REACTION_SECONDS = 2.5
 REMINDER_ANIMATION_SECONDS = 8.0
 VANISHING_ANIMATION_SECONDS = 8.0
-
-SPEECH_LINES = [
-    "Oi!",
-    "Precisa de algo?",
-    "Bora codar?",
-    "Estudando hoje?",
-    "Clica com o botão direito pra me perguntar algo",
-    "Analista de dados on!",
-    ":)",
-]
-
-APP_COMMENTS = {
-    "youtube": [
-        "Rindo do vídeo ou é sério isso?",
-        "Mais um vídeo pra 'só um rapidinho', né?",
-        "O algoritmo te pegou de novo",
-        "Assistindo ou trabalhando? 👀",
-    ],
-    "firefox": ["Navegando por aí?", "Achou algo legal?"],
-    "chrome": ["Navegando por aí?", "Muitas abas hein"],
-    "chromium": ["Navegando por aí?"],
-    "code": ["Bora codar!", "Código novo?"],
-    "sublime": ["Editando código?"],
-    "terminal": ["Modo terminal ativado", "Linha de comando é vida"],
-    "xterm": ["Modo terminal ativado"],
-    "thunar": ["Organizando arquivos?"],
-    "nautilus": ["Organizando arquivos?"],
-    "files": ["Vendo seus arquivos?"],
-    "libreoffice": ["Trabalhando em documento?"],
-    "gimp": ["Editando imagem, bonito!"],
-    "spotify": ["Boa música?"],
-}
-GENERIC_COMMENTS = ["Vendo o que você tá fazendo", "Te acompanhando por aqui", ":)"]
-SIT_DOWN_LINES = ["Ufa... só um descansinho", "Cansei de andar por aí", "Cadeira improvisada, hihi"]
-STAND_CLOSED_LINES = ["Ei, sumiu minha cadeira!", "A janela fechou, levantando!"]
-STAND_TIMEOUT_LINES = ["Descanso acabou, vamo lá de novo"]
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = "llama3.2:1b"

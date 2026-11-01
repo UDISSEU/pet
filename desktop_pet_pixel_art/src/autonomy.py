@@ -42,6 +42,10 @@ DEFAULT_SETTINGS = {
     "routine_evening": True,
     "evening_time": "20:30",
     "last_evening_date": "",
+    "routine_dance": True,
+    "routine_break_tip": True,
+    "last_seen_date": "",
+    "interaction_count": 0,
     "ai_provider": "ollama",
     "online_ai_enabled": False,
     "allow_online_data": False,
@@ -133,7 +137,7 @@ def load_settings(path=SETTINGS_PATH):
     for key in (
         "routine_greeting", "routine_context", "routine_idle_yawn",
         "routine_focus_celebration", "routine_note", "routine_surprise",
-        "routine_evening",
+        "routine_evening", "routine_dance", "routine_break_tip",
     ):
         if not isinstance(result.get(key), bool):
             result[key] = False
@@ -153,6 +157,22 @@ def load_settings(path=SETTINGS_PATH):
         result["evening_time"] = "20:30"
     if not isinstance(result.get("last_evening_date"), str):
         result["last_evening_date"] = ""
+    if not isinstance(result.get("last_seen_date"), str):
+        result["last_seen_date"] = ""
+    else:
+        try:
+            datetime.strptime(result["last_seen_date"], "%Y-%m-%d")
+        except ValueError:
+            result["last_seen_date"] = ""
+    try:
+        interaction_count = result.get("interaction_count", 0)
+        if isinstance(interaction_count, bool):
+            raise ValueError("interaction_count não pode ser booleano")
+        result["interaction_count"] = min(
+            2_147_483_647, max(0, int(interaction_count))
+        )
+    except (TypeError, ValueError):
+        result["interaction_count"] = 0
     if result.get("ai_provider") not in ("ollama", "gemini", "groq", "mistral"):
         result["ai_provider"] = "ollama"
     for key in ("online_ai_enabled", "allow_online_data", "confirm_free_tier"):

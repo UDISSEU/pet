@@ -55,6 +55,50 @@ def current_date_answer(question, now=None):
     return f"Hoje é {weekday}, {now.day} de {month} de {now.year}."
 
 
+def local_personality_intent(question, hour=None):
+    """Return a local personality category and animation, without consulting an AI."""
+    normalized = _normalize(question)
+    if not normalized:
+        return None
+
+    if re.search(r"\b(bom dia|bom-dia)\b", normalized):
+        return "greeting_morning", "wave"
+    if re.search(r"\b(boa tarde)\b", normalized):
+        return "greeting_afternoon", "wave"
+    if re.search(r"\b(boa noite)\b", normalized):
+        return "greeting_evening", "wave"
+    if (
+        re.search(r"\b(tudo bem|como vai)\b", normalized)
+        or re.fullmatch(r"(oi|ola|e ai|hey)[!.? ]*", normalized)
+    ):
+        greeting_hour = datetime.now().astimezone().hour if hour is None else hour
+        category = (
+            "greeting_morning" if greeting_hour < 12 else
+            "greeting_afternoon" if greeting_hour < 18 else
+            "greeting_evening"
+        )
+        return category, "wave"
+    if re.search(r"\b(me elogia|me faz um elogio|faz um elogio)\b", normalized):
+        return "compliment", "thumbs_up"
+    if re.search(r"\b(conta|conte|me conta|me conte)\b.*\b(piadas?|engracad[oa])\b", normalized) or re.search(
+        r"\b(piadas?|engracad[oa])\b", normalized
+    ):
+        return "jokes", "wave"
+    if re.search(r"\b(danca|dancar|dancinha|dancando)\b", normalized):
+        return "dance", "celebrate"
+    if re.search(r"\b(acena|acenar|manda um oi|da um oi)\b", normalized):
+        return "click", "wave"
+    if re.search(r"\b(joinha|positivo|sinal positivo)\b", normalized):
+        return "compliment", "thumbs_up"
+    if re.search(r"\b(dorme|dormir|dormir um pouco)\b", normalized):
+        return "yawning", "sleep"
+    if re.search(r"\b(descansa|descansar|pausa)\b", normalized):
+        return "break_tip", "rest"
+    if re.search(r"\b(some|sumir|esconde|esconder)\b", normalized):
+        return "peekaboo", "vanishing"
+    return None
+
+
 def is_open_calendar_request(question):
     normalized = _normalize(question)
     if "calendario" not in normalized:
