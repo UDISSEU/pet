@@ -5,16 +5,24 @@ import unicodedata
 
 
 def app_open_target(question):
+    question = re.sub(r"^\s*(?:nova\s*[,!:—-]?\s*)", "", str(question or ""), flags=re.IGNORECASE)
     match = re.match(
-        r"^\s*(?:(?:quero|preciso)\s+|gostaria\s+de\s+|"
-        r"voc(?:e|ê)\s+pode\s+|consegue\s+|pode\s+|poderia\s+)?"
+        r"^\s*(?:(?:eu\s+)?(?:quero|preciso)\s+|gostaria\s+de\s+|"
+        r"voc(?:e|ê)\s+(?:pode|consegue|poderia)\s+|"
+        r"(?:consegue|pode|poderia)\s+)?"
         r"(?:(?:por\s+favor)[,:]?\s+)?"
-        r"(?:abre|abra|abrir|inicia|inicie|iniciar|executa|execute|executar)"
+        r"(?:abre|abra|abri|abrir|inicia|inicie|iniciar|executa|execute|executar)"
         r"\s+(.+?)\s*[.!?]*\s*$",
         question,
         re.IGNORECASE,
     )
-    return match.group(1).strip() if match else ""
+    if not match:
+        return ""
+    target = match.group(1).strip()
+    target = re.sub(r"(?i)\s+(?:pra|para)\s+mim\s*$", "", target)
+    target = re.sub(r"(?i)^o\s+app\s+(?:do|da)\s+", "", target)
+    target = re.sub(r"(?i)^o\s+aplicativo\s+(?:do|da)\s+", "", target)
+    return target.strip(" \t,;:-")
 
 
 def is_app_open_request(question):
@@ -50,40 +58,82 @@ def match_registered_app(question, saved_apps, get_installed_apps):
     if not target:
         return None
     normalized_question = normalize(target)
+    normalized_question = re.sub(
+        r"\b(?:agora|aqui|rapidinho|por favor|para mim|pra mim)\b", " ",
+        normalized_question,
+    )
+    normalized_question = re.sub(
+        r"^(?:o|a|os|as|um|uma|the)\s+", "", normalized_question
+    )
+    normalized_question = re.sub(r"\s+", " ", normalized_question).strip()
 
     def contains_phrase(text, phrase):
         return bool(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text))
 
     def match_apps(apps, allow_partial=False):
-        named_apps = [
-            (app, normalize(app.get("name", "").strip()))
-            for app in apps
-            if isinstance(app, dict)
-            and isinstance(app.get("name"), str)
-            and app["name"].strip()
-        ]
+        named_apps = []
+        for app in apps:
+            if not isinstance(app, dict) or not isinstance(app.get("name"), str):
+                continue
+            name = normalize(app["name"].strip())
+            if not name:
+                continue
+            searchable = [name]
+            generic_name = app.get("generic_name")
+            if isinstance(generic_name, str) and generic_name.strip():
+                searchable.append(normalize(generic_name.strip()))
+            command = app.get("command", "")
+            if isinstance(command, str) and command.strip():
+                try:
+                    executable = normalize(command.split()[0].rsplit("/", 1)[-1])
+                    if executable:
+                        searchable.append(executable)
+                except (IndexError, TypeError):
+                    pass
+            named_apps.append((app, name, tuple(dict.fromkeys(searchable))))
+
+        # First prefer a complete app name or generic name, with the longest match
+        # winning (for example, "Visual Studio Code" over "Code").
         exact_matches = [
-            (app, name) for app, name in named_apps
-            if contains_phrase(normalized_question, name)
+            (app, phrase) for app, _name, phrases in named_apps for phrase in phrases
+            if phrase and contains_phrase(normalized_question, phrase)
         ]
         if exact_matches:
             return max(exact_matches, key=lambda item: len(item[1]))[0], True
 
+        # A short spoken name such as "Chrome" should also match the same token
+        # inside the registered name "Google Chrome".
+        reverse_matches = [
+            (app, phrase) for app, _name, phrases in named_apps for phrase in phrases
+            if normalized_question and contains_phrase(phrase, normalized_question)
+        ]
+        if reverse_matches:
+            best = {
+                id(app): app
+                for app, _phrase in reverse_matches
+            }
+            if len(best) == 1:
+                return next(iter(best.values())), True
+
         # Google só identifica o Chrome quando não há outro candidato Google.
         google_matches = [
-            app for app, name in named_apps
+            app for app, name, _phrases in named_apps
             if name == "google chrome" and contains_phrase(normalized_question, "google")
         ]
         google_candidates = [
-            app for app, name in named_apps
+            app for app, name, _phrases in named_apps
             if contains_phrase(name, "google") and contains_phrase(normalized_question, "google")
         ]
         if len(google_matches) == 1 and len(google_candidates) == 1:
             return google_matches[0], True
         if allow_partial:
             partial_matches = [
-                app for app, name in named_apps
-                if any(contains_phrase(normalized_question, word) for word in re.findall(r"\w+", name))
+                app for app, _name, phrases in named_apps
+                if any(
+                    contains_phrase(normalized_question, word)
+                    for phrase in phrases for word in re.findall(r"\w+", phrase)
+                    if len(word) >= 4
+                )
             ]
             if len(partial_matches) == 1:
                 return partial_matches[0], True
