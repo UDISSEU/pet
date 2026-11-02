@@ -2,17 +2,19 @@
 
 ## Visão geral
 
-`src/desktop_pet.py` coordena a janela Tkinter, os estados da personagem, as interações e as rotinas periódicas. A interface é desenhada em pixel art com Pillow. Um quadro de prévia do vídeo idle é decodificado na abertura; `AnimationLoader` carrega o restante em uma thread daemon e entrega quadros por fila para a thread Tkinter.
+`src/desktop_pet.py` coordena a janela Tkinter, os estados da personagem, as interações e as rotinas periódicas. `desktop_pet_ui.py` concentra o menu, o calendário e as preferências em um mixin usado pela janela principal. A interface é desenhada em pixel art com Pillow. Um quadro de prévia do vídeo idle é decodificado na abertura; `AnimationLoader` carrega o restante em uma thread daemon e entrega quadros por fila para a thread Tkinter.
 
 ## Módulos
 
-- `desktop_pet.py`: ciclo principal, janela, menu, diálogos, modos da mascote e integração entre os módulos.
+- `desktop_pet.py`: ciclo principal, janela, modos da mascote e integração entre os módulos.
+- `desktop_pet_ui.py`: menu de contexto, calendário e janelas de preferências; mantém o acesso aos widgets na thread Tkinter.
 - `animation.py`: decodifica vídeos, prepara quadros e remove o fundo claro.
 - `animation_loader.py`: carrega as sequências completas em segundo plano; mantém a prévia caso um vídeo individual falhe e não acessa widgets Tkinter.
 - `app_intents.py`: reconhece e associa pedidos de abertura de aplicativos sem executar comandos.
 - `autonomy.py`: leitura e gravação de preferências, horários silenciosos, lembretes e busca de lançadores Linux `.desktop`.
 - `json_persistence.py`: faz cópias não destrutivas de JSONs inválidos e bloqueia gravação quando não consegue preservar o original.
 - `assistant_actions.py`: respostas locais para data e hora e reconhecimento do pedido para abrir o calendário.
+- `automations.py`: allowlist fixa, reconhecimento local de frases, relatórios de espaço e arquivos, busca por conteúdo duplicado, organização de Downloads/capturas e limpeza confirmada da Lixeira. O reconhecimento não consulta IA nem executa ações; mudanças de arquivos exigem prévia e confirmação.
 - `calendar_view.py`: calendário mensal local; não sincroniza com contas externas.
 - `config.py`: caminhos dos assets, animações e parâmetros padrão.
 - `ollama_client.py`: API e persistência do histórico JSON legado.
@@ -25,10 +27,11 @@ As dependências obrigatórias estão em `requirements.txt`. `python-xlib` é op
 
 ## Fluxo da conversa
 
-1. A interface recebe a pergunta e verifica primeiro os comandos locais de data e calendário.
-2. Se a solicitação corresponder a um app cadastrado, a Nova mostra o comando e pede confirmação.
-3. Outras perguntas são processadas por `ai.request_handler.answer_request` em uma thread de trabalho. Ollama é o padrão e fallback. Gemini/Groq/Mistral só recebem contexto quando selecionados, ativados e com autorização de privacidade e confirmação explícita do nível gratuito. A resposta volta por uma fila; a thread não manipula widgets Tkinter.
-4. Preferências e histórico são gravados em arquivos JSON por substituição atômica. Ao encontrar JSON inválido, a Nova guarda uma cópia `*.corrupt-*` antes de permitir uma nova gravação. Se não conseguir criar essa cópia, bloqueia a substituição.
+1. A interface recebe a pergunta e verifica primeiro data, calendário e intents locais de automação allowlist.
+2. Automações reconhecidas localmente não passam pelos provedores de IA. Relatórios são somente leitura; movimentações mostram prévia e pedem confirmação; a Lixeira exige confirmação antes de apagar. Operações demoradas rodam em thread e retornam por fila à interface Tkinter. Avisos de pausa e bateria são verificados periodicamente, respeitando foco e horário silencioso.
+3. Se a solicitação corresponder a um app cadastrado, a Nova mostra o comando e pede confirmação.
+4. Outras perguntas são processadas por `ai.request_handler.answer_request` em uma thread de trabalho. Ollama é o padrão e fallback. Gemini/Groq/Mistral só recebem contexto quando selecionados, ativados e com autorização de privacidade e confirmação explícita do nível gratuito. A resposta volta por uma fila; a thread não manipula widgets Tkinter.
+5. Preferências e histórico são gravados em arquivos JSON por substituição atômica. Ao encontrar JSON inválido, a Nova guarda uma cópia `*.corrupt-*` antes de permitir uma nova gravação. Se não conseguir criar essa cópia, bloqueia a substituição.
 
 As memórias explícitas são selecionadas por relevância e adicionadas ao contexto como dados de referência, nunca como instruções. Preferências duplicadas são removidas ao carregar as configurações, sem alterar o formato JSON existente. O seletor de apps lê lançadores `*.desktop` dos diretórios XDG de aplicações; comandos são divididos em argumentos e executados sem shell.
 
@@ -38,6 +41,7 @@ O modo de foco usa temporizadores Tkinter: enquanto a sessão ou a pausa está a
 
 - `~/.desktop_pet_history.json`: histórico curto de conversa.
 - `~/.config/desktop_pet/settings.json`: modo, preferências, horários, rotinas, foco, memórias, lembretes e apps cadastrados.
+- `~/.config/desktop_pet/downloads_undo.json`: mapa da última organização confirmada de Downloads.
 
 ## Provedores de IA
 

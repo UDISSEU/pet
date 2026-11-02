@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 SETTINGS_PATH = Path.home() / ".config" / "desktop_pet" / "settings.json"
 DEFAULT_SETTINGS = {
     "mode": "companhia",
+    "humor_style": "equilibrada",
+    "announce_charger": True,
+    "announce_usb": True,
+    "spotify_client_id": "",
     "user_name": "",
     "quiet_start": "22:00",
     "quiet_end": "08:00",
@@ -56,6 +60,7 @@ DEFAULT_SETTINGS = {
     "gemini_model": "gemini-3.8-flash",
     "groq_model": "openai/gpt-oss-20b",
     "mistral_model": "mistral-small-latest",
+    "automations": {"enabled": {"laptop_status": True, "organize_downloads": True, "undo_downloads": True, "large_files": True, "duplicates": True, "trash_duplicates": True, "disk_summary": True, "empty_trash": True, "organize_screenshots": True, "pause_reminder": True, "low_battery_alert": True}, "last_run": {}, "activity": []},
 }
 
 
@@ -80,6 +85,24 @@ def load_settings(path=SETTINGS_PATH):
     result = dict(DEFAULT_SETTINGS)
     if isinstance(data, dict):
         result.update(data)
+    automation_data = data.get("automations", {}) if isinstance(data, dict) else {}
+    defaults_automations = DEFAULT_SETTINGS["automations"]
+    if not isinstance(automation_data, dict):
+        automation_data = {}
+    enabled = automation_data.get("enabled", {})
+    last_run = automation_data.get("last_run", {})
+    activity = automation_data.get("activity", [])
+    if not isinstance(enabled, dict):
+        enabled = {}
+    if not isinstance(last_run, dict):
+        last_run = {}
+    if not isinstance(activity, list):
+        activity = []
+    result["automations"] = {
+        "enabled": {key: enabled.get(key, value) if isinstance(enabled.get(key, value), bool) else value for key, value in defaults_automations["enabled"].items()},
+        "last_run": {key: value for key, value in last_run.items() if key in defaults_automations["enabled"] and isinstance(value, str)},
+        "activity": [item for item in activity if isinstance(item, dict) and item.get("id") in defaults_automations["enabled"] and isinstance(item.get("summary"), str) and isinstance(item.get("timestamp"), str)][:10],
+    }
     if not isinstance(result.get("user_name"), str):
         result["user_name"] = ""
     result["user_name"] = result["user_name"].strip()[:60]
@@ -126,6 +149,14 @@ def load_settings(path=SETTINGS_PATH):
     result["apps"] = cleaned_apps
     if result.get("mode") not in ("quietinha", "companhia", "proativa"):
         result["mode"] = "companhia"
+    if result.get("humor_style") not in ("tranquila", "equilibrada", "brincalhona"):
+        result["humor_style"] = "equilibrada"
+    for key in ("announce_charger", "announce_usb"):
+        if not isinstance(result.get(key), bool):
+            result[key] = True
+    if not isinstance(result.get("spotify_client_id"), str):
+        result["spotify_client_id"] = ""
+    result["spotify_client_id"] = result["spotify_client_id"].strip()[:128]
     for key, default, minimum, maximum in (
         ("focus_minutes", 25, 5, 180),
         ("break_minutes", 5, 1, 60),
@@ -307,7 +338,13 @@ def find_installed_apps(search="", directories=None):
     if directories is None:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         data_dirs = os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(os.pathsep)
-        directories = [data_home / "applications", *(Path(item) / "applications" for item in data_dirs if item)]
+        directories = [
+            data_home / "applications",
+            *(Path(item) / "applications" for item in data_dirs if item),
+            Path.home() / ".local/share/flatpak/exports/share/applications",
+            Path("/var/lib/flatpak/exports/share/applications"),
+            Path("/var/lib/snapd/desktop/applications"),
+        ]
 
     needle = search.casefold().strip()
     results = []

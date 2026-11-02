@@ -68,6 +68,7 @@ VIDEO_FALLBACKS = {
 # One-shot clips intentionally use their full duration instead.
 VIDEO_LOOP_WINDOWS = {
     "idle": (2.125, 5.042),
+    "focused": (5.458, 7.417),
     "walk_right": (1.417, 4.042),
     "walk_left": (2.375, 4.417),
     "wave": (2.542, 5.167),
@@ -80,7 +81,7 @@ VIDEO_LOOP_WINDOWS = {
     "curious": (2.417, 5.417),
     "rest": (1.458, 3.083),
 }
-ONE_SHOT_VIDEOS = frozenset({"focused", "reminder", "thumbs_up", "vanishing"})
+ONE_SHOT_VIDEOS = frozenset({"reminder", "thumbs_up", "vanishing"})
 
 WIDTH = 140
 BASE_HEIGHT = 190
