@@ -81,3 +81,22 @@ except SystemExit as exc:
                 self.assertIn(label, result.stderr)
                 self.assertIn("./install.sh", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_child_process_env_filters_common_secrets(self):
+        with mock.patch.dict(
+            desktop_pet.os.environ,
+            {
+                "PATH": "/usr/bin",
+                "GEMINI_API_KEY": "secret",
+                "GROQ_TOKEN": "token-value",
+                "HOME": "/tmp",
+                "DISPLAY": ":0",
+            },
+            clear=True,
+        ):
+            env = desktop_pet.DesktopPet._child_process_env()
+            self.assertEqual(env["PATH"], "/usr/bin")
+            self.assertEqual(env["HOME"], "/tmp")
+            self.assertEqual(env["DISPLAY"], ":0")
+            self.assertNotIn("GEMINI_API_KEY", env)
+            self.assertNotIn("GROQ_TOKEN", env)

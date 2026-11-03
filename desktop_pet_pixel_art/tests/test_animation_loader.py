@@ -1,5 +1,6 @@
 import sys
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -88,6 +89,26 @@ class TestAnimationLoader(unittest.TestCase):
         loader._load_all()
         self.assertEqual(calls, [])
         self.assertEqual(loader.drain(), [])
+
+    def test_close_joins_a_running_thread_and_blocks_new_results(self):
+        start = threading.Event()
+        release = threading.Event()
+
+        def slow_loader(_filename):
+            start.set()
+            release.wait(timeout=2)
+            return ["frame"]
+
+        loader = AnimationLoader({"idle": "idle.mp4"}, frame_loader=slow_loader, preview_loader=lambda _filename: "preview")
+        loader.start()
+        self.assertTrue(start.wait(2))
+        loader.close()
+        time.sleep(0.2)
+        release.set()
+        self.assertEqual(loader.drain(), [])
+        self.assertIsNotNone(loader._thread)
+        loader._thread.join(timeout=2)
+        self.assertFalse(loader._thread.is_alive())
 
     def test_video_frames_share_one_crop_scale_and_feet_anchor(self):
         character = ((40, 20, 70, 100), (25, 30, 35, 255))

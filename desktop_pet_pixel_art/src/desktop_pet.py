@@ -2004,7 +2004,12 @@ class DesktopPet(DesktopPetUIMixin):
 
     @staticmethod
     def _child_process_env():
-        return {key: value for key, value in os.environ.items() if not key.endswith("_API_KEY")}
+        secret_suffixes = ("_API_KEY", "_KEY", "_SECRET", "_TOKEN", "_PASSWORD")
+        return {
+            key: value
+            for key, value in os.environ.items()
+            if not any(key.upper().endswith(suffix) for suffix in secret_suffixes)
+        }
 
     def _request_automation(self, automation):
         if not any(automation is allowed for allowed in AUTOMATIONS):

@@ -25,8 +25,9 @@ class AnimationLoader:
         return self.preview_loader(self.videos[name])
 
     def start(self):
-        if self._thread is not None:
+        if self._thread is not None and self._thread.is_alive():
             return
+        self._stop.clear()
         self._thread = threading.Thread(
             target=self._load_all,
             name="nova-animation-loader",
@@ -48,9 +49,11 @@ class AnimationLoader:
                     filename,
                     type(exc).__name__,
                 )
-                self.results.put((name, None, type(exc).__name__))
+                if not self._stop.is_set():
+                    self.results.put((name, None, type(exc).__name__))
             else:
-                self.results.put((name, frames, None))
+                if not self._stop.is_set():
+                    self.results.put((name, frames, None))
 
     def drain(self):
         results = []
@@ -62,3 +65,8 @@ class AnimationLoader:
 
     def close(self):
         self._stop.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+        if thread is not None and self._thread is thread and not thread.is_alive():
+            self._thread = None
