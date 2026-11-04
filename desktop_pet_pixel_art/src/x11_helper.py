@@ -1,13 +1,20 @@
 import re
 from io import BytesIO
 
+
+class _UnavailableXlibDisplay:
+    @staticmethod
+    def Display():
+        raise ImportError("python-xlib is not installed")
+
+
 try:
     from Xlib import X, display as xlib_display
     from Xlib.ext import shape as xlib_shape
     XLIB_AVAILABLE = True
 except ImportError:
     X = None
-    xlib_display = None
+    xlib_display = _UnavailableXlibDisplay
     xlib_shape = None
     XLIB_AVAILABLE = False
 
