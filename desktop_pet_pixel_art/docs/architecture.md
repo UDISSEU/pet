@@ -22,13 +22,20 @@
 - `providers/`: provedores independentes via HTTP; não adicionam SDKs à aplicação.
 - `ai/`: personalidade, contexto e roteamento; `AICore` conecta a conversa à seleção de provedor. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
 - `x11_helper.py`: observação da janela ativa e geometria de janelas em ambientes X11. O módulo falha de forma segura se X11 ou `python-xlib` não estiverem disponíveis.
+- `event_bus.py`: barramento tipado, com publicação síncrona e fila `post`/`drain` para encaminhar eventos de workers à thread Tkinter.
+- `state_manager.py`: catálogo de estados compatível com as poses existentes, prioridade, geração e retorno de poses temporárias. `DesktopPet.state` permanece como fachada de compatibilidade e espelha as transições no controlador.
+- `plugin_manager.py`: contrato e ciclo de vida para instâncias explicitamente registradas. Não importa código externo nem descobre plugins automaticamente; código Python carregado no processo da Nova é confiável, não uma sandbox.
+- `permissions.py`: permissões persistidas por plugin, inicialmente negadas, com confirmação para permissões sensíveis e revogação imediata.
+- `notifications.py`: histórico limitado, persistido com permissões restritas, deduplicação, leitura e descarte.
+- `system_monitor.py`: coleta tolerante a indisponibilidade de CPU, RAM, disco, memória do processo e threads para o painel.
+- `dashboard_ui.py`, `notifications_ui.py` e `permissions_ui.py`: janelas separadas para métricas, histórico de notificações e revisão/revogação de permissões.
 
 As dependências obrigatórias estão em `requirements.txt`. `python-xlib` é opcional e pode ser instalado separadamente para habilitar recursos que dependem de X11; sua ausência não impede os recursos gerais da mascote.
 
 ## Fluxo da conversa
 
 1. A interface recebe a pergunta e verifica primeiro data, calendário e intents locais de automação allowlist.
-2. Automações reconhecidas localmente não passam pelos provedores de IA. Relatórios são somente leitura; movimentações mostram prévia e pedem confirmação; a Lixeira exige confirmação antes de apagar. Operações demoradas rodam em thread e retornam por fila à interface Tkinter. Avisos de pausa e bateria são verificados periodicamente, respeitando foco e horário silencioso.
+2. Automações reconhecidas localmente não passam pelos provedores de IA. Relatórios são somente leitura; movimentações mostram prévia e pedem confirmação; a Lixeira exige confirmação antes de apagar. Operações demoradas rodam em thread e retornam por Event Bus ou pela fila de callbacks UI, consumida pelo ciclo Tkinter. Avisos de pausa e bateria são verificados periodicamente, respeitando foco e horário silencioso.
 3. Se a solicitação corresponder a um app cadastrado, a Nova mostra o comando e pede confirmação.
 4. Outras perguntas são processadas por `ai.request_handler.answer_request` em uma thread de trabalho. Ollama é o padrão e fallback. Gemini/Groq/Mistral só recebem contexto quando selecionados, ativados e com autorização de privacidade e confirmação explícita do nível gratuito. A resposta volta por uma fila; a thread não manipula widgets Tkinter.
 5. Preferências e histórico são gravados em arquivos JSON por substituição atômica. Ao encontrar JSON inválido, a Nova guarda uma cópia `*.corrupt-*` antes de permitir uma nova gravação. Se não conseguir criar essa cópia, bloqueia a substituição.
@@ -64,3 +71,15 @@ Execute da raiz do projeto:
 ```
 
 O CI usa Python 3.12 com Tkinter e Xvfb. Testes de integração com provedores usam mocks; uma sessão Ollama, chaves e internet não são necessárias.
+
+## Componentes extensíveis
+
+`EventBus.post(event)` recebe resultados de IA e automações em workers sem chamar assinantes; a UI consome a fila com `drain()` no ciclo Tkinter. Widgets são atualizados apenas na thread principal. Mudanças de estado e animação são publicadas no ciclo principal. Para uma habilidade interna confiável, implemente `Plugin`, declare `PluginManifest` e registre explicitamente a instância no `PluginManager`. Confirme permissões no momento da operação com `PermissionManager.require`; declarar uma permissão no manifesto não concede acesso. O menu **Permissões** permite revisar e revogar grants da Nova e das habilidades registradas.
+
+Plugins externos usam manifesto JSON explicitamente selecionado via `PluginManager.register_external_manifest`. O processo usa JSON por stdin/stdout, timeout, limite de mensagem, `prlimit` para CPU, espaço virtual de memória, processos, arquivos abertos e tamanho de arquivo, `bubblewrap`, diretório do plugin somente leitura, ambiente sem credenciais e namespaces de usuário e PID. Sem autorização `network.access`, tenta também desabilitar a rede; se o isolamento de rede não for suportado, a execução falha fechada. Com `network.access` concedida, o processo pode usar a rede. O sandbox reduz acesso ao sistema, mas não deve ser tratado como isolamento perfeito contra vulnerabilidades do kernel ou do bubblewrap.
+
+O menu abre **Painel da Nova**, **Notificações** e **Permissões**. O painel coleta métricas em worker, mantém histórico limitado e atualiza a interface pela thread principal; a frequência pode ser ajustada ou pausada na janela. Notificações são salvas em `~/.config/desktop_pet/notifications.json`, incluindo filtros por categoria, modo silencioso e intervalo anti-repetição; permissões ficam em `~/.config/desktop_pet/permissions.json`.
+
+O controlador de estado é uma migração incremental. O código existente ainda escolhe poses e temporizadores; novas alterações devem migrar para `StateManager.transition` antes de remover a fachada `DesktopPet.state`. Workers que precisem retornar uma ação visual usam `post_ui_callback`; o callback só é executado pelo `tick()` na thread que criou Tk. Não chame `root.after()` de workers.
+
+Não foi possível validar a inicialização Tk nesta execução: `xvfb-run` iniciou, mas o processo não conseguiu conectar ao display virtual (`unable to open display`). Portanto, não há validação visual nem teste real em Linux Mint/Wayland. Os recursos X11 continuam condicionais a uma sessão X11; o desenho e a conversa não dependem deles.

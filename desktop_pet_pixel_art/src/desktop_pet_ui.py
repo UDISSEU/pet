@@ -11,11 +11,14 @@ from tkinter import messagebox, ttk
 from autonomy import find_installed_apps, resolve_app_command, save_settings, valid_reminder_time
 from automations import AUTOMATIONS
 from calendar_view import open_calendar_window
+from dashboard_ui import DashboardUIMixin
+from notifications_ui import NotificationsUIMixin
+from permissions_ui import PermissionsUIMixin
 from ollama_client import save_history
 from spotify_control import spotify_connected as spotify_token_connected
 
 
-class DesktopPetUIMixin:
+class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMixin):
     def show_menu(self, event):
         self._last_user_activity_at = time.monotonic()
         if self._context_popup is not None:
@@ -90,6 +93,8 @@ class DesktopPetUIMixin:
 
         action_button("✦  Conversar", self.ask_menu, primary=True)
         action_button("▦  Calendário", self.show_calendar)
+        action_button("▤  Painel da Nova", self.show_dashboard)
+        action_button("♧  Notificações", self.show_notifications)
         action_button("⏱  Foco e rotina", lambda: self.open_autonomy_settings("routine"))
         action_button("⚙  Preferências", self.open_autonomy_settings)
 
@@ -129,6 +134,7 @@ class DesktopPetUIMixin:
 
         section_label(more, "Interação")
         more_action("Falar algo", self.say_something)
+        more_action("Permissões", self.open_permissions)
 
         behavior_group = tk.Frame(more, bg="#F5F6FA")
         behavior_group.pack(fill="x", pady=(5, 0))
@@ -1023,6 +1029,11 @@ class DesktopPetUIMixin:
                 on_success()
 
         def run_maintenance(title, commands, on_success=None):
+            try:
+                self._authorize_core_action("system.maintenance", confirmed=True)
+            except (PermissionError, OSError) as exc:
+                messagebox.showerror("Permissão necessária", str(exc), parent=window)
+                return
             if self.system_maintenance_active:
                 messagebox.showinfo("Manutenção em andamento", "Aguarde a ação atual terminar.", parent=window)
                 return
@@ -1040,6 +1051,7 @@ class DesktopPetUIMixin:
                 output = []
                 error = None
                 try:
+                    self.permission_manager.require("nova.core", "system.maintenance", confirmed=True)
                     for command in commands:
                         completed = subprocess.run(
                             command, capture_output=True, text=True, timeout=600,
@@ -1057,9 +1069,9 @@ class DesktopPetUIMixin:
                     error = f"Não consegui iniciar a ação: {exc}"
                 finally:
                     self.system_maintenance_active = False
-                self.root.after(0, lambda: finish_maintenance(
-                    title, "\n\n".join(output), error, on_success,
-                ))
+                self.post_ui_callback(
+                    finish_maintenance, title, "\n\n".join(output), error, on_success,
+                )
 
             threading.Thread(target=worker, daemon=True).start()
 
@@ -1090,6 +1102,11 @@ class DesktopPetUIMixin:
             return action
 
         def preview_autoremove():
+            try:
+                self._authorize_core_action("system.maintenance.read")
+            except (PermissionError, OSError) as exc:
+                messagebox.showerror("Permissão necessária", str(exc), parent=window)
+                return
             if self.system_maintenance_active:
                 messagebox.showinfo("Manutenção em andamento", "Aguarde a ação atual terminar.", parent=window)
                 return
@@ -1103,6 +1120,7 @@ class DesktopPetUIMixin:
 
             def worker():
                 try:
+                    self.permission_manager.require("nova.core", "system.maintenance.read")
                     result = subprocess.run(
                         ["apt-get", "-s", "autoremove"], capture_output=True,
                         text=True, timeout=120, check=False,
@@ -1142,7 +1160,7 @@ class DesktopPetUIMixin:
                         ),
                     )
 
-                self.root.after(0, show_preview)
+                self.post_ui_callback(show_preview)
 
             threading.Thread(target=worker, daemon=True).start()
 

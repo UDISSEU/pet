@@ -41,6 +41,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import messagebox
@@ -120,6 +121,12 @@ from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 from x11_helper import X11Helper
 from desktop_pet_ui import DesktopPetUIMixin
+from event_bus import Event, EventBus, EventType
+from state_manager import StateManager
+from plugin_manager import PluginManager
+from permissions import PermissionManager
+from notifications import NotificationManager, NotificationCategory
+from system_monitor import SystemMonitor
 from spotify_control import (
     SpotifyError,
     connect_spotify as spotify_connect,
@@ -139,13 +146,36 @@ class DesktopPet(DesktopPetUIMixin):
 
     @state.setter
     def state(self, value):
+        previous = getattr(self, "_state", None)
         self._state = value
         self._state_generation = getattr(self, "_state_generation", 0) + 1
         self._state_started_at = time.monotonic()
+        manager = getattr(self, "state_manager", None)
+        if manager is not None:
+            manager.transition(value, force=True)
+        bus = getattr(self, "event_bus", None)
+        if bus is not None and previous != value:
+            bus.post(Event(EventType.PET_STATE_CHANGED, {"previous": previous, "current": value}))
 
     def __init__(self):
         self.history = load_history()
         self.settings = load_settings()
+        self._recent_errors = deque(maxlen=20)
+        self.event_bus = EventBus()
+        self.state_manager = StateManager()
+        self.permission_manager = PermissionManager()
+        self.plugin_manager = PluginManager(context={"event_bus": self.event_bus,
+                                                     "permissions": self.permission_manager},
+                                            event_bus=self.event_bus)
+        self.notification_manager = NotificationManager(event_bus=self.event_bus)
+        self.system_monitor = SystemMonitor()
+        self.event_bus.subscribe(EventType.AI_RESPONSE_RECEIVED, self._on_ai_response_event)
+        self.event_bus.subscribe(EventType.APP_LAUNCH_RESULT, self._on_app_launch_event)
+        self.event_bus.subscribe(EventType.TASK_FINISHED, self._on_automation_event)
+        self.event_bus.subscribe(EventType.TASK_FAILED, self._on_automation_event)
+        self.event_bus.subscribe(EventType.AI_REQUEST_FAILED, self._on_ai_failure_event)
+        self.event_bus.subscribe(EventType.AI_REQUEST_STARTED, self._on_ai_started_event)
+        self.event_bus.subscribe(EventType.PLUGIN_FAILED, self._on_plugin_failure_event)
         reset_personality_state()
         self._speech_history = []
         self._click_timestamps = []
@@ -176,9 +206,9 @@ class DesktopPet(DesktopPetUIMixin):
             pass
         self._closing = False
         self._ai_results = queue.Queue()
+        self._ui_callbacks = queue.Queue()
         self._provider_test_results = queue.Queue()
         self._app_launch_results = queue.Queue()
-        self._automation_results = queue.Queue()
         self.automation_active = False
         self._battery_check_results = queue.Queue()
         self._device_event_results = queue.Queue()
@@ -638,17 +668,38 @@ class DesktopPet(DesktopPetUIMixin):
         return int(BASE_HEIGHT + bubble_h)
 
     # ---------- laço principal ----------
+    def post_ui_callback(self, callback, *args, **kwargs):
+        """Schedule a UI callback from any worker for execution by ``tick``."""
+        if self._closing or not callable(callback):
+            return False
+        self._ui_callbacks.put((callback, args, kwargs))
+        return True
+
+    def _drain_ui_callbacks(self):
+        callbacks = getattr(self, "_ui_callbacks", None)
+        if callbacks is None or getattr(self, "_closing", False):
+            return
+        while True:
+            try:
+                callback, args, kwargs = callbacks.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                callback(*args, **kwargs)
+            except Exception:
+                logger.exception("Falha ao processar retorno de worker na thread Tkinter")
+
     def tick(self):
         now = time.monotonic()
+        self._drain_ui_callbacks()
+        event_bus = getattr(self, "event_bus", None)
+        if event_bus is not None:
+            event_bus.drain()
         self._drain_animation_results()
-        if hasattr(self, "_ai_results"):
-            self._drain_ai_results()
         if hasattr(self, "_provider_test_results"):
             self._drain_provider_test_results()
         if hasattr(self, "_app_launch_results"):
             self._drain_app_launch_results()
-        if hasattr(self, "_automation_results"):
-            self._drain_automation_results()
         if hasattr(self, "_battery_check_results"):
             self._drain_low_battery_results()
         if hasattr(self, "_device_event_results"):
@@ -717,6 +768,20 @@ class DesktopPet(DesktopPetUIMixin):
         else:
             self._walk_velocity_x = 0.0
 
+        if event_bus is not None:
+            animation_name = self._video_for_current_pose(now)
+            previous_animation = getattr(self, "_last_event_animation", None)
+            if animation_name != previous_animation:
+                if previous_animation is not None:
+                    finished = previous_animation in ONE_SHOT_VIDEOS
+                    event_bus.publish(Event(
+                        EventType.ANIMATION_FINISHED if finished else EventType.ANIMATION_CANCELLED,
+                        {"animation": previous_animation},
+                    ))
+                event_bus.publish(Event(EventType.ANIMATION_STARTED,
+                                        {"animation": animation_name, "state": self.state}))
+                self._last_event_animation = animation_name
+
         if self.state == "sitting" and self.sit_win_id is not None:
             if not self.x11.window_exists(self.sit_win_id):
                 self._stand_up("stand_closed")
@@ -743,6 +808,10 @@ class DesktopPet(DesktopPetUIMixin):
         changed = False
         for name, frames, error in loader.drain():
             if error is not None:
+                event_bus = getattr(self, "event_bus", None)
+                if event_bus is not None:
+                    event_bus.publish(Event(EventType.ANIMATION_LOAD_FAILED,
+                                            {"animation": name, "error": error}))
                 # Keep the already-renderable preview if a video is damaged.
                 continue
             self.video_frames[name] = frames
@@ -1948,6 +2017,11 @@ class DesktopPet(DesktopPetUIMixin):
             )
             if not messagebox.askyesno("Confirmar abertura", confirmation, parent=self.root):
                 return
+        try:
+            self._authorize_core_action("system.app.launch", confirmed=True)
+        except (PermissionError, OSError) as exc:
+            self.show_bubble(f"Não posso abrir esse aplicativo: {exc}", duration=4000)
+            return
         self.app_launch_active = True
         self.show_bubble(f"Abrindo {app['name']}…", duration=999999)
         threading.Thread(
@@ -1957,26 +2031,41 @@ class DesktopPet(DesktopPetUIMixin):
         ).start()
 
     def _app_launch_worker(self, question, app):
+        def deliver(success, detail=""):
+            event_bus = getattr(self, "event_bus", None)
+            if event_bus is not None:
+                event_bus.post(Event(EventType.APP_LAUNCH_RESULT, {
+                    "question": question, "success": success, "detail": detail,
+                }))
+            elif hasattr(self, "_app_launch_results"):
+                self._app_launch_results.put((question, success, detail))
         try:
+            permissions = getattr(self, "permission_manager", None)
+            if permissions is not None:
+                permissions.require("nova.core", "system.app.launch", confirmed=True)
             self._launch_app(app, question)
-            self._app_launch_results.put((question, True, ""))
+            deliver(True)
         except subprocess.TimeoutExpired:
-            self._app_launch_results.put((
-                question, False,
-                f"O sistema demorou demais para abrir {app.get('name', 'o aplicativo')}. Tente novamente.",
-            ))
+            deliver(False, f"O sistema demorou demais para abrir {app.get('name', 'o aplicativo')}. Tente novamente.")
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             detail = str(exc).strip() or type(exc).__name__
-            self._app_launch_results.put((
-                question, False,
-                f"Não consegui abrir {app.get('name', 'o aplicativo')}: {detail[:350]}",
-            ))
+            deliver(False, f"Não consegui abrir {app.get('name', 'o aplicativo')}: {detail[:350]}")
 
     def _drain_app_launch_results(self):
+        if getattr(self, "event_bus", None) is not None:
+            return
         try:
             question, success, detail = self._app_launch_results.get_nowait()
         except queue.Empty:
             return
+        self._handle_app_launch_result(question, success, detail)
+
+    def _on_app_launch_event(self, event):
+        self._handle_app_launch_result(event.payload.get("question", ""),
+                                       bool(event.payload.get("success")),
+                                       str(event.payload.get("detail", "")))
+
+    def _handle_app_launch_result(self, question, success, detail):
         self.app_launch_active = False
         if self._closing:
             return
@@ -1992,6 +2081,10 @@ class DesktopPet(DesktopPetUIMixin):
                 category, name=self.settings.get("user_name", ""),
                 rng=random, history=getattr(self, "_speech_history", []),
             )
+        if not success:
+            errors = getattr(self, "_recent_errors", None)
+            if errors is not None:
+                errors.append({"source": "app_launch", "error": detail[:200], "timestamp": time.time()})
         self.state = "thumbs_up" if success else "curious"
         if success:
             self._thumbs_up_started_at = time.monotonic()
@@ -2020,6 +2113,13 @@ class DesktopPet(DesktopPetUIMixin):
         enabled = self.settings.get("automations", {}).get("enabled", {}).get(automation["id"], True)
         if not enabled:
             self.show_bubble("Essa automação está desativada nas preferências.", duration=3000)
+            return
+        read_permission = "system.cpu.read" if automation.get("read_only") and automation["id"] == "laptop_status" else "file.read"
+        try:
+            self._authorize_core_action(read_permission, confirmed=False)
+            self.permission_manager.require("nova.core", read_permission, confirmed=False)
+        except (PermissionError, OSError) as exc:
+            self.show_bubble(f"Permissão necessária para essa automação: {exc}", duration=4000)
             return
         if self.automation_active:
             self.show_bubble("Já estou cuidando de uma automação.", duration=2500)
@@ -2067,7 +2167,8 @@ class DesktopPet(DesktopPetUIMixin):
         except Exception as exc:
             logging.warning("Prévia da automação %s falhou (%s)", automation_id, type(exc).__name__)
             result = {"title": "Não consegui preparar a prévia", "lines": [f"Ocorreu um erro ({type(exc).__name__})."], "status": "error"}
-        self._automation_results.put((automation_id, result))
+        event_type = EventType.TASK_FINISHED if result.get("status") == "preview" else EventType.TASK_FAILED
+        self.event_bus.post(Event(event_type, {"automation_id": automation_id, "result": result}))
 
     def _confirm_automation_plan(self, operations):
         dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
@@ -2118,17 +2219,52 @@ class DesktopPet(DesktopPetUIMixin):
         self._request_automation(automation)
 
     def _automation_worker(self, automation, confirmed_plan=None):
+        self.event_bus.post(Event(EventType.TASK_STARTED, {"automation_id": automation["id"]}))
         try:
+            permission = self._automation_permission(automation["id"])
+            destructive = automation["id"] in ("trash_duplicates", "empty_trash")
+            self._authorize_core_action(permission, confirmed=True)
+            self.permission_manager.require("nova.core", permission,
+                                            confirmed=bool(confirmed_plan is not None or destructive))
             result = automation["executor"](plan=confirmed_plan) if confirmed_plan is not None else automation["executor"]()
         except Exception as exc:
             logging.warning("Automação %s falhou (%s)", automation["id"], type(exc).__name__)
             result = {"title": "Não consegui concluir", "lines": [f"Ocorreu um erro ({type(exc).__name__})."], "status": "error"}
-        self._automation_results.put((automation["id"], result))
+        event_type = EventType.TASK_FINISHED if result.get("status") == "ok" else EventType.TASK_FAILED
+        self.event_bus.post(Event(event_type, {"automation_id": automation["id"], "result": result}))
 
-    def _drain_automation_results(self):
-        try:
-            automation_id, result = self._automation_results.get_nowait()
-        except queue.Empty:
+    @staticmethod
+    def _automation_permission(automation_id):
+        if automation_id in ("organize_downloads", "organize_screenshots"):
+            return "file.organize"
+        if automation_id == "undo_downloads":
+            return "file.move"
+        if automation_id in ("trash_duplicates", "empty_trash"):
+            return "file.delete"
+        if automation_id == "laptop_status":
+            return "system.cpu.read"
+        if automation_id == "disk_summary":
+            return "system.disk.read"
+        if automation_id == "large_files" or automation_id == "duplicates":
+            return "file.read"
+        return "system.memory.read"
+
+    def _authorize_core_action(self, permission, *, confirmed=False):
+        """Record a scoped grant following the corresponding explicit UI action."""
+        manager = getattr(self, "permission_manager", None)
+        if manager is None:  # Compatibility for lightweight legacy/test instances.
+            return True
+        if not manager.allowed("nova.core", permission):
+            if manager.has_decision("nova.core", permission):
+                raise PermissionError(f"Permissão revogada: {permission}")
+            if not manager.authorize("nova.core", permission, confirmed=True):
+                raise PermissionError(f"Permissão não concedida: {permission}")
+        return manager.require("nova.core", permission, confirmed=confirmed)
+
+    def _on_automation_event(self, event):
+        automation_id = event.payload.get("automation_id")
+        result = event.payload.get("result")
+        if not automation_id or not isinstance(result, dict):
             return
         self.automation_active = False
         for button in getattr(self, "_automation_action_buttons", {}).values():
@@ -2157,6 +2293,46 @@ class DesktopPet(DesktopPetUIMixin):
                 return
             self._finish_automation(automation_id, result)
 
+    def _on_ai_response_event(self, event):
+        answer = event.payload.get("answer")
+        if isinstance(answer, str) and not self._closing:
+            self._ai_status = "respondida"
+            self._ai_last_response_at = time.time()
+            self._show_answer(answer)
+
+    def _on_ai_failure_event(self, event):
+        self._ai_status = "falha"
+        details = str(event.payload.get("error", "Falha ao consultar a IA."))[:300]
+        self._recent_errors.append({"source": "ai", "error": details, "timestamp": time.time()})
+        self.notification_manager.create("Falha na IA", details,
+                                         NotificationCategory.ERROR, priority=70)
+
+    def _on_ai_started_event(self, _event):
+        self._ai_status = "consultando"
+        self._ai_last_request_at = time.time()
+
+    def _on_plugin_failure_event(self, event):
+        plugin_id = str(event.payload.get("plugin_id", "Plugin"))[:80]
+        error = str(event.payload.get("error", "Falha"))[:100]
+        self._recent_errors.append({"source": plugin_id, "error": error, "timestamp": time.time()})
+        self.notification_manager.create("Falha em habilidade", f"{plugin_id}: {error}",
+                                         NotificationCategory.ERROR, priority=75)
+
+    def _dashboard_snapshot(self):
+        return {
+            "pet_state": str(self.state),
+            "animation": getattr(self, "_last_event_animation", "idle"),
+            "ai_provider": self.settings.get("ai_provider", "ollama"),
+            "ai_status": getattr(self, "_ai_status", "idle"),
+            "integrations": {"spotify": bool(self.settings.get("spotify_client_id")
+                                                and spotify_token_connected(self.settings.get("spotify_client_id")))},
+            "plugins": self.plugin_manager.counts,
+            "tasks_running": int(bool(getattr(self, "automation_active", False)))
+                             + int(bool(getattr(self, "ai_request_active", False)))
+                             + int(bool(getattr(self, "app_launch_active", False))),
+            "recent_errors": [*list(self._recent_errors)[-5:], *list(self.plugin_manager.errors[-5:])][-10:],
+        }
+
     def _finish_automation(self, automation_id, result):
         now = datetime.now().astimezone().strftime("%H:%M")
         summary = f"{result.get('title', 'Automação')} · {'concluída' if result.get('status') == 'ok' else 'erro'} às {now}"
@@ -2177,6 +2353,16 @@ class DesktopPet(DesktopPetUIMixin):
         if isinstance(metrics, dict):
             self._update_automation_metrics(metrics)
         success = result.get("status") == "ok"
+        if not success and hasattr(self, "_recent_errors"):
+            self._recent_errors.append({"source": automation_id,
+                                        "error": str(result.get("title", "falha"))[:200],
+                                        "timestamp": time.time()})
+        self.notification_manager.create(
+            "Automação concluída" if success else "Falha na automação",
+            str(result.get("title", automation_id)),
+            NotificationCategory.SUCCESS if success else NotificationCategory.ERROR,
+            priority=35 if success else 65,
+        )
         category = "automation_ok" if success else "automation_error"
         line = pick_line(category, name=self.settings.get("user_name", ""), rng=random, history=self._speech_history)
         result_lines = result.get("lines", [])
@@ -2291,6 +2477,14 @@ class DesktopPet(DesktopPetUIMixin):
 
     def close_app(self):
         self._closing = True
+        event_bus = getattr(self, "event_bus", None)
+        if event_bus is not None:
+            event_bus.publish(Event(EventType.APPLICATION_SHUTDOWN, {}))
+        plugin_manager = getattr(self, "plugin_manager", None)
+        if plugin_manager is not None:
+            plugin_manager.shutdown()
+        if event_bus is not None:
+            event_bus.close()
         stop_event = getattr(self, "_device_monitor_stop", None)
         if stop_event is not None:
             stop_event.set()
@@ -2393,6 +2587,10 @@ class DesktopPet(DesktopPetUIMixin):
     # ---------- integração com a IA local ----------
     def _spotify_connect_worker(self, client_id):
         try:
+            permissions = getattr(self, "permission_manager", None)
+            if permissions is not None:
+                self._authorize_core_action("network.access", confirmed=True)
+                permissions.require("nova.core", "network.access", confirmed=True)
             spotify_connect(client_id)
             self._spotify_results.put(("connect", True, "Conta Spotify conectada."))
         except Exception as exc:
@@ -2494,6 +2692,12 @@ class DesktopPet(DesktopPetUIMixin):
 
     def _spotify_action_worker(self, question, request, client_id):
         try:
+            permissions = getattr(self, "permission_manager", None)
+            if permissions is not None:
+                self._authorize_core_action("spotify.control", confirmed=True)
+                self._authorize_core_action("network.access", confirmed=True)
+                permissions.require("nova.core", "spotify.control", confirmed=True)
+                permissions.require("nova.core", "network.access", confirmed=True)
             message = execute_spotify_action(
                 client_id,
                 request["operation"],
@@ -2720,10 +2924,34 @@ class DesktopPet(DesktopPetUIMixin):
         return result["question"]
 
     def _ask_worker(self, history, memories=None, settings=None, user_name=""):
-        self._ai_results.put(answer_request(
-            history, memories=memories, settings=settings or self.settings,
-            user_name=user_name,
-        ))
+        event_bus = getattr(self, "event_bus", None)
+        permissions = getattr(self, "permission_manager", None)
+        request_settings = settings or self.settings
+        if event_bus is not None:
+            event_bus.post(Event(EventType.AI_REQUEST_STARTED, {}))
+        try:
+            if permissions is not None:
+                self._authorize_core_action("ai.use")
+                permissions.require("nova.core", "ai.use")
+                if (request_settings.get("ai_provider") in ("gemini", "groq", "mistral")
+                        and request_settings.get("online_ai_enabled")
+                        and request_settings.get("allow_online_data")
+                        and request_settings.get("confirm_free_tier")):
+                    self._authorize_core_action("network.access", confirmed=True)
+                    permissions.require("nova.core", "network.access", confirmed=True)
+            answer = answer_request(
+                history, memories=memories, settings=request_settings,
+                user_name=user_name,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception("Falha inesperada no serviço de IA")
+            answer = PROVIDER_FAILURE_MESSAGE
+        if event_bus is not None:
+            if answer == PROVIDER_FAILURE_MESSAGE:
+                event_bus.post(Event(EventType.AI_REQUEST_FAILED, {"error": answer}))
+            event_bus.post(Event(EventType.AI_RESPONSE_RECEIVED, {"answer": answer}))
+        elif hasattr(self, "_ai_results"):
+            self._ai_results.put(answer)
 
     def _provider_test_worker(self, provider_name, settings, window, status_var, button, button_state):
         try:
@@ -2750,12 +2978,7 @@ class DesktopPet(DesktopPetUIMixin):
             pass
 
     def _drain_ai_results(self):
-        try:
-            answer = self._ai_results.get_nowait()
-        except queue.Empty:
-            return
-        if not self._closing:
-            self._show_answer(answer)
+        """Compatibility hook; worker responses arrive through EventBus."""
 
     def _show_answer(self, answer):
         if self._closing:
