@@ -121,6 +121,81 @@ class ArchitectureTests(unittest.TestCase):
             manager.revoke("skill", "file.delete")
             self.assertFalse(manager.allowed("skill", "file.delete"))
 
+    def test_permission_loader_rejects_invalid_data_and_preserves_original(self):
+        invalid_documents = (
+            "{not valid json}",
+            "[]",
+            json.dumps({"grants": {"skill": ["file.read"]}, "history": []}),
+            json.dumps({"grants": {"skill": {"file.read": "true"}}, "history": []}),
+            json.dumps({"grants": {"skill": {"unknown.action": True}}, "history": []}),
+            json.dumps({"grants": {}, "history": [{"plugin": "skill"}]}),
+            json.dumps({
+                "grants": {"skill": {"file.read": True}},
+                "history": [{"plugin": "skill", "permission": "unknown.action", "granted": True}],
+            }),
+            json.dumps({"grants": {}, "history": [
+                {"plugin": "skill", "permission": [], "granted": True}
+            ]}),
+            json.dumps({"grants": {}, "history": [], "unexpected": True}),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, contents in enumerate(invalid_documents):
+                with self.subTest(contents=contents):
+                    path = root / f"permissions-{index}.json"
+                    path.write_text(contents, encoding="utf-8")
+                    manager = PermissionManager(path)
+
+                    self.assertFalse(manager.allowed("skill", "file.read"))
+                    self.assertFalse(manager.allowed("skill", "unknown.action"))
+                    backups = list(root.glob(f"{path.name}.corrupt-*"))
+                    self.assertEqual(len(backups), 1)
+                    self.assertEqual(backups[0].read_text(encoding="utf-8"), contents)
+
+            manager = PermissionManager(root / "new.json")
+            with self.assertRaises(ValueError):
+                manager.authorize("skill", "unknown.action")
+            with self.assertRaises(ValueError):
+                manager.revoke("skill", "unknown.action")
+
+    def test_permission_read_failure_blocks_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "permissions.json"
+            original = json.dumps({"grants": {}, "history": []})
+            path.write_text(original, encoding="utf-8")
+            with mock.patch.object(Path, "read_text", side_effect=OSError("sem acesso")):
+                manager = PermissionManager(path)
+                with self.assertRaises(OSError):
+                    manager.authorize("skill", "file.read")
+
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            self.assertFalse(manager.allowed("skill", "file.read"))
+
+    def test_permission_grants_and_revocations_roll_back_after_save_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = PermissionManager(Path(directory) / "permissions.json")
+            self.assertTrue(manager.authorize("skill", "file.read"))
+            manager.revoke("skill", "file.read")
+            history_before_failed_grant = list(manager._history)
+
+            with mock.patch.object(manager, "_save", side_effect=OSError("falha")):
+                with self.assertRaises(OSError):
+                    manager.authorize("skill", "file.read")
+
+            self.assertFalse(manager.allowed("skill", "file.read"))
+            self.assertEqual(manager._history, history_before_failed_grant)
+            self.assertFalse(PermissionManager(manager.path).allowed("skill", "file.read"))
+
+            self.assertTrue(manager.authorize("skill", "file.read"))
+            history_before_failed_revoke = list(manager._history)
+            with mock.patch.object(manager, "_save", side_effect=OSError("falha")):
+                with self.assertRaises(OSError):
+                    manager.revoke("skill", "file.read")
+
+            self.assertTrue(manager.allowed("skill", "file.read"))
+            self.assertEqual(manager._history, history_before_failed_revoke)
+            self.assertTrue(PermissionManager(manager.path).allowed("skill", "file.read"))
+
     def test_notification_persistence_dedupe_and_read(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "notifications.json"
@@ -327,6 +402,78 @@ class ArchitectureTests(unittest.TestCase):
                 self.assertEqual(command.count("/bin/true"), 1)
                 self.assertIn("--nproc=32", command)
 
+    def test_external_plugin_bounds_manifest_arguments_and_paths(self):
+        from plugin_manager import IsolatedPluginProcess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin_dir = root / "plugin"
+            plugin_dir.mkdir()
+            outside = root / "outside.py"
+            outside.write_text("pass\n", encoding="utf-8")
+            (plugin_dir / "escape.py").symlink_to(outside)
+
+            with self.assertRaises(ValueError):
+                IsolatedPluginProcess([sys.executable, "../outside.py"], cwd=plugin_dir)
+            with self.assertRaises(ValueError):
+                IsolatedPluginProcess([sys.executable, "escape.py"], cwd=plugin_dir)
+            with self.assertRaises(ValueError):
+                IsolatedPluginProcess(["python3", "outside.py"], cwd=plugin_dir)
+            with self.assertRaises(ValueError):
+                IsolatedPluginProcess(
+                    [sys.executable, *("x" for _ in range(IsolatedPluginProcess.MAX_COMMAND_ARGS))],
+                    cwd=plugin_dir,
+                )
+            with self.assertRaises(ValueError):
+                IsolatedPluginProcess(
+                    [sys.executable, "x" * (IsolatedPluginProcess.MAX_COMMAND_ARG_LENGTH + 1)],
+                    cwd=plugin_dir,
+                )
+            with self.assertRaises(ValueError):
+                IsolatedPluginProcess(
+                    [sys.executable, *("x" * 500 for _ in range(9))],
+                    cwd=plugin_dir,
+                )
+
+            manifest = plugin_dir / "plugin.json"
+            manifest.write_bytes(b" " * (IsolatedPluginProcess.MAX_MANIFEST + 1))
+            with self.assertRaises(ValueError):
+                PluginManager().register_external_manifest(manifest)
+
+            manifest.write_text(json.dumps({
+                "kind": "external", "plugin_id": "escape", "name": "Escape",
+                "command": [sys.executable, "escape.py"], "permissions": ["file.read"],
+            }), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                PluginManager().register_external_manifest(manifest)
+
+            manifest.write_text(json.dumps({
+                "kind": "external", "plugin_id": "unknown", "name": "Unknown",
+                "command": [sys.executable, "escape.py"], "permissions": ["file.read"],
+                "unexpected": True,
+            }), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                PluginManager().register_external_manifest(manifest)
+
+    def test_external_plugin_rechecks_revoked_permission_while_active(self):
+        from plugin_manager import IsolatedPluginProcess
+        with tempfile.TemporaryDirectory() as directory:
+            permissions = PermissionManager(Path(directory) / "permissions.json")
+            permissions.authorize("active_plugin", "file.read")
+            manager = PluginManager(permission_manager=permissions)
+            plugin = IsolatedPluginProcess.__new__(IsolatedPluginProcess)
+            plugin.manifest = PluginManifest(
+                "active_plugin", "Active", permissions=("file.read",),
+            )
+            plugin.request = mock.Mock(return_value="executed")
+            manager._plugins["active_plugin"] = plugin
+            manager._active.add("active_plugin")
+
+            self.assertEqual(manager.execute_external("active_plugin", "file.read", "read"), "executed")
+            permissions.revoke("active_plugin", "file.read")
+            with self.assertRaises(PermissionError):
+                manager.execute_external("active_plugin", "file.read", "read_again")
+            plugin.request.assert_called_once_with("read", None)
+
     @unittest.skipUnless(shutil.which("bwrap"), "bubblewrap is needed for isolated plugin process test")
     def test_external_plugin_without_grant_has_no_host_file_or_network_access(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -414,7 +561,12 @@ class ArchitectureTests(unittest.TestCase):
     def test_external_plugin_timeout_is_enforced(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "slow.py").write_text("import time\ntime.sleep(2)\n", encoding="utf-8")
+            (root / "slow.py").write_text(
+                "import subprocess,sys,time\n"
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)'])\n"
+                "time.sleep(10)\n",
+                encoding="utf-8",
+            )
             plugin = __import__("plugin_manager").IsolatedPluginProcess(
                 ["/usr/bin/python3", "slow.py"], cwd=root, timeout=0.1, network_access=True)
             spawned = []
@@ -431,13 +583,20 @@ class ArchitectureTests(unittest.TestCase):
             spawned[0].wait(timeout=1)
             deadline = time.monotonic() + 1
             while time.monotonic() < deadline:
-                try:
-                    os.killpg(spawned[0].pid, 0)
-                except ProcessLookupError:
+                active_group_processes = []
+                for proc_stat in Path("/proc").glob("[0-9]*/stat"):
+                    try:
+                        stat = proc_stat.read_text(encoding="ascii")
+                        fields = stat[stat.rfind(")") + 2:].split()
+                        if int(fields[2]) == spawned[0].pid and fields[0] != "Z":
+                            active_group_processes.append(proc_stat.parent.name)
+                    except (OSError, ValueError, IndexError):
+                        continue
+                if not active_group_processes:
                     break
                 time.sleep(0.02)
             else:
-                self.fail("plugin process group remained after timeout cleanup")
+                self.fail(f"plugin child processes remained after timeout: {active_group_processes}")
 
     def test_close_app_clears_callbacks_stops_monitor_and_ignores_late_posts(self):
         from desktop_pet import DesktopPet
@@ -488,7 +647,6 @@ class ArchitectureTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("bwrap") and shutil.which("prlimit"),
                          "bubblewrap and prlimit are needed for resource limit tests")
     def test_external_plugin_cpu_limit_kills_process_and_cleans_process_group(self):
-        from plugin_manager import IsolatedPluginProcess
         with tempfile.TemporaryDirectory() as directory:
             plugin = self.make_external_process(directory, "while True: pass\n",
                                                 cpu_seconds=1, timeout=5)

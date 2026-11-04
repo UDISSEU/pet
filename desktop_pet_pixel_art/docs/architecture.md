@@ -2,12 +2,20 @@
 
 ## Visão geral
 
-`src/desktop_pet.py` coordena a janela Tkinter, os estados da personagem, as interações e as rotinas periódicas. `desktop_pet_ui.py` concentra o menu, o calendário e as preferências em um mixin usado pela janela principal. A interface é desenhada em pixel art com Pillow. Um quadro de prévia do vídeo idle é decodificado na abertura; `AnimationLoader` carrega o restante em uma thread daemon e entrega quadros por fila para a thread Tkinter.
+`src/desktop_pet.py` inicializa a aplicação e coordena o ciclo Tkinter, mantendo a API pública `DesktopPet`. Mixins de controladores implementam animação, interação, rotina, dispositivos, fala e gerenciamento de janelas sem alterar os nomes dos métodos usados pela aplicação. `desktop_pet_ui.py` conserva o mixin público de interface; a construção das preferências é composta por módulos menores, um por conjunto de abas. A interface é desenhada em pixel art com Pillow. Um quadro de prévia do vídeo idle é decodificado na abertura; `AnimationLoader` carrega o restante em uma thread daemon e entrega quadros por fila para a thread Tkinter.
 
 ## Módulos
 
-- `desktop_pet.py`: ciclo principal, janela, modos da mascote e integração entre os módulos.
-- `desktop_pet_ui.py`: menu de contexto, calendário e janelas de preferências; mantém o acesso aos widgets na thread Tkinter.
+- `desktop_pet.py`: inicialização e coordenação principal; `DesktopPet` mantém a API e o ciclo `tick()`.
+- `animation_controller.py`: seleção, reprodução, renderização e sincronização das animações.
+- `interaction_controller.py`: cliques, arraste e registro das interações.
+- `routine_controller.py`: foco, horários silenciosos, lembretes e rotinas periódicas.
+- `device_controller.py`: leitura de bateria, alimentação externa e armazenamento USB.
+- `speech_controller.py`: falas espontâneas, personalidade, poses temporárias e balões.
+- `window_controller.py`: geometria, sobreposição, peekaboo e posicionamento em janelas.
+- `desktop_pet_ui.py`: mixin público compatível para menu, calendário e navegação de painéis.
+- `preferences_ui.py`: janela de preferências, persistência e navegação entre abas.
+- `preferences_*_ui.py`: construção separada das abas de automações, IA, comportamento/rotina, computador, memórias/histórico e lembretes/aplicativos. `preferences_common_ui.py` compartilha os widgets de listas.
 - `animation.py`: decodifica vídeos, prepara quadros e remove o fundo claro.
 - `animation_loader.py`: carrega as sequências completas em segundo plano; mantém a prévia caso um vídeo individual falhe e não acessa widgets Tkinter.
 - `app_intents.py`: reconhece e associa pedidos de abertura de aplicativos sem executar comandos.
@@ -18,7 +26,7 @@
 - `calendar_view.py`: calendário mensal local; não sincroniza com contas externas.
 - `config.py`: caminhos dos assets, animações e parâmetros padrão.
 - `ollama_client.py`: API e persistência do histórico JSON legado.
-- `keyring_secret.py`: leitura e gravação de chaves Gemini, Groq e Mistral no cofre Secret Service do ambiente de desktop.
+- `keyring_secret.py`: leitura e gravação de chaves Gemini, Groq e Mistral no cofre Secret Service do ambiente de desktop; fecha a sessão aberta e a conexão D-Bus mesmo quando uma operação falha.
 - `providers/`: provedores independentes via HTTP; não adicionam SDKs à aplicação.
 - `ai/`: personalidade, contexto e roteamento; `AICore` conecta a conversa à seleção de provedor. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
 - `x11_helper.py`: observação da janela ativa e geometria de janelas em ambientes X11. O módulo falha de forma segura se X11 ou `python-xlib` não estiverem disponíveis.
@@ -70,7 +78,7 @@ Execute da raiz do projeto:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Os testes de integração com provedores usam mocks; uma sessão Ollama, chaves e internet não são necessárias. `tests/test_ui_windows.py` abre e fecha as três janelas se Tk puder conectar a um display; sem display, o teste fica marcado como ignorado.
+Os testes de integração com provedores usam mocks; uma sessão Ollama, chaves e internet não são necessárias. A CI verifica Python 3.10–3.13, Ruff, Bandit, cobertura, consistência/auditoria de dependências e instalação/inicialização limpas. Os testes gráficos Tk rodam em job separado com Xvfb; sem display, `tests/test_ui_windows.py` fica marcado como ignorado na suíte unitária.
 
 Para executar o smoke test em display isolado, capturar PNGs ou iniciar a
 aplicação e o soak em conjunto, consulte [Testes gráficos isolados](gui-testing.md).
@@ -79,7 +87,7 @@ aplicação e o soak em conjunto, consulte [Testes gráficos isolados](gui-testi
 
 `EventBus.post(event)` recebe resultados de IA e automações em workers sem chamar assinantes; a UI consome a fila com `drain()` no ciclo Tkinter. Widgets são atualizados apenas na thread principal. Mudanças de estado e animação são publicadas no ciclo principal. Para uma habilidade interna confiável, implemente `Plugin`, declare `PluginManifest` e registre explicitamente a instância no `PluginManager`. Confirme permissões no momento da operação com `PermissionManager.require`; declarar uma permissão no manifesto não concede acesso. O menu **Permissões** permite revisar e revogar grants da Nova e das habilidades registradas.
 
-Plugins externos usam manifesto JSON explicitamente selecionado via `PluginManager.register_external_manifest`. O processo usa JSON por stdin/stdout, timeout, limite de mensagem, `prlimit` para CPU, espaço virtual de memória, processos, arquivos abertos e tamanho de arquivo, `bubblewrap`, diretório do plugin somente leitura, ambiente sem credenciais e namespaces de usuário e PID. Sem autorização `network.access`, tenta também desabilitar a rede; se o isolamento de rede não for suportado, a execução falha fechada. Com `network.access` concedida, o processo pode usar a rede. O sandbox reduz acesso ao sistema, mas não deve ser tratado como isolamento perfeito contra vulnerabilidades do kernel ou do bubblewrap.
+Plugins externos usam manifesto JSON explicitamente selecionado via `PluginManager.register_external_manifest` (máximo de 16 KiB). O executável deve ser absoluto, existente e estar em `/usr` ou `/bin`; comandos aceitam no máximo 16 itens de argv, com limites de bytes por argumento e no total, e caminhos que escapem do diretório do plugin ou dos diretórios de sistema montados são rejeitados. O processo usa JSON por stdin/stdout, timeout, limite de mensagem, `prlimit` para CPU, espaço virtual de memória, processos, arquivos abertos e tamanho de arquivo, `bubblewrap`, diretório do plugin somente leitura, ambiente sem credenciais e namespaces de usuário e PID. Sem autorização `network.access`, tenta também desabilitar a rede; se o isolamento de rede não for suportado, a execução falha fechada. As permissões são verificadas em cada chamada, inclusive após a ativação do plugin. Com `network.access` concedida, o processo pode usar a rede. O sandbox reduz acesso ao sistema, mas não deve ser tratado como isolamento perfeito contra vulnerabilidades do kernel ou do bubblewrap.
 
 O menu abre **Painel da Nova**, **Notificações** e **Permissões**. Cada janela reutiliza a instância já aberta e traz essa janela para frente. O painel coleta métricas em worker, mantém histórico limitado e atualiza a interface pela thread principal; a frequência pode ser ajustada ou pausada na janela. Notificações são salvas em `~/.config/desktop_pet/notifications.json`, incluindo filtros por categoria, modo silencioso e intervalo anti-repetição; permissões ficam em `~/.config/desktop_pet/permissions.json`. Os controles de permissões internas usam o identificador `nova.core`, igual ao Permission Manager.
 

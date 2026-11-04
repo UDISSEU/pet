@@ -11,6 +11,7 @@ if str(SRC) not in sys.path:
 
 from config import MOVEMENTS_DIR, MOVEMENT_VIDEOS, SYSTEM_PROMPT, resolve_movement_path
 import desktop_pet
+import animation_controller
 from desktop_pet import DesktopPet
 
 
@@ -104,11 +105,11 @@ class DesktopAnimationTests(unittest.TestCase):
             root = Path(temp_dir)
             (root / "wave.mp4").touch()
             with mock.patch.object(
-                desktop_pet,
+                animation_controller,
                 "MOVEMENT_VIDEOS",
                 {"talking": "talking.mp4", "wave": "wave.mp4"},
             ), mock.patch.object(
-                desktop_pet,
+                animation_controller,
                 "resolve_movement_path",
                 side_effect=lambda filename: root / filename,
             ):

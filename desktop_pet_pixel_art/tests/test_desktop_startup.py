@@ -34,7 +34,7 @@ class DesktopStartupTests(unittest.TestCase):
             exec(compile(ast.Module(body=[main_block], type_ignores=[]), str(SRC / "desktop_pet.py"), "exec"), namespace)
         pet_class.return_value.run.assert_called_once()
     def test_maintenance_subprocesses_use_the_filtered_environment(self):
-        tree = ast.parse((SRC / "desktop_pet_ui.py").read_text(encoding="utf-8"))
+        tree = ast.parse((SRC / "preferences_computer_ui.py").read_text(encoding="utf-8"))
         functions = {
             node.name: node
             for node in ast.walk(tree)

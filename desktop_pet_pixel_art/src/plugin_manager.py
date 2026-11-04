@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 import json
 import logging
+import math
 import os
 import shutil
 import re
@@ -12,17 +13,10 @@ import signal
 from pathlib import Path
 
 from event_bus import Event, EventBus, EventType
-from permissions import PermissionManager
+from permissions import KNOWN_PERMISSIONS, PermissionManager
 
 logger = logging.getLogger(__name__)
 API_VERSION = "1.0"
-KNOWN_PERMISSIONS = {
-    "file.read", "file.write", "file.move", "file.delete", "file.organize",
-    "system.cpu.read", "system.memory.read", "system.disk.read",
-    "system.process.read", "system.app.launch", "system.maintenance.read",
-    "system.maintenance", "spotify.control", "ai.use", "network.access",
-    "notification.create", "pet.animation.control", "task.create",
-}
 
 
 @dataclass
@@ -76,28 +70,95 @@ class PluginPermissionView:
 class IsolatedPluginProcess:
     """One-shot JSON-RPC process boundary for explicitly installed external skills.
 
-    This limits credentials, message size, runtime and common resource exhaustion.
-    It is defense-in-depth, not an OS sandbox: external code still runs as this user.
+    Bubblewrap, a validated system executable, bounded argv/messages/runtime and
+    process-group cleanup are defense-in-depth, not a guarantee or OS security boundary.
     """
+    MAX_MANIFEST = 16 * 1024
+    MAX_COMMAND_ARGS = 16
+    MAX_COMMAND_ARG_LENGTH = 512
+    MAX_COMMAND_SIZE = 4096
     MAX_MESSAGE = 64 * 1024
     MAX_OUTPUT = 64 * 1024
 
     def __init__(self, command, *, cwd=None, timeout=5, cpu_seconds=3,
                  memory_bytes=256 * 1024 * 1024, network_access=False):
-        if not isinstance(command, (list, tuple)) or not command or len(command) > 64:
+        if (not isinstance(command, (list, tuple)) or not command
+                or len(command) > self.MAX_COMMAND_ARGS):
             raise ValueError("Comando externo inválido.")
-        if any(not isinstance(arg, str) or not arg or "\x00" in arg or len(arg) > 1024 for arg in command):
+        if (any(not isinstance(arg, str) or not arg or "\x00" in arg
+                or len(arg.encode("utf-8")) > self.MAX_COMMAND_ARG_LENGTH for arg in command)
+                or sum(len(arg.encode("utf-8")) + 1 for arg in command) > self.MAX_COMMAND_SIZE):
             raise ValueError("Argumento externo inválido.")
-        self.command = list(command)
-        self.cwd = str(Path(cwd).resolve()) if cwd else None
+        self.cwd = Path(cwd if cwd is not None else Path.cwd()).expanduser().resolve(strict=True)
+        if not self.cwd.is_dir():
+            raise ValueError("Diretório do plugin inválido.")
+        executable = Path(command[0]).expanduser()
+        if not executable.is_absolute():
+            raise ValueError("Executável do plugin deve usar caminho absoluto.")
+        try:
+            executable = executable.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("Executável do plugin não encontrado.") from exc
+        if (not executable.is_file() or not os.access(executable, os.X_OK)
+                or not self._path_is_within(executable, (Path("/usr"), Path("/bin")))):
+            raise ValueError("Executável do plugin deve ser executável em /usr ou /bin.")
+        self.command = [str(executable), *command[1:]]
+        self._validate_command_paths(self.command, self.cwd)
+        self.cwd = str(self.cwd)
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout)):
+            raise ValueError("Timeout do plugin inválido.")
+        if isinstance(cpu_seconds, bool) or not isinstance(cpu_seconds, int):
+            raise ValueError("Limite de CPU do plugin inválido.")
+        if isinstance(memory_bytes, bool) or not isinstance(memory_bytes, int):
+            raise ValueError("Limite de memória do plugin inválido.")
         self.timeout = max(0.1, min(float(timeout), 30.0))
         self.cpu_seconds = max(1, min(int(cpu_seconds), 10))
         self.memory_bytes = max(64 * 1024 * 1024, min(int(memory_bytes), 1024 * 1024 * 1024))
         self.network_access = bool(network_access)
-        self.bwrap = shutil.which("bwrap")
+        self.bwrap = self._find_system_executable("bwrap")
         if not self.bwrap:
             raise RuntimeError("Plugins externos exigem bubblewrap para isolamento.")
         self._lock = threading.Lock()
+
+    @classmethod
+    def _find_system_executable(cls, name):
+        executable = shutil.which(name)
+        if not executable:
+            return None
+        path = Path(executable).resolve()
+        if (not path.is_file() or not os.access(path, os.X_OK)
+                or not cls._path_is_within(path, (Path("/usr"), Path("/bin")))):
+            raise RuntimeError(f"{name} precisa ser um executável confiável em /usr ou /bin.")
+        return str(path)
+
+    @staticmethod
+    def _path_is_within(path, roots):
+        return any(path == root or root in path.parents for root in roots)
+
+    @classmethod
+    def _validate_command_paths(cls, command, cwd):
+        mounted_roots = (
+            cwd, Path("/usr"), Path("/bin"), Path("/lib"), Path("/lib64"),
+            Path("/etc"), Path("/proc"), Path("/dev"),
+        )
+        skip_next = False
+        for argument in command[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if argument in ("-c",):
+                skip_next = True
+                continue
+            path_text = argument.split("=", 1)[1] if argument.startswith("-") and "=" in argument else argument
+            if path_text.startswith("-"):
+                continue
+            if "/" not in path_text and not path_text.endswith((".py", ".js", ".sh", ".rb", ".pl")):
+                continue
+            path = Path(path_text)
+            resolved = (path if path.is_absolute() else cwd / path).resolve()
+            if not cls._path_is_within(resolved, mounted_roots):
+                raise ValueError("Argumento de caminho escapa dos diretórios disponíveis ao plugin.")
 
     def request(self, action, payload=None):
         message = json.dumps({"protocol": 1, "action": str(action), "payload": payload or {}},
@@ -113,7 +174,7 @@ class IsolatedPluginProcess:
                 sandbox.extend(["--ro-bind", library, library])
         if not self.network_access:
             sandbox.append("--unshare-net")
-        prlimit = shutil.which("prlimit")
+        prlimit = self._find_system_executable("prlimit")
         if not prlimit:
             raise RuntimeError("Plugins externos exigem prlimit para limitar recursos.")
         sandbox.extend(["--", prlimit, f"--cpu={self.cpu_seconds}",
@@ -193,19 +254,49 @@ class PluginManager:
 
     def register_external_manifest(self, manifest_path):
         """Install an explicit JSON manifest; never scans/imports a directory."""
-        path = Path(manifest_path).expanduser().resolve()
-        if path.stat().st_size > IsolatedPluginProcess.MAX_MESSAGE:
+        path = Path(manifest_path).expanduser().resolve(strict=True)
+        if not path.is_file():
+            raise ValueError("Manifesto precisa ser um arquivo regular.")
+        if path.stat().st_size > IsolatedPluginProcess.MAX_MANIFEST:
             raise ValueError("Manifesto excede o limite de tamanho.")
-        data = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as stream:
+            contents = stream.read(IsolatedPluginProcess.MAX_MANIFEST + 1)
+        if len(contents) > IsolatedPluginProcess.MAX_MANIFEST:
+            raise ValueError("Manifesto excede o limite de tamanho.")
+        data = json.loads(contents.decode("utf-8"))
         if not isinstance(data, dict) or data.get("kind") != "external":
             raise ValueError("Manifesto deve declarar kind=external.")
+        allowed_fields = {
+            "kind", "plugin_id", "name", "description", "version", "min_api_version",
+            "permissions", "config", "command", "timeout", "cpu_seconds", "memory_bytes",
+        }
+        if set(data) - allowed_fields:
+            raise ValueError("Manifesto contém campos desconhecidos.")
         permissions = data.get("permissions", [])
         command = data.get("command")
-        if not isinstance(permissions, list) or any(not isinstance(item, str) for item in permissions):
+        if (not isinstance(permissions, list)
+                or any(not isinstance(item, str) for item in permissions)
+                or len(set(permissions)) != len(permissions)):
             raise ValueError("Permissões inválidas no manifesto.")
+        description = data.get("description", "")
+        if not isinstance(description, str) or len(description) > 512:
+            raise ValueError("Descrição inválida no manifesto.")
+        if any(
+            isinstance(data.get(field), bool) or not isinstance(data.get(field), (int, float))
+            or not math.isfinite(data.get(field))
+            for field in ("timeout", "cpu_seconds", "memory_bytes")
+            if field in data
+        ):
+            raise ValueError("Limites de recursos inválidos no manifesto.")
+        if any(
+            isinstance(data.get(field), bool) or not isinstance(data.get(field), int)
+            for field in ("cpu_seconds", "memory_bytes")
+            if field in data
+        ):
+            raise ValueError("Limites de recursos inválidos no manifesto.")
         manifest = PluginManifest(
             plugin_id=data.get("plugin_id"), name=data.get("name", ""),
-            description=data.get("description", ""), version=data.get("version", "1.0.0"),
+            description=description, version=data.get("version", "1.0.0"),
             min_api_version=data.get("min_api_version", "1.0"),
             permissions=tuple(permissions), config=data.get("config", {}),
         ).validate()

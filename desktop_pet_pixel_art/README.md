@@ -4,19 +4,20 @@ A Nova é uma mascote em pixel art para Linux. Ela anima na área de trabalho, c
 
 ## Instalar
 
-Na pasta do projeto, execute o instalador. Ele cria o ambiente virtual, instala as dependências e registra o lançador no menu do usuário:
+É necessário Python 3.10 ou superior, o módulo `venv` e Tkinter. Em Debian ou Ubuntu, instale os componentes de sistema e execute o instalador. Ele valida a versão e as dependências, diagnostica recursos opcionais, cria/reutiliza o ambiente virtual, verifica a importação da aplicação e registra o lançador no menu do usuário:
 
 ```bash
+sudo apt install python3-venv python3-tk
 ./install.sh
 ```
 
-O Tkinter também precisa estar instalado no sistema. Em Debian ou Ubuntu:
+Uma instalação existente é detectada antes da atualização. Para automatizar a instalação sem confirmação, use `./install.sh --yes`. Para remover o ambiente virtual e o lançador, preservando preferências, histórico e demais dados pessoais:
 
 ```bash
-sudo apt install python3-tk python3-dbus
+./install.sh --uninstall
 ```
 
-`python-xlib` é opcional: sem ela, a Nova inicia e conversa, mas os recursos dependentes de X11 (observar janelas, transparência por forma e posicionamento sobre outras janelas) ficam indisponíveis. Para habilitá-los no ambiente virtual:
+`python-xlib` e `python3-dbus` são opcionais. Sem `python-xlib`, os recursos dependentes de X11 (observar janelas, transparência por forma e posicionamento sobre outras janelas) ficam indisponíveis. Sem `python3-dbus`, as chaves não podem ser lidas do Secret Service. O instalador informa também se Ollama, Bubblewrap e `prlimit` estão disponíveis; são recursos opcionais para IA local e execução isolada de plugins externos. Para habilitar X11 no ambiente virtual:
 
 ```bash
 .venv/bin/python -m pip install 'python-xlib>=0.33'
@@ -86,6 +87,8 @@ O desenho, a conversa e as animações funcionam sem recursos específicos do X1
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
+
+Os testes são executados na integração contínua com Python 3.10–3.13. O workflow também verifica Ruff, Bandit, cobertura, consistência e auditoria de dependências, instalação limpa/inicialização e testes Tk separados.
 
 Os vídeos são carregados em segundo plano. Cada clipe usa uma caixa e uma escala comuns a todos os quadros, com os pés alinhados pela mesma âncora; marcas pequenas e isoladas no canto inferior direito são filtradas numa margem de 12% da largura por 8% da altura, sem apagar componentes grandes da personagem. As janelas de repetição com menor diferença visual ficam em `VIDEO_LOOP_WINDOWS`; foco, lembrete, joinha e desaparecimento reproduzem uma vez e seguram o último quadro até a transição de estado. `VIDEO_FALLBACKS` indica a animação existente a usar quando um vídeo futuro estiver ausente.
 
