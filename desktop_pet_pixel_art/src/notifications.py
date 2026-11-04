@@ -96,8 +96,9 @@ class NotificationManager:
                 return None
             now = time.monotonic()
             fingerprint = (category.value, title.casefold(), message.casefold())
-            last = self._last_created.get(fingerprint, 0.0)
-            if not persistent and self.cooldown_seconds and now - last < self.cooldown_seconds:
+            last = self._last_created.get(fingerprint)
+            if (not persistent and self.cooldown_seconds and last is not None
+                    and now - last < self.cooldown_seconds):
                 return next((item for item in reversed(self.items)
                              if item.category == category and item.title == title
                              and item.message == message), None)
