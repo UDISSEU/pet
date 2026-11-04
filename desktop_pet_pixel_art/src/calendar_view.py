@@ -3,6 +3,7 @@
 import calendar
 from datetime import date
 import tkinter as tk
+from ui_theme import COLORS, make_header
 
 MONTH_NAMES = (
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -20,15 +21,19 @@ def open_calendar_window(parent):
     window.resizable(False, False)
     window.transient(parent)
     window.attributes("-topmost", True)
+    window.configure(bg=COLORS["background"])
 
-    content = tk.Frame(window, padx=12, pady=12)
+    make_header(window, "Calendário", "Consulte as datas sem sair da Nova.",
+                eyebrow="NOVA  /  ORGANIZAÇÃO")
+    content = tk.Frame(window, padx=14, pady=12, bg=COLORS["background"])
     content.pack(fill="both", expand=True)
-    header = tk.Frame(content)
+    header = tk.Frame(content, bg=COLORS["background"])
     header.pack(fill="x", pady=(0, 10))
-    month_title = tk.Label(header, font=("TkDefaultFont", 12, "bold"))
+    month_title = tk.Label(header, font=("TkDefaultFont", 12, "bold"),
+                           bg=COLORS["background"], fg=COLORS["ink"])
     header.grid_columnconfigure(1, weight=1)
     month_title.grid(row=0, column=1, sticky="ew")
-    days_frame = tk.Frame(content)
+    days_frame = tk.Frame(content, bg=COLORS["background"])
     days_frame.pack()
 
     def shift_month(offset):
@@ -56,7 +61,7 @@ def open_calendar_window(parent):
                 days_frame,
                 text=weekday,
                 width=4,
-                fg="#526078",
+                fg=COLORS["muted"], bg=COLORS["background"],
                 font=("TkDefaultFont", 9, "bold"),
             ).grid(row=0, column=column, pady=(0, 4))
 
@@ -76,8 +81,8 @@ def open_calendar_window(parent):
                     width=4,
                     padx=2,
                     pady=5,
-                    bg="#26344a" if is_today else window.cget("bg"),
-                    fg="white" if is_today else "#26344a",
+                    bg=COLORS["accent"] if is_today else COLORS["surface"],
+                    fg="white" if is_today else COLORS["ink"],
                     font=("TkDefaultFont", 10, "bold" if is_today else "normal"),
                 ).grid(row=row, column=column, padx=1, pady=1)
 

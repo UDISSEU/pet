@@ -74,7 +74,7 @@ else
     exit 2
   }
   parent_authority=${XAUTHORITY:-$HOME/.Xauthority}
-  if ! xdpyinfo -display "$DISPLAY" -auth "$parent_authority" >/dev/null 2>&1; then
+  if ! XAUTHORITY="$parent_authority" xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
     echo "Xephyr não consegue autenticar no display pai; a sessão principal não foi alterada." >&2
     exit 2
   fi
@@ -160,7 +160,7 @@ record_process server "$server_pid" "$expected_server" || {
 }
 ready=0
 for _ in $(seq 1 80); do
-  if xdpyinfo -display "$display" -auth "$RUNTIME_DIR/Xauthority" >/dev/null 2>&1; then ready=1; break; fi
+  if XAUTHORITY="$RUNTIME_DIR/Xauthority" xdpyinfo -display "$display" >/dev/null 2>&1; then ready=1; break; fi
   if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
   sleep 0.1
 done

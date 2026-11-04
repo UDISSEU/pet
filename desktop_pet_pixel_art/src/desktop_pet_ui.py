@@ -16,6 +16,7 @@ from notifications_ui import NotificationsUIMixin
 from permissions_ui import PermissionsUIMixin
 from ollama_client import save_history
 from spotify_control import spotify_connected as spotify_token_connected
+from ui_theme import COLORS, make_header
 
 
 class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMixin):
@@ -31,28 +32,23 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         self._context_popup = popup
         popup.overrideredirect(True)
         popup.attributes("-topmost", True)
-        popup.configure(bg="#D8DEEA")
-        popup.bind("<Escape>", lambda _event: popup.destroy())
-        popup.bind("<FocusOut>", lambda _event: popup.after_idle(
-            lambda: popup.destroy() if popup.winfo_exists() and
-            popup.focus_displayof() is None else None
-        ))
+        popup.configure(bg=COLORS["border"])
 
-        panel = tk.Frame(popup, bg="#F5F6FA", padx=6, pady=6,
-                         highlightthickness=1, highlightbackground="#D8DEEA")
+        panel = tk.Frame(popup, bg=COLORS["background"], padx=7, pady=7,
+                         highlightthickness=1, highlightbackground=COLORS["border"])
         panel.pack(fill="both", expand=True)
-        title_bar = tk.Frame(panel, bg="#F5F6FA")
-        title_bar.pack(fill="x", padx=3, pady=(0, 3))
+        title_bar = tk.Frame(panel, bg=COLORS["navy"], padx=9, pady=7)
+        title_bar.pack(fill="x", padx=1, pady=(0, 6))
         title_label = tk.Label(
-            title_bar, text="Nova", font=("TkDefaultFont", 10, "bold"),
-            fg="#202B45", bg="#F5F6FA", anchor="w", cursor="fleur",
+            title_bar, text="Painel Principal da Nova", font=("TkDefaultFont", 10, "bold"),
+            fg="#F7FAFC", bg=COLORS["navy"], anchor="w", cursor="fleur",
         )
         title_label.pack(side="left", fill="x", expand=True, padx=2, pady=2)
         tk.Button(
-            title_bar, text="×", command=lambda: popup.destroy(),
+            title_bar, text="×", command=lambda: close_popup(),
             relief="flat", bd=0, padx=5, pady=0, cursor="hand2",
-            font=("TkDefaultFont", 11, "bold"), fg="#68738A",
-            bg="#F5F6FA", activebackground="#E7EAF1",
+            font=("TkDefaultFont", 11, "bold"), fg=COLORS["header_muted"],
+            bg=COLORS["navy"], activebackground="#263B56",
         ).pack(side="right")
 
         drag_offset = {"x": 0, "y": 0}
@@ -77,16 +73,20 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         def close_popup():
             if popup.winfo_exists():
                 popup.destroy()
+            if self._context_popup is popup:
+                self._context_popup = None
 
-        action_grid = tk.Frame(panel, bg="#F5F6FA")
+        popup.bind("<Escape>", lambda _event: (close_popup(), "break")[1])
+
+        action_grid = tk.Frame(panel, bg=COLORS["background"])
         action_grid.pack(fill="x", pady=(0, 2))
         action_grid.grid_columnconfigure(0, weight=1, uniform="menu_action")
         action_grid.grid_columnconfigure(1, weight=1, uniform="menu_action")
 
         def action_button(label, command, row, column, primary=False):
-            bg = "#5269C8" if primary else "#FFFFFF"
-            fg = "#FFFFFF" if primary else "#28334D"
-            hover = "#4056B2" if primary else "#E9EDF5"
+            bg = COLORS["accent"] if primary else COLORS["surface"]
+            fg = "#FFFFFF" if primary else COLORS["ink"]
+            hover = "#3473CF" if primary else "#E6EDF5"
             button = tk.Button(
                 action_grid, text=label, anchor="w", command=lambda: (close_popup(), command()),
                 relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
@@ -103,7 +103,7 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         action_button("⏱  Foco e rotina", lambda: self.open_autonomy_settings("routine"), 2, 0)
         action_button("⚙  Preferências", self.open_autonomy_settings, 2, 1)
 
-        more = tk.Frame(panel, bg="#F5F6FA")
+        more = tk.Frame(panel, bg=COLORS["background"])
         expanded = {"value": False}
 
         def toggle_more():
@@ -118,14 +118,14 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         more_button = tk.Button(
             panel, text="Mostrar mais  ▾", command=toggle_more, anchor="w",
             relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
-            bg="#E9EDF5", fg="#536078", activebackground="#DDE3EF",
+            bg="#E5EBF3", fg=COLORS["muted"], activebackground="#D9E2EE",
         )
         more_button.pack(fill="x", pady=(4, 0))
 
         def section_label(parent, label):
             tk.Label(
                 parent, text=label.upper(), anchor="w", padx=6, pady=4,
-                bg="#F5F6FA", fg="#758099",
+                bg=COLORS["background"], fg=COLORS["muted"],
                 font=("TkDefaultFont", 8, "bold"),
             ).pack(fill="x", pady=(3, 0))
 
@@ -133,17 +133,17 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
             tk.Button(
                 more, text=label, anchor="w",
                 command=lambda: (close_popup(), command()), relief="flat", bd=0,
-                padx=8, pady=4, cursor="hand2", bg="#FFFFFF", fg="#28334D",
-                activebackground="#E9EDF5",
+                padx=8, pady=4, cursor="hand2", bg=COLORS["surface"], fg=COLORS["ink"],
+                activebackground="#E6EDF5",
             ).pack(fill="x", pady=1)
 
         section_label(more, "Interação")
         more_action("Falar algo", self.say_something)
         more_action("Permissões", self.open_permissions)
 
-        behavior_group = tk.Frame(more, bg="#F5F6FA")
+        behavior_group = tk.Frame(more, bg=COLORS["background"])
         behavior_group.pack(fill="x", pady=(4, 0))
-        behavior_section = tk.Frame(behavior_group, bg="#F5F6FA")
+        behavior_section = tk.Frame(behavior_group, bg=COLORS["background"])
         behavior_expanded = {"value": False}
 
         def toggle_behavior():
@@ -158,15 +158,15 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         behavior_button = tk.Button(
             behavior_group, text="Comportamento  ▾", command=toggle_behavior, anchor="w",
             relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
-            bg="#E9EDF5", fg="#536078", activebackground="#DDE3EF",
+            bg="#E5EBF3", fg=COLORS["muted"], activebackground="#D9E2EE",
         )
         behavior_button.pack(fill="x")
 
         def check_option(label, variable, command=None):
             tk.Checkbutton(
                 behavior_section, text=label, variable=variable, command=command,
-                anchor="w", padx=6, pady=2, bg="#F5F6FA", fg="#39445C",
-                activebackground="#F5F6FA", selectcolor="#FFFFFF",
+                anchor="w", padx=6, pady=2, bg=COLORS["background"], fg=COLORS["ink"],
+                activebackground=COLORS["background"], selectcolor=COLORS["surface"],
                 font=("TkDefaultFont", 8),
             ).pack(fill="x")
 
@@ -227,52 +227,48 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         window.attributes("-topmost", True)
         window.geometry("560x600")
         window.minsize(520, 550)
-        window.configure(bg="#E3E8F0")
+        window.configure(bg=COLORS["background"])
 
         style = ttk.Style(window)
-        style.configure("Autonomy.TFrame", background="#E3E8F0")
-        style.configure("Card.TFrame", background="#F5F7FA")
-        style.configure("Title.TLabel", background="#E3E8F0", foreground="#202B45", font=("TkDefaultFont", 14, "bold"))
-        style.configure("Subtitle.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
-        style.configure("CardTitle.TLabel", background="#F5F7FA", foreground="#26344A", font=("TkDefaultFont", 10, "bold"))
-        style.configure("Hint.TLabel", background="#F5F7FA", foreground="#58667C", font=("TkDefaultFont", 9))
-        style.configure("PageHint.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
-        style.configure("ComputerStatus.TLabel", background="#F5F7FA", foreground="#26344A", font=("TkDefaultFont", 10, "bold"))
-        style.configure("ComputerStatusError.TLabel", background="#F5F7FA", foreground="#B42318", font=("TkDefaultFont", 10, "bold"))
-        style.configure("ModeHint.TLabel", background="#F5F7FA", foreground="#58667C", font=("TkDefaultFont", 8))
+        style.configure("Autonomy.TFrame", background=COLORS["background"])
+        style.configure("Card.TFrame", background=COLORS["surface"])
+        style.configure("Title.TLabel", background=COLORS["background"], foreground=COLORS["ink"], font=("TkDefaultFont", 14, "bold"))
+        style.configure("Subtitle.TLabel", background=COLORS["background"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
+        style.configure("CardTitle.TLabel", background=COLORS["surface"], foreground=COLORS["ink"], font=("TkDefaultFont", 10, "bold"))
+        style.configure("Hint.TLabel", background=COLORS["surface"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
+        style.configure("PageHint.TLabel", background=COLORS["background"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
+        style.configure("ComputerStatus.TLabel", background=COLORS["surface"], foreground=COLORS["ink"], font=("TkDefaultFont", 10, "bold"))
+        style.configure("ComputerStatusError.TLabel", background=COLORS["surface"], foreground="#B42318", font=("TkDefaultFont", 10, "bold"))
+        style.configure("ModeHint.TLabel", background=COLORS["surface"], foreground=COLORS["muted"], font=("TkDefaultFont", 8))
         style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
         style.configure("Secondary.TButton", padding=(12, 8))
         style.configure("Nav.TButton", padding=(4, 2))
         style.configure(
-            "TabNav.TLabel", background="#E3E8F0", foreground="#202B45",
+            "TabNav.TLabel", background=COLORS["background"], foreground=COLORS["ink"],
             font=("TkDefaultFont", 11, "bold"),
         )
         style.configure(
-            "Maintenance.Treeview", background="#F5F7FA", fieldbackground="#F5F7FA",
-            foreground="#26344A", rowheight=28, borderwidth=0,
+            "Maintenance.Treeview", background=COLORS["surface"], fieldbackground=COLORS["surface"],
+            foreground=COLORS["ink"], rowheight=28, borderwidth=0,
         )
         style.configure(
-            "Maintenance.Treeview.Heading", background="#E3E8F0",
-            foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+            "Maintenance.Treeview.Heading", background=COLORS["background"],
+            foreground=COLORS["ink"], font=("TkDefaultFont", 9, "bold"),
         )
         style.configure(
-            "History.Treeview", background="#F5F7FA", fieldbackground="#F5F7FA",
-            foreground="#26344A", rowheight=27, borderwidth=0,
+            "History.Treeview", background=COLORS["surface"], fieldbackground=COLORS["surface"],
+            foreground=COLORS["ink"], rowheight=27, borderwidth=0,
         )
         style.configure(
-            "History.Treeview.Heading", background="#E3E8F0",
-            foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+            "History.Treeview.Heading", background=COLORS["background"],
+            foreground=COLORS["ink"], font=("TkDefaultFont", 9, "bold"),
         )
         style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
 
-        outer = ttk.Frame(window, style="Autonomy.TFrame", padding=(22, 18, 22, 14))
+        make_header(window, "Preferências", "Personalize comportamento, rotina, memória e integrações.",
+                    eyebrow="NOVA  /  CONFIGURAÇÕES")
+        outer = ttk.Frame(window, style="Autonomy.TFrame", padding=(16, 12, 16, 12))
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="Preferências da Nova", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(
-            outer,
-            text="Ajuste o ritmo, a rotina e o que ela pode lembrar ou fazer.",
-            style="Subtitle.TLabel",
-        ).pack(anchor="w", pady=(3, 14))
 
         notebook = ttk.Frame(outer, style="Autonomy.TFrame")
         tab_navigation = ttk.Frame(outer, style="Autonomy.TFrame")
@@ -321,7 +317,7 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         def scrollable_tab():
             tab = ttk.Frame(notebook, style="Autonomy.TFrame")
             canvas = tk.Canvas(
-                tab, bg="#E3E8F0", bd=0, highlightthickness=0,
+                tab, bg=COLORS["background"], bd=0, highlightthickness=0,
                 yscrollincrement=24,
             )
             scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)

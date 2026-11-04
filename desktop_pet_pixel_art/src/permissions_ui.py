@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from permissions import SENSITIVE
+from ui_theme import COLORS, make_header
 
 CORE_PERMISSIONS = (
     ("file.read", "Ler arquivos selecionados"),
@@ -40,23 +41,37 @@ class PermissionsUIMixin:
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
         self._permissions_window = window
         window.title("Permissões da Nova")
-        window.geometry("520x600")
-        frame = ttk.Frame(window, padding=16)
+        window.geometry("560x640")
+        window.minsize(500, 500)
+        window.configure(bg=COLORS["background"])
+        make_header(window, "Permissões", "Controle o que a Nova e cada habilidade podem acessar.",
+                    eyebrow="NOVA  /  PRIVACIDADE")
+        frame = tk.Frame(window, bg=COLORS["background"], padx=14, pady=12)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Permissões", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(frame, text="Permissões revogadas bloqueiam a próxima execução. Ações destrutivas ainda pedem confirmação.",
-                  style="Subtitle.TLabel", wraplength=470).pack(anchor="w", pady=(5, 12))
-        canvas = tk.Canvas(frame, highlightthickness=0, bg="#F5F6FA")
-        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
-        content = ttk.Frame(canvas, padding=4)
+        notice = tk.Frame(frame, bg=COLORS["surface"], padx=11, pady=9,
+                          highlightbackground=COLORS["border"], highlightthickness=1)
+        notice.pack(fill="x", pady=(0, 10))
+        tk.Label(notice, text="Acesso sob seu controle", bg=COLORS["surface"],
+                 fg=COLORS["ink"], font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
+        tk.Label(notice, text="Revogações valem na próxima execução. Ações destrutivas continuam pedindo confirmação.",
+                 bg=COLORS["surface"], fg=COLORS["muted"], font=("TkDefaultFont", 9),
+                 wraplength=490, justify="left").pack(anchor="w", pady=(3, 0))
+        list_frame = tk.Frame(frame, bg=COLORS["surface"], padx=10, pady=7,
+                              highlightbackground=COLORS["border"], highlightthickness=1)
+        list_frame.pack(fill="both", expand=True)
+        canvas = tk.Canvas(list_frame, highlightthickness=0, bg=COLORS["surface"])
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        content = tk.Frame(canvas, bg=COLORS["surface"], padx=4)
         content.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=content, anchor="nw")
+        content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(content_window, width=event.width))
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
         def add_owner(owner_id, owner_label, rows):
-            ttk.Label(content, text=owner_label, style="Title.TLabel").pack(anchor="w", pady=(9, 4))
+            tk.Label(content, text=owner_label, bg=COLORS["surface"], fg=COLORS["ink"],
+                     font=("TkDefaultFont", 10, "bold"), anchor="w").pack(anchor="w", pady=(9, 4))
             for permission, label in rows:
                 variable = tk.BooleanVar(value=self.permission_manager.allowed(owner_id, permission))
                 def toggle(permission=permission, variable=variable, owner_id=owner_id,
@@ -75,7 +90,7 @@ class PermissionsUIMixin:
                     except (OSError, PermissionError) as exc:
                         messagebox.showerror("Não foi possível salvar", str(exc), parent=window)
                         variable.set(self.permission_manager.allowed(owner_id, permission))
-                ttk.Checkbutton(content, text=label, variable=variable, command=toggle).pack(anchor="w", padx=10, pady=2)
+                ttk.Checkbutton(content, text=label, variable=variable, command=toggle).pack(anchor="w", padx=8, pady=3)
 
         add_owner("nova.core", "Nova (recursos internos)", CORE_PERMISSIONS)
         for plugin_id in sorted(self.plugin_manager._plugins):

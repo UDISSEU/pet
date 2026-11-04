@@ -11,6 +11,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SoakHarnessTests(unittest.TestCase):
+    def test_gui_cleanup_removes_soak_log_and_private_session(self):
+        with tempfile.TemporaryDirectory(prefix="nova-gui-cleanup-") as parent:
+            session = Path(parent) / "session"
+            session.mkdir(mode=0o700)
+            (session / ".nova-gui-session").write_text(f"owner={os.getuid()}\n")
+            (session / "processes.tsv").write_text("")
+            (session / "soak.log").write_text("finished\n")
+            result = subprocess.run(
+                [str(ROOT / "tools" / "nova_gui_cleanup.sh"), str(session)],
+                cwd=ROOT, capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(session.exists())
+
     def test_short_run_records_real_service_and_process_metrics(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             report = Path(temp_dir) / "soak.jsonl"

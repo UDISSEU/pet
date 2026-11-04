@@ -98,6 +98,6 @@ done < <(tac "$run_dir/processes.tsv")
 
 rm -f -- "$run_dir/Xauthority" "$run_dir/display" "$run_dir/processes.tsv" "$run_dir/.nova-gui-session"
 rm -rf -- "$run_dir/home" "$run_dir/config" "$run_dir/cache" "$run_dir/data" "$run_dir/run"
-rm -f -- "$run_dir/xserver.log" "$run_dir/smoke.log" "$run_dir/nova.log"
+rm -f -- "$run_dir/xserver.log" "$run_dir/smoke.log" "$run_dir/nova.log" "$run_dir/soak.log"
 rmdir -- "$run_dir" 2>/dev/null || true
 echo "Limpeza concluída para a sessão $run_dir"

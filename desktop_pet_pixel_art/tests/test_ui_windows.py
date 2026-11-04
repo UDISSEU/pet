@@ -66,6 +66,21 @@ class TkWindowSmokeTests(unittest.TestCase):
                 dashboard.geometry("560x540")
                 root.update_idletasks()
                 root.update()
+                deadline = time.monotonic() + 5
+                metrics_loaded = False
+                while time.monotonic() < deadline:
+                    root.update_idletasks()
+                    root.update()
+                    metrics_loaded = any(
+                        isinstance(widget, tk.Label)
+                        and widget.cget("text").startswith("CPU:")
+                        and widget.cget("text") != "CPU: —"
+                        for widget in descendants(dashboard)
+                    )
+                    if metrics_loaded:
+                        break
+                    time.sleep(0.01)
+                self.assertTrue(metrics_loaded, "Dashboard não exibiu métricas coletadas")
                 capture_dir = os.environ.get("NOVA_GUI_CAPTURE_DIR")
                 if capture_dir:
                     from PIL import ImageGrab
@@ -88,15 +103,6 @@ class TkWindowSmokeTests(unittest.TestCase):
                             bbox=(left, top, left + width, top + height)
                         )
                         image.save(Path(capture_dir) / f"{name}.png")
-                deadline = time.monotonic() + 2
-                while time.monotonic() < deadline:
-                    root.update_idletasks()
-                    root.update()
-                    if any(isinstance(widget, ttk.Label)
-                           and "CPU:" in widget.cget("text")
-                           for widget in descendants(dashboard)):
-                        break
-                    time.sleep(0.01)
                 self.assertGreater(dashboard.winfo_width(), 1)
                 windows = [child for child in root.winfo_children()
                            if isinstance(child, tk.Toplevel)]
@@ -104,6 +110,16 @@ class TkWindowSmokeTests(unittest.TestCase):
                 self.assertEqual(titles, {
                     "Painel da Nova", "Notificações da Nova", "Permissões da Nova",
                 })
+                silent_control = next(
+                    widget for widget in descendants(notifications)
+                    if isinstance(widget, ttk.Checkbutton)
+                    and widget.cget("text") == "Modo silencioso"
+                )
+                self.assertGreater(silent_control.winfo_height(), 0)
+                self.assertLessEqual(
+                    silent_control.winfo_rootx() + silent_control.winfo_width(),
+                    notifications.winfo_rootx() + notifications.winfo_width(),
+                )
                 self.assertTrue(all(window.winfo_exists() for window in windows))
                 self.assertTrue(all(window.winfo_ismapped() for window in windows))
                 for window in windows:

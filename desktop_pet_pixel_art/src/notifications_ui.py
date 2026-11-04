@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from notifications import NotificationCategory
+from ui_theme import COLORS, make_header
 
 
 class NotificationsUIMixin:
@@ -20,24 +21,35 @@ class NotificationsUIMixin:
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
         self._notifications_window = window
         window.title("Notificações da Nova")
-        window.geometry("520x500")
-        header = ttk.Frame(window, padding=14)
-        header.pack(fill="x")
-        ttk.Label(header, text=f"Notificações · {self.notification_manager.unread_count} não lidas",
-                  style="Title.TLabel").pack(side="left")
-        body = ttk.Frame(window, padding=(14, 0, 14, 14))
+        window.geometry("560x540")
+        window.minsize(500, 420)
+        window.configure(bg=COLORS["background"])
+        make_header(window, "Notificações", "Acompanhe avisos e ajuste como a Nova se comunica.",
+                    eyebrow="NOVA  /  CENTRAL DE AVISOS")
+        unread_badge = tk.Label(window, text=f"{self.notification_manager.unread_count} não lidas",
+                                bg=COLORS["background"], fg=COLORS["muted"],
+                                font=("TkDefaultFont", 9, "bold"), anchor="e")
+        unread_badge.pack(fill="x", padx=16, pady=(8, 0))
+        body = tk.Frame(window, bg=COLORS["background"], padx=14, pady=8)
         body.pack(fill="both", expand=True)
-        filters = ttk.Frame(body)
+        filters = tk.Frame(body, bg=COLORS["surface"], padx=10, pady=8,
+                            highlightbackground=COLORS["border"], highlightthickness=1)
         filters.pack(fill="x", pady=(0, 8))
         category = tk.StringVar(value="Todas")
         options = ("Todas", *(item.value for item in NotificationCategory))
-        ttk.Label(filters, text="Categoria:").pack(side="left")
+        tk.Label(filters, text="Categoria", bg=COLORS["surface"], fg=COLORS["muted"],
+                 font=("TkDefaultFont", 9, "bold")).pack(side="left")
         chooser = ttk.Combobox(filters, textvariable=category, values=options, state="readonly", width=18)
         chooser.pack(side="left", padx=6)
         enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(filters, text="Ativar categoria", variable=enabled).pack(side="left")
-        listing = tk.Listbox(body, activestyle="none", bg="white", fg="#28334D",
-                             relief="flat", font=("TkDefaultFont", 10))
+        list_card = tk.Frame(body, bg=COLORS["surface"], padx=7, pady=7,
+                             highlightbackground=COLORS["border"], highlightthickness=1)
+        list_card.pack(fill="both", expand=True)
+        listing = tk.Listbox(list_card, activestyle="none", bg=COLORS["surface"], fg=COLORS["ink"],
+                             selectbackground="#DCE9FA", selectforeground=COLORS["ink"],
+                             relief="flat", borderwidth=0, font=("TkDefaultFont", 10),
+                             highlightthickness=0, selectmode="browse")
         listing.pack(fill="both", expand=True)
         active = []
 
@@ -52,6 +64,7 @@ class NotificationsUIMixin:
                 listing.insert("end", f"{'●' if not item.read else '○'} [{item.category.value}] {item.title} — {item.message}")
             enabled.set(True if selected_category == "Todas" else
                         self.notification_manager.categories.get(selected_category, True))
+            unread_badge.configure(text=f"{self.notification_manager.unread_count} não lidas")
 
         def set_category_enabled(*_args):
             if category.get() != "Todas":
@@ -62,6 +75,10 @@ class NotificationsUIMixin:
         refill()
         actions = ttk.Frame(body)
         actions.pack(fill="x", pady=(10, 0))
+        action_buttons = ttk.Frame(actions)
+        action_buttons.pack(fill="x")
+        options = ttk.Frame(actions)
+        options.pack(fill="x", pady=(4, 0))
 
         def selected():
             selection = listing.curselection()
@@ -81,14 +98,14 @@ class NotificationsUIMixin:
 
         window.protocol("WM_DELETE_WINDOW", close_window)
 
-        ttk.Button(actions, text="Marcar como lida",
+        ttk.Button(action_buttons, text="Marcar como lida",
                    command=lambda: update_and_reopen(self.notification_manager.mark_read)).pack(side="left")
-        ttk.Button(actions, text="Descartar",
+        ttk.Button(action_buttons, text="Descartar",
                    command=lambda: update_and_reopen(self.notification_manager.dismiss)).pack(side="left", padx=6)
-        ttk.Button(actions, text="Limpar descartadas",
+        ttk.Button(action_buttons, text="Limpar descartadas",
                    command=lambda: (self.notification_manager.clear_dismissible(), close_window(),
                                     self.show_notifications())).pack(side="left", padx=6)
         silent = tk.BooleanVar(value=self.notification_manager.silent)
-        ttk.Checkbutton(actions, text="Modo silencioso", variable=silent,
+        ttk.Checkbutton(options, text="Modo silencioso", variable=silent,
                         command=lambda: self.notification_manager.set_silent(silent.get())).pack(side="right")
         return window

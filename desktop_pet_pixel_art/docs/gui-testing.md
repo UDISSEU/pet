@@ -82,21 +82,65 @@ O soak gráfico mantém a janela da Nova aberta durante o cenário. Não inicia
 por padrão durante a suíte normal. Teste de seleção de quadros não mede
 fluidez visual; capturas também não constituem aprovação estética.
 
-## Diagnóstico do ambiente auditado
+## Diagnóstico e validação da Fase 6.2
 
-Neste host foram encontrados Xvfb, xvfb-run, Xephyr, Xwayland, xauth,
-xdpyinfo, xwd, wmctrl, Tk 8.6, Pillow e psutil. Não foram encontrados Weston,
-xdotool nem xwdtopnm; o último não é necessário para as capturas PNG.
+Xvfb, Xephyr, Xwayland, xauth, xdpyinfo, wmctrl, Tk 8.6, Pillow e psutil estão
+instalados. Weston e xdotool não estão instalados. Xephyr não pôde ser usado
+porque o display pai `:0.0` não aceita conexão autenticada neste ambiente;
+Xwayland precisaria de um compositor Wayland ativo.
 
-O início direto do Xvfb com display :187, -nolisten tcp e Xauthority privado
-falhou ao criar sockets UNIX. /tmp/.X11-unix está como
-drwxrwxrwt nobody:nogroup; o X server exige que essa pasta pertença a root.
-Uma tentativa de usar um /tmp privado por Bubblewrap também falhou: o host
-nega bind() de sockets UNIX no sandbox. Nenhuma propriedade ou permissão
-global foi modificada. O executor para antes de iniciar o X server e informa
-essa condição. Xephyr depende de um X pai acessível; Weston não está instalado.
+O sandbox do executor apresenta `/tmp/.X11-unix` como uid 65534 e bloqueia o
+bind de sockets UNIX. Já fora do sandbox, como o mesmo usuário normal, o
+diretório aparece como uid 0; não foi necessário sudo nem qualquer alteração
+global. O Xvfb iniciou no display dinâmico :90 com `-nolisten tcp`, criou seu
+socket local e aceitou conexão autenticada. O encerramento removeu o socket e
+o lock temporários. O Xauthority ficou em diretório privado (700/600).
 
-Consequentemente, smoke test gráfico e capturas não foram executados neste
-host, e não há avaliação visual. Em outro host o script inicia o display,
-verifica xdpyinfo com Xauthority antes dos testes e encerra se a verificação
-falhar. Linux Mint/Wayland não foram validados visualmente aqui.
+A investigação também encontrou que `xdpyinfo` não aceita `-auth`. O executor
+foi corrigido para passar o arquivo pela variável `XAUTHORITY`; a checagem do
+display pai do Xephyr usa o mesmo método.
+
+O smoke test real abriu e fechou as janelas, verificou reutilização, foco,
+permissões, notificações, atualização do dashboard, fechamento e reabertura.
+Passou: 1 teste, sem falha. Após adicionar a regressão para limpeza de sessão,
+a suíte completa executou 155 testes: 153 passaram e 2 foram ignorados (UI
+sem display no sandbox e isolamento de rede bloqueado pelo host). Foram
+capturadas e examinadas:
+
+- `/tmp/nova-gui-reports-phase62/character.png` — Nova real em animação; a
+  captura em Xvfb sem compositor mostra fundo preto e a área branca da imagem,
+  então ela confirma renderização e posição, mas não transparência composta.
+- `/tmp/nova-gui-reports-phase62/nova-gui-capture.6l6MR0/dashboard.png` —
+  métricas reais preenchidas.
+- `.../notifications.png` — lista e controles legíveis, incluindo modo
+  silencioso.
+- `.../permissions.png` — controles e rolagem visíveis; lista longa requer
+  rolagem.
+
+A captura revelou que o controle de modo silencioso era cortado na linha de
+botões. Ele foi movido para uma segunda linha. Também foi corrigida a ordem de
+captura do dashboard, que agora espera as métricas assíncronas. Linux Mint,
+Wayland, transparência composta e escala HiDPI não foram validados. Não houve
+instalação de dependências; se faltarem num sistema Debian/Ubuntu/Mint, podem
+ser instaladas manualmente com `sudo apt install xvfb xauth x11-utils
+python3-tk`.
+
+O soak gráfico de 30 minutos terminou em 1.800 segundos, com 180 amostras e
+encerramento limpo. RSS da Nova: mínimo 107 MiB, pico 543 MiB durante a carga
+inicial e 170 MiB ao final. CPU: mínimo 12,6%, pico inicial 176,4% e 16,7% na
+última amostra. Threads: máximo 20 na inicialização e 12 ao final. Não houve
+filhos da Nova ou do Xvfb; filas de eventos e callbacks variaram entre 0 e 1 e
+terminaram em 0. O histórico de notificações chegou a 30; o histórico de
+métricas permaneceu no limite de 120. O worker do harness encerrou e não
+restaram processos, sockets de teste ou diretórios de sessão. A execução
+também revelou que a limpeza deixava `soak.log`; o script agora remove esse
+arquivo, com teste de regressão. JSONL:
+`/tmp/nova-gui-reports-phase62/nova-soak-30m-20261104-100718.jsonl`.
+
+Neste executor Codex, a execução padrão fica dentro do sandbox, que não pode
+criar o socket X. Para executar manualmente no terminal normal do usuário, use
+`tools/nova_gui_test.sh --reports /tmp/nova-gui-reports capture` e depois
+`tools/nova_gui_test.sh --reports /tmp/nova-gui-reports soak 30m`. O script
+mantém Xauthority privada, escolhe display livre, desliga TCP e limpa os
+processos ao terminar; não requer sudo quando o diretório do host está
+configurado normalmente.
