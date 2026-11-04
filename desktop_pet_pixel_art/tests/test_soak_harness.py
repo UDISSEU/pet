@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -16,7 +17,8 @@ class SoakHarnessTests(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, str(ROOT / "tools" / "nova_soak.py"),
                  "--scenario", "30m", "--duration-seconds", "0.15",
-                 "--sample-interval", "0.03", "--output", str(report)],
+                 "--sample-interval", "0.03", "--target-pid", str(os.getpid()),
+                 "--output", str(report)],
                 cwd=ROOT, capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -28,6 +30,9 @@ class SoakHarnessTests(unittest.TestCase):
             self.assertIn("cpu_percent", samples[0])
             self.assertIn("threads", samples[0])
             self.assertIn("event_queue", samples[0])
+            self.assertIn("nova_cpu_percent", samples[0])
+            self.assertIn("nova_memory", samples[0])
+            self.assertIn("nova_worker_threads_estimate", samples[0])
             self.assertLessEqual(summary["notification_history_final"], 200)
             self.assertLessEqual(summary["monitor_history_final"], 120)
             self.assertTrue(summary["worker_stopped"])

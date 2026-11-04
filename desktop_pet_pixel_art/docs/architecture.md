@@ -72,6 +72,9 @@ Execute da raiz do projeto:
 
 Os testes de integração com provedores usam mocks; uma sessão Ollama, chaves e internet não são necessárias. `tests/test_ui_windows.py` abre e fecha as três janelas se Tk puder conectar a um display; sem display, o teste fica marcado como ignorado.
 
+Para executar o smoke test em display isolado, capturar PNGs ou iniciar a
+aplicação e o soak em conjunto, consulte [Testes gráficos isolados](gui-testing.md).
+
 ## Componentes extensíveis
 
 `EventBus.post(event)` recebe resultados de IA e automações em workers sem chamar assinantes; a UI consome a fila com `drain()` no ciclo Tkinter. Widgets são atualizados apenas na thread principal. Mudanças de estado e animação são publicadas no ciclo principal. Para uma habilidade interna confiável, implemente `Plugin`, declare `PluginManifest` e registre explicitamente a instância no `PluginManager`. Confirme permissões no momento da operação com `PermissionManager.require`; declarar uma permissão no manifesto não concede acesso. O menu **Permissões** permite revisar e revogar grants da Nova e das habilidades registradas.

@@ -1,4 +1,5 @@
 """Tk window smoke tests; skipped when this runtime has no usable display."""
+import os
 import tempfile
 import tkinter as tk
 import time
@@ -63,6 +64,30 @@ class TkWindowSmokeTests(unittest.TestCase):
                 self.assertIs(pet.show_notifications(), notifications)
                 self.assertIs(pet.open_permissions(), permissions)
                 dashboard.geometry("560x540")
+                root.update_idletasks()
+                root.update()
+                capture_dir = os.environ.get("NOVA_GUI_CAPTURE_DIR")
+                if capture_dir:
+                    from PIL import ImageGrab
+
+                    Path(capture_dir).mkdir(parents=True, exist_ok=True)
+                    for name, window in (
+                        ("dashboard", dashboard),
+                        ("notifications", notifications),
+                        ("permissions", permissions),
+                    ):
+                        window.deiconify()
+                        window.lift()
+                        window.update_idletasks()
+                        root.update()
+                        left, top = window.winfo_rootx(), window.winfo_rooty()
+                        width, height = window.winfo_width(), window.winfo_height()
+                        if width < 2 or height < 2 or not window.winfo_ismapped():
+                            self.fail(f"Janela {name} não ficou visível para captura")
+                        image = ImageGrab.grab(
+                            bbox=(left, top, left + width, top + height)
+                        )
+                        image.save(Path(capture_dir) / f"{name}.png")
                 deadline = time.monotonic() + 2
                 while time.monotonic() < deadline:
                     root.update_idletasks()
@@ -80,6 +105,20 @@ class TkWindowSmokeTests(unittest.TestCase):
                     "Painel da Nova", "Notificações da Nova", "Permissões da Nova",
                 })
                 self.assertTrue(all(window.winfo_exists() for window in windows))
+                self.assertTrue(all(window.winfo_ismapped() for window in windows))
+                for window in windows:
+                    self.assertGreater(window.winfo_width(), 1)
+                    self.assertGreater(window.winfo_height(), 1)
+                    self.assertGreaterEqual(window.winfo_rootx(), 0)
+                    self.assertGreaterEqual(window.winfo_rooty(), 0)
+                    self.assertLessEqual(
+                        window.winfo_rootx() + window.winfo_width(),
+                        root.winfo_screenwidth(),
+                    )
+                    self.assertLessEqual(
+                        window.winfo_rooty() + window.winfo_height(),
+                        root.winfo_screenheight(),
+                    )
                 permission_toggle = next(
                     widget for widget in descendants(permissions)
                     if isinstance(widget, ttk.Checkbutton)
