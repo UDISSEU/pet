@@ -7,6 +7,16 @@ from tkinter import messagebox, ttk
 
 class DashboardUIMixin:
     def show_dashboard(self):
+        existing = getattr(self, "_dashboard_window", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_set()
+                    return existing
+            except tk.TclError:
+                pass
         try:
             self._authorize_core_action("system.cpu.read")
             self._authorize_core_action("system.memory.read")
@@ -15,6 +25,7 @@ class DashboardUIMixin:
             messagebox.showerror("Permissão necessária", str(exc), parent=self.root)
             return
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
+        self._dashboard_window = window
         window.title("Painel da Nova")
         window.geometry("500x510")
         style = ttk.Style(window)
@@ -88,6 +99,9 @@ class DashboardUIMixin:
         chooser.bind("<<ComboboxSelected>>", save_interval)
         def on_close():
             state["closed"] = True
+            if getattr(self, "_dashboard_window", None) is window:
+                self._dashboard_window = None
             window.destroy()
         window.protocol("WM_DELETE_WINDOW", on_close)
         refresh()
+        return window

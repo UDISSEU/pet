@@ -6,6 +6,9 @@ import shutil
 import sys
 import queue
 import threading
+import os
+import time
+import subprocess
 from unittest import mock
 
 from event_bus import Event, EventBus, EventType
@@ -17,6 +20,16 @@ from system_monitor import SystemMonitor
 
 
 class ArchitectureTests(unittest.TestCase):
+    def make_external_process(self, directory, script, **limits):
+        from plugin_manager import IsolatedPluginProcess
+        root = Path(directory)
+        plugin_file = root / "resource_probe.py"
+        plugin_file.write_text(script, encoding="utf-8")
+        return IsolatedPluginProcess(
+            ["/usr/bin/python3", plugin_file.name], cwd=root,
+            network_access=True, **limits,
+        )
+
     def test_state_priority_and_temporary_restore(self):
         manager = StateManager()
         self.assertTrue(manager.transition("greeting", temporary=True))
@@ -184,11 +197,20 @@ class ArchitectureTests(unittest.TestCase):
             permissions = PermissionManager(root / "permissions.json")
             permissions.authorize("ext_skill", "network.access", confirmed=True)
             manager = PluginManager(permission_manager=permissions)
-            self.assertTrue(manager.register_external_manifest(manifest))
-            self.assertTrue(manager.activate("ext_skill"))
-            self.assertEqual(manager.execute_external("ext_skill", "network.access", "query",
-                                                       confirmed=True), ["query", False, False])
-            manager.shutdown()
+            spawned = []
+            popen = __import__("plugin_manager").subprocess.Popen
+            def capture(*args, **kwargs):
+                process = popen(*args, **kwargs)
+                spawned.append(process)
+                return process
+            with mock.patch("plugin_manager.subprocess.Popen", side_effect=capture):
+                self.assertTrue(manager.register_external_manifest(manifest))
+                self.assertTrue(manager.activate("ext_skill"))
+                self.assertEqual(manager.execute_external("ext_skill", "network.access", "query",
+                                                           confirmed=True), ["query", False, False])
+                manager.shutdown()
+            self.assertGreaterEqual(len(spawned), 5)
+            self.assertTrue(all(process.poll() is not None for process in spawned))
 
     def test_ai_worker_delivers_result_on_event_bus(self):
         from desktop_pet import DesktopPet
@@ -206,6 +228,51 @@ class ArchitectureTests(unittest.TestCase):
         self.assertEqual([event.type for event in observed],
                          [EventType.AI_REQUEST_STARTED, EventType.AI_RESPONSE_RECEIVED])
         self.assertEqual(observed[-1].payload["answer"], "resposta local")
+
+    def test_ai_and_automation_workers_complete_concurrently(self):
+        from desktop_pet import DesktopPet
+        with tempfile.TemporaryDirectory() as directory:
+            pet = DesktopPet.__new__(DesktopPet)
+            pet.event_bus = EventBus()
+            pet.permission_manager = PermissionManager(Path(directory) / "permissions.json")
+            pet.permission_manager.authorize("nova.core", "ai.use")
+            pet.permission_manager.authorize("nova.core", "file.read")
+            pet.settings = {"ai_provider": "ollama"}
+            pet._authorize_core_action = lambda permission, confirmed=False: pet.permission_manager.require(
+                "nova.core", permission, confirmed=confirmed)
+            ready = threading.Barrier(2)
+            received = []
+            pet.event_bus.subscribe(EventType.AI_RESPONSE_RECEIVED, received.append)
+            pet.event_bus.subscribe(EventType.TASK_FINISHED, received.append)
+            automation = {"id": "large_files", "executor": lambda: (
+                ready.wait(timeout=2), {"title": "relatório", "lines": [], "status": "ok"},
+            )[1]}
+            with mock.patch("desktop_pet.answer_request", side_effect=lambda *args, **kwargs: (
+                    ready.wait(timeout=2), "resposta em paralelo")[1]):
+                workers = [
+                    threading.Thread(target=pet._ask_worker, args=([],), kwargs={"settings": pet.settings}),
+                    threading.Thread(target=pet._automation_worker, args=(automation,)),
+                ]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(timeout=3)
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+            pet.event_bus.drain()
+            self.assertCountEqual(
+                [event.type for event in received],
+                [EventType.AI_RESPONSE_RECEIVED, EventType.TASK_FINISHED],
+            )
+
+    def test_notification_burst_keeps_history_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = NotificationManager(
+                Path(directory) / "notifications.json", limit=25, cooldown_seconds=0,
+            )
+            for index in range(60):
+                manager.create(f"Aviso {index}", "mensagem", persistent=True)
+            self.assertEqual(len(manager.items), 25)
+            self.assertEqual(manager.items[0].title, "Aviso 35")
 
     def test_worker_ui_callback_runs_only_when_main_thread_drains(self):
         from desktop_pet import DesktopPet
@@ -291,12 +358,19 @@ class ArchitectureTests(unittest.TestCase):
             permissions.authorize("isolated_check", "file.read")
             manager = PluginManager(permission_manager=permissions)
             self.assertTrue(manager.register_external_manifest(manifest))
+            capability = subprocess.run(
+                [shutil.which("bwrap"), "--unshare-user", "--unshare-pid", "--unshare-net",
+                 "--ro-bind", "/usr", "/usr", "--proc", "/proc", "--dev", "/dev", "--", "true"],
+                capture_output=True, text=True, timeout=3, check=False,
+            )
+            if capability.returncode:
+                self.assertFalse(manager.activate("isolated_check"))
+                self.assertNotIn("isolated_check", manager._active)
+                self.skipTest("host blocks Bubblewrap network namespace; plugin remained inactive")
             if not manager.activate("isolated_check"):
-                # Restricted containers may deny network namespaces. Failure must
-                # leave the plugin inactive rather than rerunning it unsandboxed.
                 self.assertNotIn("isolated_check", manager._active)
                 self.assertTrue(manager.errors)
-                return
+                self.fail("Bubblewrap namespace probe succeeded but plugin activation failed")
             result = manager.execute_external("isolated_check", "file.read", "probe")
             self.assertEqual(result, {"file": False, "network": False, "credential": False})
             manager.shutdown()
@@ -343,8 +417,137 @@ class ArchitectureTests(unittest.TestCase):
             (root / "slow.py").write_text("import time\ntime.sleep(2)\n", encoding="utf-8")
             plugin = __import__("plugin_manager").IsolatedPluginProcess(
                 ["/usr/bin/python3", "slow.py"], cwd=root, timeout=0.1, network_access=True)
-            with self.assertRaises(TimeoutError):
-                plugin.request("slow")
+            spawned = []
+            popen = __import__("plugin_manager").subprocess.Popen
+            def capture(*args, **kwargs):
+                process = popen(*args, **kwargs)
+                spawned.append(process)
+                return process
+            with mock.patch("plugin_manager.subprocess.Popen", side_effect=capture):
+                with self.assertRaises(TimeoutError):
+                    plugin.request("slow")
+            self.assertEqual(len(spawned), 1)
+            self.assertIsNotNone(spawned[0].poll())
+            spawned[0].wait(timeout=1)
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                try:
+                    os.killpg(spawned[0].pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("plugin process group remained after timeout cleanup")
+
+    def test_close_app_clears_callbacks_stops_monitor_and_ignores_late_posts(self):
+        from desktop_pet import DesktopPet
+        with tempfile.TemporaryDirectory() as directory:
+            pet = DesktopPet.__new__(DesktopPet)
+            pet._closing = False
+            pet.event_bus = EventBus()
+            pet.plugin_manager = mock.Mock()
+            pet.permission_manager = PermissionManager(Path(directory) / "permissions.json")
+            pet.permission_manager.authorize("nova.core", "file.read")
+            pet._ui_callbacks = queue.Queue()
+            pet._ui_callbacks.put((lambda: self.fail("callback ran after close"), (), {}))
+            pet._device_monitor_stop = threading.Event()
+            pet._device_monitor_thread = threading.Thread(
+                target=lambda: pet._device_monitor_stop.wait(5), daemon=True,
+            )
+            pet._device_monitor_thread.start()
+            pet._device_announcement_retry_job = "pending-retry"
+            pet._animation_loader = mock.Mock()
+            pet.root = mock.Mock()
+            entered, release = threading.Event(), threading.Event()
+            automation = {"id": "large_files", "executor": lambda: (
+                entered.set(), release.wait(2),
+                {"title": "done", "lines": [], "status": "ok"},
+            )[2]}
+            worker = threading.Thread(target=pet._automation_worker, args=(automation,), daemon=True)
+            worker.start()
+            self.assertTrue(entered.wait(1))
+            pet.close_app()
+            release.set()
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(pet.event_bus._closed)
+            self.assertEqual(pet.event_bus.drain(), 0)
+            self.assertTrue(pet._closing)
+            self.assertTrue(pet._device_monitor_stop.is_set())
+            self.assertFalse(pet._device_monitor_thread.is_alive())
+            self.assertTrue(pet._ui_callbacks.empty())
+            self.assertFalse(pet.post_ui_callback(lambda: None))
+            pet._drain_ui_callbacks()
+            pet.plugin_manager.shutdown.assert_called_once_with()
+            pet._animation_loader.close.assert_called_once_with()
+            pet.root.after_cancel.assert_called_once_with("pending-retry")
+            pet.root.destroy.assert_called_once_with()
+            pet.close_app()
+            pet.plugin_manager.shutdown.assert_called_once_with()
+
+    @unittest.skipUnless(shutil.which("bwrap") and shutil.which("prlimit"),
+                         "bubblewrap and prlimit are needed for resource limit tests")
+    def test_external_plugin_cpu_limit_kills_process_and_cleans_process_group(self):
+        from plugin_manager import IsolatedPluginProcess
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self.make_external_process(directory, "while True: pass\n",
+                                                cpu_seconds=1, timeout=5)
+            spawned = []
+            popen = __import__("plugin_manager").subprocess.Popen
+            def capture(*args, **kwargs):
+                process = popen(*args, **kwargs)
+                spawned.append(process)
+                return process
+            started = time.monotonic()
+            with mock.patch("plugin_manager.subprocess.Popen", side_effect=capture):
+                with self.assertRaises(RuntimeError):
+                    plugin.request("burn")
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertEqual(len(spawned), 1)
+            self.assertIsNotNone(spawned[0].poll())
+            spawned[0].wait(timeout=1)
+            with self.assertRaises(ProcessLookupError):
+                os.killpg(spawned[0].pid, 0)
+
+    @unittest.skipUnless(shutil.which("bwrap") and shutil.which("prlimit"),
+                         "bubblewrap and prlimit are needed for resource limit tests")
+    def test_external_plugin_memory_limit_is_enforced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = (
+                "import json\n"
+                "try:\n"
+                " memory=bytearray(256*1024*1024); result='allocated'\n"
+                "except MemoryError:\n"
+                " result='limited'\n"
+                "print(json.dumps({'protocol':1,'ok':True,'result':result}))\n"
+            )
+            plugin = self.make_external_process(
+                directory, script, memory_bytes=64 * 1024 * 1024, timeout=5,
+            )
+            self.assertEqual(plugin.request("allocate"), "limited")
+
+    @unittest.skipUnless(shutil.which("bwrap") and shutil.which("prlimit"),
+                         "bubblewrap and prlimit are needed for resource limit tests")
+    def test_external_plugin_process_limit_is_enforced_and_children_are_reaped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = (
+                "import json,subprocess,sys\n"
+                "children=[]\n"
+                "try:\n"
+                " for _ in range(40):\n"
+                "  children.append(subprocess.Popen([sys.executable,'-c','import time; time.sleep(10)']))\n"
+                "except OSError:\n"
+                " pass\n"
+                "count=len(children)\n"
+                "for child in children:\n"
+                " child.terminate()\n"
+                "for child in children:\n"
+                " child.wait(timeout=1)\n"
+                "print(json.dumps({'protocol':1,'ok':True,'result':count}))\n"
+            )
+            plugin = self.make_external_process(directory, script, timeout=5)
+            count = plugin.request("fork")
+            self.assertLessEqual(count, 31)
 
 
 if __name__ == "__main__":

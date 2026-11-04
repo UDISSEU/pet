@@ -27,7 +27,18 @@ CORE_PERMISSIONS = (
 
 class PermissionsUIMixin:
     def open_permissions(self):
+        existing = getattr(self, "_permissions_window", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_set()
+                    return existing
+            except tk.TclError:
+                pass
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
+        self._permissions_window = window
         window.title("Permissões da Nova")
         window.geometry("520x600")
         frame = ttk.Frame(window, padding=16)
@@ -44,29 +55,38 @@ class PermissionsUIMixin:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        def add_owner(owner, rows):
-            ttk.Label(content, text=owner, style="Title.TLabel").pack(anchor="w", pady=(9, 4))
+        def add_owner(owner_id, owner_label, rows):
+            ttk.Label(content, text=owner_label, style="Title.TLabel").pack(anchor="w", pady=(9, 4))
             for permission, label in rows:
-                variable = tk.BooleanVar(value=self.permission_manager.allowed(owner, permission))
-                def toggle(permission=permission, variable=variable):
+                variable = tk.BooleanVar(value=self.permission_manager.allowed(owner_id, permission))
+                def toggle(permission=permission, variable=variable, owner_id=owner_id,
+                           owner_label=owner_label):
                     try:
                         if variable.get():
                             confirmed = permission not in SENSITIVE or messagebox.askyesno(
-                                "Autorizar permissão", f"Autorizar {permission} para {owner}?", parent=window)
+                                "Autorizar permissão", f"Autorizar {permission} para {owner_label}?", parent=window)
                             if not confirmed:
                                 variable.set(False)
                                 return
-                            if not self.permission_manager.authorize(owner, permission, confirmed=True):
+                            if not self.permission_manager.authorize(owner_id, permission, confirmed=True):
                                 raise PermissionError("A permissão requer confirmação explícita.")
                         else:
-                            self.permission_manager.revoke(owner, permission)
+                            self.permission_manager.revoke(owner_id, permission)
                     except (OSError, PermissionError) as exc:
                         messagebox.showerror("Não foi possível salvar", str(exc), parent=window)
-                        variable.set(self.permission_manager.allowed(owner, permission))
+                        variable.set(self.permission_manager.allowed(owner_id, permission))
                 ttk.Checkbutton(content, text=label, variable=variable, command=toggle).pack(anchor="w", padx=10, pady=2)
 
-        add_owner("Nova (recursos internos)", CORE_PERMISSIONS)
+        add_owner("nova.core", "Nova (recursos internos)", CORE_PERMISSIONS)
         for plugin_id in sorted(self.plugin_manager._plugins):
             plugin = self.plugin_manager._plugins[plugin_id]
-            add_owner(f"Habilidade: {plugin.manifest.name} ({plugin_id})",
+            add_owner(plugin_id, f"Habilidade: {plugin.manifest.name} ({plugin_id})",
                       [(item, item) for item in plugin.manifest.permissions])
+
+        def close_window():
+            if getattr(self, "_permissions_window", None) is window:
+                self._permissions_window = None
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", close_window)
+        return window

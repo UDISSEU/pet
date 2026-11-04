@@ -38,20 +38,20 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
             popup.focus_displayof() is None else None
         ))
 
-        panel = tk.Frame(popup, bg="#F5F6FA", padx=8, pady=8,
+        panel = tk.Frame(popup, bg="#F5F6FA", padx=6, pady=6,
                          highlightthickness=1, highlightbackground="#D8DEEA")
         panel.pack(fill="both", expand=True)
         title_bar = tk.Frame(panel, bg="#F5F6FA")
-        title_bar.pack(fill="x", padx=4, pady=(1, 5))
+        title_bar.pack(fill="x", padx=3, pady=(0, 3))
         title_label = tk.Label(
             title_bar, text="Nova", font=("TkDefaultFont", 10, "bold"),
             fg="#202B45", bg="#F5F6FA", anchor="w", cursor="fleur",
         )
-        title_label.pack(side="left", fill="x", expand=True, padx=3, pady=3)
+        title_label.pack(side="left", fill="x", expand=True, padx=2, pady=2)
         tk.Button(
             title_bar, text="×", command=lambda: popup.destroy(),
-            relief="flat", bd=0, padx=7, pady=1, cursor="hand2",
-            font=("TkDefaultFont", 12, "bold"), fg="#68738A",
+            relief="flat", bd=0, padx=5, pady=0, cursor="hand2",
+            font=("TkDefaultFont", 11, "bold"), fg="#68738A",
             bg="#F5F6FA", activebackground="#E7EAF1",
         ).pack(side="right")
 
@@ -78,25 +78,30 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
             if popup.winfo_exists():
                 popup.destroy()
 
-        def action_button(label, command, primary=False):
+        action_grid = tk.Frame(panel, bg="#F5F6FA")
+        action_grid.pack(fill="x", pady=(0, 2))
+        action_grid.grid_columnconfigure(0, weight=1, uniform="menu_action")
+        action_grid.grid_columnconfigure(1, weight=1, uniform="menu_action")
+
+        def action_button(label, command, row, column, primary=False):
             bg = "#5269C8" if primary else "#FFFFFF"
             fg = "#FFFFFF" if primary else "#28334D"
             hover = "#4056B2" if primary else "#E9EDF5"
             button = tk.Button(
-                panel, text=label, anchor="w", command=lambda: (close_popup(), command()),
-                relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+                action_grid, text=label, anchor="w", command=lambda: (close_popup(), command()),
+                relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
                 bg=bg, fg=fg, activebackground=hover, activeforeground=fg,
                 font=("TkDefaultFont", 9, "bold" if primary else "normal"),
             )
-            button.pack(fill="x", pady=2)
+            button.grid(row=row, column=column, sticky="ew", padx=2, pady=2)
             return button
 
-        action_button("✦  Conversar", self.ask_menu, primary=True)
-        action_button("▦  Calendário", self.show_calendar)
-        action_button("▤  Painel da Nova", self.show_dashboard)
-        action_button("♧  Notificações", self.show_notifications)
-        action_button("⏱  Foco e rotina", lambda: self.open_autonomy_settings("routine"))
-        action_button("⚙  Preferências", self.open_autonomy_settings)
+        action_button("✦  Conversar", self.ask_menu, 0, 0, primary=True)
+        action_button("▦  Calendário", self.show_calendar, 0, 1)
+        action_button("▤  Painel da Nova", self.show_dashboard, 1, 0)
+        action_button("♧  Notificações", self.show_notifications, 1, 1)
+        action_button("⏱  Foco e rotina", lambda: self.open_autonomy_settings("routine"), 2, 0)
+        action_button("⚙  Preferências", self.open_autonomy_settings, 2, 1)
 
         more = tk.Frame(panel, bg="#F5F6FA")
         expanded = {"value": False}
@@ -112,32 +117,32 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
 
         more_button = tk.Button(
             panel, text="Mostrar mais  ▾", command=toggle_more, anchor="w",
-            relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+            relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
             bg="#E9EDF5", fg="#536078", activebackground="#DDE3EF",
         )
-        more_button.pack(fill="x", pady=(5, 0))
+        more_button.pack(fill="x", pady=(4, 0))
 
         def section_label(parent, label):
             tk.Label(
-                parent, text=label.upper(), anchor="w", padx=7, pady=5,
+                parent, text=label.upper(), anchor="w", padx=6, pady=4,
                 bg="#F5F6FA", fg="#758099",
                 font=("TkDefaultFont", 8, "bold"),
-            ).pack(fill="x", pady=(4, 0))
+            ).pack(fill="x", pady=(3, 0))
 
         def more_action(label, command):
             tk.Button(
                 more, text=label, anchor="w",
                 command=lambda: (close_popup(), command()), relief="flat", bd=0,
-                padx=10, pady=6, cursor="hand2", bg="#FFFFFF", fg="#28334D",
+                padx=8, pady=4, cursor="hand2", bg="#FFFFFF", fg="#28334D",
                 activebackground="#E9EDF5",
-            ).pack(fill="x", pady=2)
+            ).pack(fill="x", pady=1)
 
         section_label(more, "Interação")
         more_action("Falar algo", self.say_something)
         more_action("Permissões", self.open_permissions)
 
         behavior_group = tk.Frame(more, bg="#F5F6FA")
-        behavior_group.pack(fill="x", pady=(5, 0))
+        behavior_group.pack(fill="x", pady=(4, 0))
         behavior_section = tk.Frame(behavior_group, bg="#F5F6FA")
         behavior_expanded = {"value": False}
 
@@ -152,7 +157,7 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
 
         behavior_button = tk.Button(
             behavior_group, text="Comportamento  ▾", command=toggle_behavior, anchor="w",
-            relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
+            relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
             bg="#E9EDF5", fg="#536078", activebackground="#DDE3EF",
         )
         behavior_button.pack(fill="x")
@@ -160,9 +165,9 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         def check_option(label, variable, command=None):
             tk.Checkbutton(
                 behavior_section, text=label, variable=variable, command=command,
-                anchor="w", padx=8, pady=4, bg="#F5F6FA", fg="#39445C",
+                anchor="w", padx=6, pady=2, bg="#F5F6FA", fg="#39445C",
                 activebackground="#F5F6FA", selectcolor="#FFFFFF",
-                font=("TkDefaultFont", 9),
+                font=("TkDefaultFont", 8),
             ).pack(fill="x")
 
         check_option("Andar atrás das janelas", self.behind_var, self.toggle_behind_mode)

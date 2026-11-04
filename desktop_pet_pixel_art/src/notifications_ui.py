@@ -7,7 +7,18 @@ from notifications import NotificationCategory
 
 class NotificationsUIMixin:
     def show_notifications(self):
+        existing = getattr(self, "_notifications_window", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_set()
+                    return existing
+            except tk.TclError:
+                pass
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
+        self._notifications_window = window
         window.title("Notificações da Nova")
         window.geometry("520x500")
         header = ttk.Frame(window, padding=14)
@@ -60,16 +71,24 @@ class NotificationsUIMixin:
             item = selected()
             if item:
                 action(item.notification_id)
-                window.destroy()
+                close_window()
                 self.show_notifications()
+
+        def close_window():
+            if getattr(self, "_notifications_window", None) is window:
+                self._notifications_window = None
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", close_window)
 
         ttk.Button(actions, text="Marcar como lida",
                    command=lambda: update_and_reopen(self.notification_manager.mark_read)).pack(side="left")
         ttk.Button(actions, text="Descartar",
                    command=lambda: update_and_reopen(self.notification_manager.dismiss)).pack(side="left", padx=6)
         ttk.Button(actions, text="Limpar descartadas",
-                   command=lambda: (self.notification_manager.clear_dismissible(), window.destroy(),
+                   command=lambda: (self.notification_manager.clear_dismissible(), close_window(),
                                     self.show_notifications())).pack(side="left", padx=6)
         silent = tk.BooleanVar(value=self.notification_manager.silent)
         ttk.Checkbutton(actions, text="Modo silencioso", variable=silent,
                         command=lambda: self.notification_manager.set_silent(silent.get())).pack(side="right")
+        return window

@@ -2476,6 +2476,8 @@ class DesktopPet(DesktopPetUIMixin):
         subprocess.Popen(argv, close_fds=True, env=DesktopPet._child_process_env())
 
     def close_app(self):
+        if self._closing:
+            return
         self._closing = True
         event_bus = getattr(self, "event_bus", None)
         if event_bus is not None:
@@ -2488,6 +2490,17 @@ class DesktopPet(DesktopPetUIMixin):
         stop_event = getattr(self, "_device_monitor_stop", None)
         if stop_event is not None:
             stop_event.set()
+        monitor_thread = getattr(self, "_device_monitor_thread", None)
+        if (monitor_thread is not None and monitor_thread is not threading.current_thread()
+                and monitor_thread.is_alive()):
+            monitor_thread.join(timeout=1.0)
+        pending_callbacks = getattr(self, "_ui_callbacks", None)
+        if pending_callbacks is not None:
+            while True:
+                try:
+                    pending_callbacks.get_nowait()
+                except queue.Empty:
+                    break
         retry_job = getattr(self, "_device_announcement_retry_job", None)
         if retry_job is not None:
             try:
