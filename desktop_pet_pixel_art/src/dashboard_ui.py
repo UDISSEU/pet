@@ -14,6 +14,7 @@ class DashboardUIMixin:
                     existing.deiconify()
                     existing.lift()
                     existing.focus_set()
+                    self._activate_panel(existing)
                     return existing
             except tk.TclError:
                 pass
@@ -27,6 +28,7 @@ class DashboardUIMixin:
 
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
         self._dashboard_window = window
+        self._activate_panel(window)
         window.title("Painel da Nova")
         window.geometry("580x570")
         window.minsize(520, 520)
@@ -68,6 +70,13 @@ class DashboardUIMixin:
             font=("TkDefaultFont", 8, "bold"), padx=10, pady=6,
         )
         badge.pack(side="right", anchor="n", padx=(8, 0), pady=3)
+        back_button = tk.Button(
+            header, text="← Voltar", command=lambda: self._panel_back(window),
+            relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
+            bg="#263B56", fg="#F7FAFC", activebackground="#344D6B",
+            activeforeground="#FFFFFF", font=("TkDefaultFont", 9, "bold"),
+        )
+        back_button.pack(side="right", anchor="n", padx=(0, 6), pady=3)
 
         content = tk.Frame(window, bg="#F2F5F9", padx=14, pady=8)
         content.pack(fill="both", expand=True)

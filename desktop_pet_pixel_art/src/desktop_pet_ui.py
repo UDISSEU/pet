@@ -16,12 +16,13 @@ from notifications_ui import NotificationsUIMixin
 from permissions_ui import PermissionsUIMixin
 from ollama_client import save_history
 from spotify_control import spotify_connected as spotify_token_connected
-from ui_theme import COLORS, make_header
+from ui_theme import COLORS, PanelNavigationMixin, make_header
 
 
-class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMixin):
+class DesktopPetUIMixin(PanelNavigationMixin, DashboardUIMixin, NotificationsUIMixin, PermissionsUIMixin):
     def show_menu(self, event):
         self._last_user_activity_at = time.monotonic()
+        self._last_menu_position = (event.x_root, event.y_root)
         if self._context_popup is not None:
             try:
                 self._context_popup.destroy()
@@ -33,6 +34,7 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         popup.overrideredirect(True)
         popup.attributes("-topmost", True)
         popup.configure(bg=COLORS["border"])
+        self._activate_panel(popup)
 
         panel = tk.Frame(popup, bg=COLORS["background"], padx=7, pady=7,
                          highlightthickness=1, highlightbackground=COLORS["border"])
@@ -76,6 +78,10 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
             if self._context_popup is popup:
                 self._context_popup = None
 
+        def hide_popup():
+            if popup.winfo_exists():
+                popup.withdraw()
+
         popup.bind("<Escape>", lambda _event: (close_popup(), "break")[1])
 
         action_grid = tk.Frame(panel, bg=COLORS["background"])
@@ -88,7 +94,7 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
             fg = "#FFFFFF" if primary else COLORS["ink"]
             hover = "#3473CF" if primary else "#E6EDF5"
             button = tk.Button(
-                action_grid, text=label, anchor="w", command=lambda: (close_popup(), command()),
+                action_grid, text=label, anchor="w", command=lambda: (hide_popup(), command()),
                 relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
                 bg=bg, fg=fg, activebackground=hover, activeforeground=fg,
                 font=("TkDefaultFont", 9, "bold" if primary else "normal"),
@@ -132,7 +138,7 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         def more_action(label, command):
             tk.Button(
                 more, text=label, anchor="w",
-                command=lambda: (close_popup(), command()), relief="flat", bd=0,
+                command=lambda: (hide_popup(), command()), relief="flat", bd=0,
                 padx=8, pady=4, cursor="hand2", bg=COLORS["surface"], fg=COLORS["ink"],
                 activebackground="#E6EDF5",
             ).pack(fill="x", pady=1)
@@ -208,7 +214,10 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
             pass
         return "break"
     def show_calendar(self):
-        open_calendar_window(self.root)
+        return open_calendar_window(
+            self.root, on_back=lambda window: self._panel_back(window),
+            on_open=self._activate_panel,
+        )
     def persist_preferences(self):
         self.settings.update(
             mode=self.settings.get("mode", "companhia"),
@@ -228,6 +237,12 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         window.geometry("560x600")
         window.minsize(520, 550)
         window.configure(bg=COLORS["background"])
+        self._activate_panel(window)
+        make_header(
+            window, "Preferências", "Personalize comportamento, rotina, memória e integrações.",
+            eyebrow="NOVA  /  CONFIGURAÇÕES",
+            back_command=lambda: self._panel_back(window),
+        )
 
         style = ttk.Style(window)
         style.configure("Autonomy.TFrame", background=COLORS["background"])
@@ -265,8 +280,6 @@ class DesktopPetUIMixin(DashboardUIMixin, NotificationsUIMixin, PermissionsUIMix
         )
         style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
 
-        make_header(window, "Preferências", "Personalize comportamento, rotina, memória e integrações.",
-                    eyebrow="NOVA  /  CONFIGURAÇÕES")
         outer = ttk.Frame(window, style="Autonomy.TFrame", padding=(16, 12, 16, 12))
         outer.pack(fill="both", expand=True)
 

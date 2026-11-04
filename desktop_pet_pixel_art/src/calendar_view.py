@@ -12,7 +12,7 @@ MONTH_NAMES = (
 WEEKDAY_NAMES = ("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom")
 
 
-def open_calendar_window(parent):
+def open_calendar_window(parent, *, on_back=None, on_open=None):
     today = date.today()
     shown_month = {"year": today.year, "month": today.month}
 
@@ -23,8 +23,13 @@ def open_calendar_window(parent):
     window.attributes("-topmost", True)
     window.configure(bg=COLORS["background"])
 
-    make_header(window, "Calendário", "Consulte as datas sem sair da Nova.",
-                eyebrow="NOVA  /  ORGANIZAÇÃO")
+    make_header(
+        window, "Calendário", "Consulte as datas sem sair da Nova.",
+        eyebrow="NOVA  /  ORGANIZAÇÃO",
+        back_command=(lambda: on_back(window)) if on_back else window.destroy,
+    )
+    if on_open:
+        on_open(window)
     content = tk.Frame(window, padx=14, pady=12, bg=COLORS["background"])
     content.pack(fill="both", expand=True)
     header = tk.Frame(content, bg=COLORS["background"])

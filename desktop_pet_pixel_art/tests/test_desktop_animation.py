@@ -149,9 +149,35 @@ class DesktopAnimationTests(unittest.TestCase):
         pet = DesktopPet.__new__(DesktopPet)
         pet._closing = False
         pet.state = "idle"
+        pet.walk_dx = 1
+        pet._startup_idle_elapsed = False
+        pet._startup_walk_enabled = False
+        pet._resolved_animations = set()
 
         pet._finish_startup_idle()
 
+        self.assertEqual(pet.state, "idle")
+        self.assertFalse(pet._startup_walk_enabled)
+        pet._resolved_animations.add("walk_right")
+        pet._maybe_enable_startup_walk()
+        self.assertEqual(pet.state, "walk")
+        self.assertTrue(pet._startup_walk_enabled)
+
+    def test_startup_walk_waits_for_the_left_clip_when_facing_left(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._closing = False
+        pet.state = "idle"
+        pet.walk_dx = -1
+        pet._startup_idle_elapsed = True
+        pet._startup_walk_enabled = False
+        pet._resolved_animations = {"walk_right"}
+
+        pet._maybe_enable_startup_walk()
+
+        self.assertEqual(pet.state, "idle")
+        self.assertFalse(pet._startup_walk_enabled)
+        pet._resolved_animations.add("walk_left")
+        pet._maybe_enable_startup_walk()
         self.assertEqual(pet.state, "walk")
     def test_startup_idle_does_not_override_an_interaction(self):
         pet = DesktopPet.__new__(DesktopPet)

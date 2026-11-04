@@ -41,12 +41,75 @@ def prepare_app_result_pet(pet):
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_panel_back_returns_to_the_main_menu_when_history_is_empty(self):
+        from types import SimpleNamespace
+
+        class Window:
+            _nova_back_in_progress = False
+
+            def winfo_exists(self):
+                return True
+
+            def destroy(self):
+                self.destroyed = True
+
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._last_menu_position = (410, 260)
+        pet.show_menu = mock.Mock()
+        window = Window()
+
+        pet._panel_back(window)
+
+        self.assertTrue(window.destroyed)
+        event = pet.show_menu.call_args.args[0]
+        self.assertIsInstance(event, SimpleNamespace)
+        self.assertEqual((event.x_root, event.y_root), (410, 260))
+
+    def test_panel_back_restores_the_same_previous_window(self):
+        class Window:
+            _nova_back_in_progress = False
+
+            def __init__(self):
+                self.destroyed = False
+                self.restored = []
+
+            def winfo_exists(self):
+                return not self.destroyed
+
+            def destroy(self):
+                self.destroyed = True
+
+            def deiconify(self):
+                self.restored.append("shown")
+
+            def lift(self):
+                self.restored.append("lifted")
+
+            def focus_set(self):
+                self.restored.append("focused")
+
+        pet = DesktopPet.__new__(DesktopPet)
+        current, previous = Window(), Window()
+        pet._active_panel_window = current
+        pet._panel_history = [previous]
+
+        pet._panel_back(current)
+
+        self.assertTrue(current.destroyed)
+        self.assertEqual(previous.restored, ["shown", "lifted", "focused"])
+        self.assertIs(pet._active_panel_window, previous)
+
     def test_calendar_ui_mixin_delegates_to_the_calendar_window(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet.root = mock.sentinel.root
         with mock.patch.object(desktop_pet_ui, "open_calendar_window") as open_calendar:
-            pet.show_calendar()
-        open_calendar.assert_called_once_with(mock.sentinel.root)
+            result = pet.show_calendar()
+        open_calendar.assert_called_once_with(
+            mock.sentinel.root,
+            on_back=mock.ANY,
+            on_open=pet._activate_panel,
+        )
+        self.assertIs(result, open_calendar.return_value)
 
     def test_autonomy_settings_round_trip_and_recover_invalid_data(self):
         with tempfile.TemporaryDirectory() as tmpdir:

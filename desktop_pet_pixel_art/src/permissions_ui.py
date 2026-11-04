@@ -35,17 +35,20 @@ class PermissionsUIMixin:
                     existing.deiconify()
                     existing.lift()
                     existing.focus_set()
+                    self._activate_panel(existing)
                     return existing
             except tk.TclError:
                 pass
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
         self._permissions_window = window
+        self._activate_panel(window)
         window.title("Permissões da Nova")
         window.geometry("560x640")
         window.minsize(500, 500)
         window.configure(bg=COLORS["background"])
         make_header(window, "Permissões", "Controle o que a Nova e cada habilidade podem acessar.",
-                    eyebrow="NOVA  /  PRIVACIDADE")
+                    eyebrow="NOVA  /  PRIVACIDADE",
+                    back_command=lambda: self._panel_back(window))
         frame = tk.Frame(window, bg=COLORS["background"], padx=14, pady=12)
         frame.pack(fill="both", expand=True)
         notice = tk.Frame(frame, bg=COLORS["surface"], padx=11, pady=9,

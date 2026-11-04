@@ -287,6 +287,9 @@ class DesktopPet(DesktopPetUIMixin):
         self._dismiss_job = None
         self._hidden = False
         self._animation_loader = AnimationLoader(MOVEMENT_VIDEOS)
+        self._resolved_animations = set()
+        self._startup_idle_elapsed = False
+        self._startup_walk_enabled = False
         idle_preview = self._animation_loader.preview("idle")
         self.video_frames = {
             name: [idle_preview] for name in MOVEMENT_VIDEOS
@@ -427,7 +430,9 @@ class DesktopPet(DesktopPetUIMixin):
         elif self.state == "held":
             video = "idle"
         elif self.state == "walk":
-            if self.stay_in_place_var.get():
+            if not getattr(self, "_startup_walk_enabled", True):
+                video = "idle"
+            elif self.stay_in_place_var.get():
                 video = "idle"
             elif now < self._irritated_until:
                 video = "angry"
@@ -727,6 +732,7 @@ class DesktopPet(DesktopPetUIMixin):
 
         can_walk = (
             self.state == "walk"
+            and getattr(self, "_startup_walk_enabled", True)
             and not self.dragging
             and not self.stay_in_place_var.get()
         )
@@ -814,8 +820,10 @@ class DesktopPet(DesktopPetUIMixin):
                                             {"animation": name, "error": error}))
                 # Keep the already-renderable preview if a video is damaged.
                 continue
+            self._resolved_animations.add(name)
             self.video_frames[name] = frames
             changed = True
+        self._maybe_enable_startup_walk()
         if changed and not self._closing:
             self._video_frame_cache.clear()
             self.render_and_show()
@@ -835,7 +843,19 @@ class DesktopPet(DesktopPetUIMixin):
         )
 
     def _finish_startup_idle(self):
-        if not self._closing and self.state == "idle":
+        if self._closing:
+            return
+        self._startup_idle_elapsed = True
+        self._maybe_enable_startup_walk()
+
+    def _maybe_enable_startup_walk(self):
+        if self._closing or not getattr(self, "_startup_idle_elapsed", False):
+            return
+        direction = "walk_left" if getattr(self, "walk_dx", 1) < 0 else "walk_right"
+        if direction not in getattr(self, "_resolved_animations", set()):
+            return
+        self._startup_walk_enabled = True
+        if self.state == "idle":
             self.state = "walk"
 
     def random_speech(self):

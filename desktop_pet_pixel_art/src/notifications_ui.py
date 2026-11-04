@@ -15,17 +15,20 @@ class NotificationsUIMixin:
                     existing.deiconify()
                     existing.lift()
                     existing.focus_set()
+                    self._activate_panel(existing)
                     return existing
             except tk.TclError:
                 pass
         window = self._set_nova_window_icon(tk.Toplevel(self.root))
         self._notifications_window = window
+        self._activate_panel(window)
         window.title("Notificações da Nova")
         window.geometry("560x540")
         window.minsize(500, 420)
         window.configure(bg=COLORS["background"])
         make_header(window, "Notificações", "Acompanhe avisos e ajuste como a Nova se comunica.",
-                    eyebrow="NOVA  /  CENTRAL DE AVISOS")
+                    eyebrow="NOVA  /  CENTRAL DE AVISOS",
+                    back_command=lambda: self._panel_back(window))
         unread_badge = tk.Label(window, text=f"{self.notification_manager.unread_count} não lidas",
                                 bg=COLORS["background"], fg=COLORS["muted"],
                                 font=("TkDefaultFont", 9, "bold"), anchor="e")
