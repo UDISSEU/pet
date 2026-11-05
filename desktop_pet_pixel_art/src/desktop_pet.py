@@ -119,6 +119,7 @@ from personality import (
 from ai.request_handler import PROVIDER_FAILURE_MESSAGE, answer_request
 from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
+from nova_ai.desktop_routing import route_user_request
 from x11_helper import X11Helper
 from animation_controller import AnimationControllerMixin
 from interaction_controller import InteractionControllerMixin
@@ -769,6 +770,20 @@ class DesktopPet(
         if getattr(self, "ai_request_active", False) or getattr(self, "app_launch_active", False):
             self.show_bubble("Termino o que estou fazendo e já cuido disso.", duration=2500)
             return
+        if automation["id"] == "organize_downloads":
+            enabled = self.settings.get("automations", {}).get("enabled", {}).get(
+                automation["id"], True
+            )
+            if not enabled:
+                self.show_bubble("Essa automação está desativada nas preferências.", duration=3000)
+                return
+            if getattr(self, "nova_integration", None) is None:
+                self.show_bubble(
+                    "A organização segura de Downloads está indisponível no momento.", duration=4000
+                )
+                return
+            self._start_cognitive_request("Organize Downloads")
+            return
         enabled = self.settings.get("automations", {}).get("enabled", {}).get(automation["id"], True)
         if not enabled:
             self.show_bubble("Essa automação está desativada nas preferências.", duration=3000)
@@ -956,7 +971,6 @@ class DesktopPet(
         if self.automation_active or self.ai_request_active:
             self.show_bubble("Termino a tarefa atual antes de começar outra.", duration=3000)
             return
-        self._record_interaction()
         self.automation_active = True
         self.state = "thinking"
         self.show_bubble("Vou conferir a pasta Downloads e preparar uma prévia…", duration=999999)
@@ -1035,10 +1049,26 @@ class DesktopPet(
         ).start()
 
     def _cognitive_execute_worker(self, question, prepared, cancellation):
-        result = self.nova_integration.execute_task(
-            prepared, approved=True, cancellation=cancellation
-        )
-        self.post_ui_callback(self._handle_cognitive_execution, question, result)
+        try:
+            result = self.nova_integration.execute_task(
+                prepared, approved=True, cancellation=cancellation
+            )
+            self.post_ui_callback(self._handle_cognitive_execution, question, result, None)
+        except Exception as exc:
+            if cancellation.cancelled:
+                logging.getLogger(__name__).warning(
+                    "Worker cognitivo encerrou após cancelamento (%s)", type(exc).__name__
+                )
+                error_name = "cancelada"
+            else:
+                logging.getLogger(__name__).exception(
+                    "Falha inesperada no worker de execução cognitiva"
+                )
+                error_name = type(exc).__name__
+            # Keep exception details in logs only; the UI receives a safe status label.
+            self.post_ui_callback(
+                self._handle_cognitive_execution, question, None, error_name
+            )
 
     def _show_cognitive_progress(self, cancellation):
         dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
@@ -1055,10 +1085,20 @@ class DesktopPet(
         dialog.protocol("WM_DELETE_WINDOW", cancellation.cancel)
         self._cognitive_progress_dialog = dialog
 
-    def _handle_cognitive_execution(self, question, result):
+    def _handle_cognitive_execution(self, question, result, error=None):
         self._cognitive_cancel_token = None
         self._finish_cognitive_controls()
         if self._closing:
+            return
+        if error is not None or result is None:
+            error_name = error if isinstance(error, str) else "erro inesperado"
+            if error_name == "cancelada":
+                message = "Cancelei a tarefa. Os arquivos permaneceram no lugar ou foram restaurados."
+            else:
+                message = f"Não consegui concluir a organização ({error_name}). Você pode tentar novamente."
+            self.state = "curious"
+            self._record_local_interaction(question, message)
+            self.show_bubble(message, duration=6000)
             return
         self.state = "thumbs_up" if result.verified else "curious"
         self.show_bubble(result.message, duration=6000)
@@ -1603,9 +1643,20 @@ class DesktopPet(
             self.show_calendar()
             self.show_bubble(answer)
             return
-        automation = recognize_automation(question)
-        if automation and self.settings.get("automations", {}).get("enabled", {}).get(automation["id"], True):
-            self._request_automation(automation)
+        integration = getattr(self, "nova_integration", None)
+        route, routed_task = route_user_request(
+            question,
+            cognitive_classifier=(integration.classify_task if integration is not None else None),
+            legacy_recognizer=recognize_automation,
+        )
+        if route == "cognitive":
+            self._start_cognitive_request(question)
+            return
+        if route == "unavailable":
+            self.show_bubble("A organização segura de Downloads está indisponível no momento.", duration=4000)
+            return
+        if route == "legacy" and self.settings.get("automations", {}).get("enabled", {}).get(routed_task["id"], True):
+            self._request_automation(routed_task)
             return
         local_intent = local_personality_intent(question)
         if local_intent:
@@ -1615,10 +1666,6 @@ class DesktopPet(
         spotify_request = parse_spotify_command(question)
         if spotify_request:
             self._start_spotify_request(question, spotify_request)
-            return
-        integration = getattr(self, "nova_integration", None)
-        if integration is not None and integration.classify_task(question):
-            self._start_cognitive_request(question)
             return
         app = self._matching_app(question)
         if app:

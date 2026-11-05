@@ -326,6 +326,29 @@ class ActionSystemTests(unittest.TestCase):
                 FileOrganizerTool().execute({"plan": plan})
         self.assertEqual(replacement.read_text(encoding="utf-8"), "outside")
 
+    def test_removed_source_between_preview_and_execution_is_rejected(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["safe.txt"])
+        (self.root / "safe.txt").unlink()
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            with self.assertRaises(ValueError):
+                FileOrganizerTool().execute({"plan": plan})
+        self.assertFalse((self.root / "Documentos" / "safe.txt").exists())
+
+    def test_category_replaced_with_symlink_after_preview_is_rejected(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["safe.txt"])
+        external = Path(self.temp.name) / "external-after-preview"
+        external.mkdir()
+        (self.root / "Documentos").symlink_to(external, target_is_directory=True)
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            with self.assertRaises(ValueError):
+                FileOrganizerTool().execute({"plan": plan})
+        self.assertTrue((self.root / "safe.txt").exists())
+        self.assertEqual(list(external.iterdir()), [])
+
     def test_existing_destination_is_not_overwritten(self):
         import nova_ai.actions.file_manager as file_module
 

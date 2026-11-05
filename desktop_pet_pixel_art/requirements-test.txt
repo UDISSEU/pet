@@ -1,0 +1,3 @@
+# Install inside a virtual environment to run the full application test suite.
+-r requirements.txt
+pytest>=8,<9
