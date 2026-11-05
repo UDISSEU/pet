@@ -141,6 +141,7 @@ from spotify_control import (
     playlist_uri_from_input,
     spotify_connected as spotify_token_connected,
 )
+from nova_ai.desktop_integration import DesktopNovaIntegration
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,9 @@ class DesktopPet(
         bus = getattr(self, "event_bus", None)
         if bus is not None and previous != value:
             bus.post(Event(EventType.PET_STATE_CHANGED, {"previous": previous, "current": value}))
+        integration = getattr(self, "nova_integration", None)
+        if integration is not None:
+            integration.sync_visual_state(value)
 
     def __init__(self):
         self.history = load_history()
@@ -175,6 +179,11 @@ class DesktopPet(
         self._recent_errors = deque(maxlen=20)
         self.event_bus = EventBus()
         self.state_manager = StateManager()
+        self.nova_integration = None
+        try:
+            self.nova_integration = DesktopNovaIntegration()
+        except Exception:
+            logger.exception("Núcleo Nova indisponível; mantendo a aplicação legado")
         self.permission_manager = PermissionManager()
         self.plugin_manager = PluginManager(context={"event_bus": self.event_bus,
                                                      "permissions": self.permission_manager},
@@ -218,6 +227,8 @@ class DesktopPet(
             pass
         self._closing = False
         self._ai_results = queue.Queue()
+        self._ai_cancel = threading.Event()
+        self._ai_inference_lock = threading.Lock()
         self._ui_callbacks = queue.Queue()
         self._provider_test_results = queue.Queue()
         self._app_launch_results = queue.Queue()
@@ -1123,6 +1134,9 @@ class DesktopPet(
         if self._closing:
             return
         self._closing = True
+        cancel_ai = getattr(self, "_ai_cancel", None)
+        if cancel_ai is not None:
+            cancel_ai.set()
         event_bus = getattr(self, "event_bus", None)
         if event_bus is not None:
             event_bus.publish(Event(EventType.APPLICATION_SHUTDOWN, {}))
@@ -1584,6 +1598,17 @@ class DesktopPet(
         event_bus = getattr(self, "event_bus", None)
         permissions = getattr(self, "permission_manager", None)
         request_settings = settings or self.settings
+        cancel_event = getattr(self, "_ai_cancel", None)
+        inference_lock = getattr(self, "_ai_inference_lock", None)
+        if cancel_event is not None and cancel_event.is_set():
+            return
+        acquired = inference_lock.acquire(blocking=False) if inference_lock is not None else True
+        if not acquired:
+            self.post_ui_callback(
+                self._show_answer,
+                "Já estou respondendo a outra pergunta. Tente novamente em instantes.",
+            )
+            return
         if event_bus is not None:
             event_bus.post(Event(EventType.AI_REQUEST_STARTED, {}))
         try:
@@ -1596,6 +1621,14 @@ class DesktopPet(
                         and request_settings.get("confirm_free_tier")):
                     self._authorize_core_action("network.access", confirmed=True)
                     permissions.require("nova.core", "network.access", confirmed=True)
+            integration = getattr(self, "nova_integration", None)
+            if integration is not None:
+                question = next((item.get("content", "") for item in reversed(history)
+                                 if item.get("role") == "user"), "")
+                memories = integration.build_context(question, memories)
+                request_settings["nova_personality_instructions"] = (
+                    integration.personality_instructions()
+                )
             answer = answer_request(
                 history, memories=memories, settings=request_settings,
                 user_name=user_name,
@@ -1603,6 +1636,11 @@ class DesktopPet(
         except Exception:
             logging.getLogger(__name__).exception("Falha inesperada no serviço de IA")
             answer = PROVIDER_FAILURE_MESSAGE
+        finally:
+            if inference_lock is not None:
+                inference_lock.release()
+        if cancel_event is not None and cancel_event.is_set():
+            return
         if event_bus is not None:
             if answer == PROVIDER_FAILURE_MESSAGE:
                 event_bus.post(Event(EventType.AI_REQUEST_FAILED, {"error": answer}))

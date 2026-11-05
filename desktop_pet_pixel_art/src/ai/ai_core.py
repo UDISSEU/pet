@@ -38,6 +38,9 @@ class AICore:
             prompt = build_system_prompt(
                 humor_style=self.settings.get("humor_style", "equilibrada")
             )
+        personality_instructions = self.settings.get("nova_personality_instructions")
+        if isinstance(personality_instructions, str) and personality_instructions.strip():
+            prompt += "\n\n" + personality_instructions[:4_000]
         if user_name.strip():
             prompt += f"\n\nO nome da pessoa usuária é {user_name.strip()[:60]}. Use-o naturalmente ao conversar."
         return self.router.generate(messages, prompt)
