@@ -1,0 +1,28 @@
+{
+  "model": {
+    "vocab_size": 2000,
+    "d_model": 64,
+    "num_heads": 2,
+    "num_layers": 2,
+    "ff_multiplier": 4,
+    "max_seq_len": 64,
+    "batch_size": 1,
+    "seed": 17
+  },
+  "dataset_root": "training/datasets",
+  "experiments_root": "training/experiments",
+  "checkpoints_root": "training/checkpoints",
+  "run_name": "nova_model_0_1",
+  "validation_percent": 10,
+  "max_examples": 5000,
+  "max_scanned_records": 25000,
+  "max_line_chars": 8192,
+  "max_steps": 100,
+  "evaluation_interval": 25,
+  "evaluation_batches": 16,
+  "checkpoint_interval": 25,
+  "learning_rate": 0.001,
+  "cpu_threads": 1,
+  "reserve_memory_bytes": 268435456,
+  "minimum_available_bytes": 201326592
+}

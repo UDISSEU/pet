@@ -10,14 +10,16 @@ from json_persistence import block_replacement, mark_valid, may_replace, preserv
 DEFAULT_PERMISSION_PATH = Path.home() / ".config" / "desktop_pet" / "permissions.json"
 KNOWN_PERMISSIONS = {
     "file.read", "file.write", "file.move", "file.delete", "file.organize",
-    "system.cpu.read", "system.memory.read", "system.disk.read",
-    "system.process.read", "system.app.launch", "system.maintenance.read",
+    "system.clock.read", "system.cpu.read", "system.memory.read", "system.disk.read",
+    "system.process.read", "system.app.read", "system.app.launch", "system.maintenance.read",
     "system.maintenance", "spotify.control", "ai.use", "network.access",
     "notification.create", "pet.animation.control", "task.create",
+    "reminder.read", "reminder.write",
 }
 SENSITIVE = {
     "file.write", "file.move", "file.delete", "file.organize",
     "system.app.launch", "system.maintenance", "spotify.control", "network.access",
+    "reminder.write",
 }
 
 

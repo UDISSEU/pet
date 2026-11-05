@@ -1,0 +1,10 @@
+{
+  "vocab_size": 2000,
+  "d_model": 64,
+  "num_heads": 2,
+  "num_layers": 2,
+  "ff_multiplier": 4,
+  "max_seq_len": 64,
+  "batch_size": 1,
+  "seed": 17
+}
