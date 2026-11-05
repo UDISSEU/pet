@@ -1,4 +1,4 @@
-"""Tipos explícitos para as quatro categorias persistentes de memória."""
+"""Tipos explícitos para categorias, origem e certeza das memórias."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -9,6 +9,10 @@ class MemoryKind(str, Enum):
     SEMANTIC = "semantic"
     PROCEDURAL = "procedural"
     PREFERENCE = "preference"
+    PROFILE = "profile"
+    PROJECT = "project"
+    CONVERSATION = "conversation"
+    LEARNING = "learning"
 
 
 @dataclass(frozen=True)
@@ -22,6 +26,8 @@ class MemoryRecord:
     confidence: float
     relevance: float
     consent_granted: bool = True
+    provenance: str = "user_provided"
+    expires_at: str | None = None
 
 
 def record_from_row(row):
@@ -35,4 +41,6 @@ def record_from_row(row):
         confidence=float(row["confidence"]),
         relevance=float(row["relevance"]),
         consent_granted=bool(row["consent_granted"]),
+        provenance=row["provenance"],
+        expires_at=row["expires_at"],
     )

@@ -67,6 +67,11 @@ class PersonalityEngine:
             raise
         return self.emotional_state
 
+    def transition_behavior(self, state):
+        """Update temporary mood in memory; it resets to IDLE after restart."""
+        self.emotional_state = EmotionalState.for_behavior(state)
+        return self.emotional_state
+
     def set_response_preferences(
         self, *, tone=None, verbosity=None, language=None, consent_confirmed=False
     ):
@@ -131,6 +136,11 @@ class PersonalityEngine:
         parts.append(
             f"Estado comportamental atual: {self.behavior_state.value}; "
             f"expressão simulada: {self.simulated_emotion.value}."
+        )
+        parts.append(self.emotional_state.prompt_guidance)
+        parts.append(
+            "O estado é apenas uma expressão conversacional temporária: não altera fatos, "
+            "permissões, decisões de segurança nem o que a Nova realmente sabe."
         )
         return "\n".join(parts)
 

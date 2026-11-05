@@ -1,6 +1,7 @@
 """Recuperação lexical local, limitada e sem embeddings."""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import re
 import unicodedata
 
@@ -60,13 +61,26 @@ class MemoryRetrieval:
         else:
             rows = self._storage.search(kind=storage_kind, limit=100)
         results = []
+        now = datetime.now(timezone.utc)
         for row in rows:
             memory_terms = _terms(row["content"])
             matches = query_terms & memory_terms
             if query_terms and not matches:
                 continue
             coverage = len(matches) / len(query_terms) if query_terms else 1.0
-            score = coverage * float(row["confidence"]) * float(row["relevance"])
+            density = len(matches) / len(memory_terms) if memory_terms else 0.0
+            try:
+                updated = datetime.fromisoformat(row["updated_at"])
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                age_days = max(0.0, (now - updated.astimezone(timezone.utc)).total_seconds() / 86400)
+            except (TypeError, ValueError):
+                age_days = 365.0
+            recency = 1.0 / (1.0 + age_days / 30.0)
+            score = (0.68 * coverage + 0.08 * density
+                     + 0.14 * float(row["relevance"])
+                     + 0.08 * float(row["confidence"])
+                     + 0.02 * recency)
             results.append(MemorySearchResult(record_from_row(row), score))
         results.sort(
             key=lambda result: (

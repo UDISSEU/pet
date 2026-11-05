@@ -223,6 +223,9 @@ class PreferencesUIMixin(
         confirm_free_tier = tk.BooleanVar(value=self.settings.get("confirm_free_tier", False))
         ai_timeout = tk.StringVar(value=str(self.settings.get("ai_timeout", 30)))
         ollama_model = tk.StringVar(value=self.settings.get("ollama_model", "llama3.2:1b"))
+        ollama_num_ctx = tk.StringVar(value=str(self.settings.get("ollama_num_ctx", 1024)))
+        ollama_num_predict = tk.StringVar(value=str(self.settings.get("ollama_num_predict", 96)))
+        ollama_num_threads = tk.StringVar(value=str(self.settings.get("ollama_num_threads", 1)))
         gemini_model = tk.StringVar(value=self.settings.get("gemini_model", "gemini-3.8-flash"))
         groq_model = tk.StringVar(value=self.settings.get("groq_model", "openai/gpt-oss-20b"))
         mistral_model = tk.StringVar(value=self.settings.get("mistral_model", "mistral-small-latest"))
@@ -300,6 +303,22 @@ class PreferencesUIMixin(
                 select_tab(ai_tab)
                 messagebox.showerror("Timeout inválido", "Informe um número entre 5 e 30 segundos.", parent=window)
                 return
+            try:
+                local_limits = {
+                    "ollama_num_ctx": int(ollama_num_ctx.get()),
+                    "ollama_num_predict": int(ollama_num_predict.get()),
+                    "ollama_num_threads": int(ollama_num_threads.get()),
+                }
+            except ValueError:
+                select_tab(ai_tab)
+                messagebox.showerror("Limites locais inválidos", "Use números válidos para contexto, resposta e threads.", parent=window)
+                return
+            if not (512 <= local_limits["ollama_num_ctx"] <= 2048
+                    and 16 <= local_limits["ollama_num_predict"] <= 256
+                    and 1 <= local_limits["ollama_num_threads"] <= 2):
+                select_tab(ai_tab)
+                messagebox.showerror("Limites locais inválidos", "Contexto: 512–2048 tokens; resposta: 16–256; threads: 1–2.", parent=window)
+                return
             updated = dict(self.settings)
             updated_automations = dict(updated.get("automations", {}))
             updated_automation_enabled = dict(updated_automations.get("enabled", {}))
@@ -330,6 +349,7 @@ class PreferencesUIMixin(
                 allow_online_data=allow_online_data.get(),
                 confirm_free_tier=confirm_free_tier.get(), ai_timeout=timeout_value,
                 ollama_model=ollama_model.get().strip(),
+                **local_limits,
                 gemini_model=gemini_model.get().strip(), groq_model=groq_model.get().strip(),
                 mistral_model=mistral_model.get().strip(),
                 spotify_client_id=spotify_client_id.get().strip(),

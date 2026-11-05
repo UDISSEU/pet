@@ -339,6 +339,22 @@ class TestAIProviders(unittest.TestCase):
                 with self.assertRaisesRegex(ProviderError, "resposta vazia ou inválida"):
                     provider.generate([], "Nova")
 
+    def test_ollama_inference_uses_bounded_local_resource_options(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"message": {"content": "Resposta local"}}
+        ).encode()
+        provider = OllamaProvider(
+            model="llama3.2:1b", num_ctx=768, num_predict=48, num_threads=1,
+        )
+        with mock.patch("providers.ollama_provider.urllib.request.urlopen", return_value=response) as open_url:
+            self.assertEqual(provider.generate([], "Nova"), "Resposta local")
+        payload = json.loads(open_url.call_args.args[0].data)
+        self.assertEqual(payload["options"], {
+            "num_ctx": 768, "num_predict": 48, "num_thread": 1,
+        })
+        self.assertEqual(payload["keep_alive"], "30s")
+
     def test_ollama_http_error_does_not_expose_response_body(self):
         error = urllib.error.HTTPError(
             "http://localhost", 500, "server error", {}, None,
@@ -385,6 +401,21 @@ class TestAIProviders(unittest.TestCase):
         self.assertFalse(settings["allow_online_data"])
         self.assertFalse(settings["confirm_free_tier"])
         self.assertEqual(settings["ai_timeout"], 30)
+        self.assertEqual(settings["ollama_num_ctx"], 1024)
+        self.assertEqual(settings["ollama_num_predict"], 96)
+        self.assertEqual(settings["ollama_num_threads"], 1)
+
+    def test_local_resource_settings_are_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            self.assertTrue(save_settings({
+                "ollama_num_ctx": 99999, "ollama_num_predict": -4,
+                "ollama_num_threads": 10,
+            }, path))
+            settings = load_settings(path)
+        self.assertEqual(settings["ollama_num_ctx"], 2048)
+        self.assertEqual(settings["ollama_num_predict"], 16)
+        self.assertEqual(settings["ollama_num_threads"], 2)
 
     def test_ai_core_generates_contextual_prompt(self):
         router = mock.Mock(generate=mock.Mock(return_value="resposta"))

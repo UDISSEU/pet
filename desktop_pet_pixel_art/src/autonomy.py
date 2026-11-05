@@ -57,6 +57,9 @@ DEFAULT_SETTINGS = {
     "confirm_free_tier": False,
     "ai_timeout": 30,
     "ollama_model": "llama3.2:1b",
+    "ollama_num_ctx": 1024,
+    "ollama_num_predict": 96,
+    "ollama_num_threads": 1,
     "gemini_model": "gemini-3.8-flash",
     "groq_model": "openai/gpt-oss-20b",
     "mistral_model": "mistral-small-latest",
@@ -214,6 +217,18 @@ def load_settings(path=SETTINGS_PATH):
         result["ai_timeout"] = min(30, max(5, int(result.get("ai_timeout", 30))))
     except (TypeError, ValueError):
         result["ai_timeout"] = 30
+    for key, default, minimum, maximum in (
+        ("ollama_num_ctx", 1024, 512, 2048),
+        ("ollama_num_predict", 96, 16, 256),
+        ("ollama_num_threads", 1, 1, 2),
+    ):
+        try:
+            value = result.get(key, default)
+            if isinstance(value, bool):
+                raise ValueError
+            result[key] = min(maximum, max(minimum, int(value)))
+        except (TypeError, ValueError):
+            result[key] = default
     for key, default in (
         ("ollama_model", "llama3.2:1b"),
         ("gemini_model", "gemini-3.8-flash"),

@@ -18,4 +18,7 @@ def create_provider(name, settings=None):
     return OllamaProvider(
         model=settings.get("ollama_model"),
         timeout=timeout,
+        num_ctx=settings.get("ollama_num_ctx", 1024),
+        num_predict=settings.get("ollama_num_predict", 96),
+        num_threads=settings.get("ollama_num_threads", 1),
     ) if settings.get("ollama_model") else OllamaProvider(timeout=timeout)

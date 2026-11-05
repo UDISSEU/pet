@@ -1,12 +1,12 @@
 """Persistência SQLite local, versionada e sem conexão a serviços externos."""
 
 from contextlib import closing, contextmanager
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import sqlite3
 import tempfile
+from datetime import datetime, timezone
 import unicodedata
 
 from .errors import (
@@ -16,8 +16,9 @@ from .errors import (
     MemoryStorageError,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 APPLICATION_ID = 0x4E4F5641  # ASCII "NOVA"
+_MEMORY_KINDS = "'episodic', 'semantic', 'procedural', 'preference', 'profile', 'project', 'conversation', 'learning'"
 
 
 def _utc_now():
@@ -72,7 +73,7 @@ class MemoryStorage:
                     if check != "ok":
                         raise sqlite3.DatabaseError("integrity check failed")
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in (0, SCHEMA_VERSION):
+                    if version not in (0, 1, SCHEMA_VERSION):
                         raise MemoryStorageError("Versão do banco de memória não suportada")
                     application_id = connection.execute(
                         "PRAGMA application_id"
@@ -88,6 +89,13 @@ class MemoryStorage:
                             raise MemoryStorageError(
                                 "Recusando inicializar sobre um banco SQLite existente"
                             )
+                    if version == 1:
+                        try:
+                            self._migrate_v1(connection)
+                        except sqlite3.DatabaseError as exc:
+                            raise MemoryStorageError(
+                                "Não foi possível migrar o banco de memória", cause=exc
+                            ) from exc
             except MemoryStorageError:
                 raise
             except sqlite3.DatabaseError as exc:
@@ -101,11 +109,9 @@ class MemoryStorage:
             with closing(self._connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
-                    """CREATE TABLE IF NOT EXISTS memories (
+                    f"""CREATE TABLE IF NOT EXISTS memories (
                         id TEXT PRIMARY KEY,
-                        kind TEXT NOT NULL CHECK(kind IN (
-                            'episodic', 'semantic', 'procedural', 'preference'
-                        )),
+                        kind TEXT NOT NULL CHECK(kind IN ({_MEMORY_KINDS})),
                         content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 8000),
                         normalized_content TEXT NOT NULL,
                         source TEXT NOT NULL CHECK(length(source) BETWEEN 1 AND 128),
@@ -114,6 +120,10 @@ class MemoryStorage:
                         confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
                         relevance REAL NOT NULL CHECK(relevance BETWEEN 0 AND 1),
                         consent_granted INTEGER NOT NULL CHECK(consent_granted = 1),
+                        provenance TEXT NOT NULL CHECK(provenance IN (
+                            'user_provided', 'inference', 'uncertain', 'system_observation'
+                        )),
+                        expires_at TEXT,
                         UNIQUE(kind, normalized_content)
                     )"""
                 )
@@ -130,6 +140,46 @@ class MemoryStorage:
                 pass
         except (sqlite3.DatabaseError, OSError) as exc:
             raise MemoryStorageError("Não foi possível inicializar o banco de memória", cause=exc) from exc
+
+    @staticmethod
+    def _migrate_v1(connection):
+        """Expand categories and metadata transactionally while preserving records."""
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("ALTER TABLE memories RENAME TO memories_v1")
+        connection.execute(
+            f"""CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK(kind IN ({_MEMORY_KINDS})),
+                content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 8000),
+                normalized_content TEXT NOT NULL,
+                source TEXT NOT NULL CHECK(length(source) BETWEEN 1 AND 128),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+                relevance REAL NOT NULL CHECK(relevance BETWEEN 0 AND 1),
+                consent_granted INTEGER NOT NULL CHECK(consent_granted = 1),
+                provenance TEXT NOT NULL CHECK(provenance IN (
+                    'user_provided', 'inference', 'uncertain', 'system_observation'
+                )),
+                expires_at TEXT,
+                UNIQUE(kind, normalized_content)
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO memories (
+                id, kind, content, normalized_content, source, created_at, updated_at,
+                confidence, relevance, consent_granted, provenance, expires_at
+            ) SELECT id, kind, content, normalized_content, source, created_at, updated_at,
+                confidence, relevance, consent_granted,
+                CASE WHEN source IN ('user', 'user-confirmed') THEN 'user_provided'
+                     ELSE 'system_observation' END, NULL FROM memories_v1"""
+        )
+        connection.execute("DROP TABLE memories_v1")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS memories_kind_updated ON memories(kind, updated_at DESC)"
+        )
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection.commit()
 
     def _preserve_corrupt_database(self):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -186,12 +236,13 @@ class MemoryStorage:
             connection.execute(
                 """INSERT INTO memories (
                     id, kind, content, normalized_content, source, created_at, updated_at,
-                    confidence, relevance, consent_granted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                    confidence, relevance, consent_granted, provenance, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
                 (
                     record["id"], record["kind"], record["content"],
                     _normalize(record["content"]), record["source"], now, now,
-                    record["confidence"], record["relevance"],
+                    record["confidence"], record["relevance"], record["provenance"],
+                    record.get("expires_at"),
                 ),
             )
         return self.get(record["id"])
@@ -216,9 +267,9 @@ class MemoryStorage:
         return self._record(row)
 
     def search(self, *, kind=None, terms=(), limit=100):
-        sql = "SELECT * FROM memories"
+        sql = "SELECT * FROM memories WHERE (expires_at IS NULL OR expires_at > ?)"
         clauses = []
-        values = []
+        values = [_utc_now()]
         if kind is not None:
             clauses.append("kind = ?")
             values.append(kind)
@@ -227,25 +278,36 @@ class MemoryStorage:
             escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             values.append(f"%{escaped}%")
         if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
+            sql += " AND " + " AND ".join(clauses)
         sql += " ORDER BY relevance DESC, confidence DESC, updated_at DESC LIMIT ?"
         values.append(limit)
         with self._read_connection() as connection:
             rows = connection.execute(sql, values).fetchall()
         return [self._record(row) for row in rows]
 
-    def update(self, memory_id, *, content, source, confidence, relevance, consent=False):
+    def update(self, memory_id, *, content, source, confidence, relevance, consent=False,
+               provenance=None, expires_at=None):
         if consent is not True:
             raise ConsentRequiredError("A atualização exige consentimento explícito")
         with self._write_connection() as connection:
             cursor = connection.execute(
                 """UPDATE memories SET content = ?, normalized_content = ?, source = ?,
-                    updated_at = ?, confidence = ?, relevance = ? WHERE id = ?""",
-                (content, _normalize(content), source, _utc_now(), confidence, relevance, memory_id),
+                    updated_at = ?, confidence = ?, relevance = ?, provenance = ?, expires_at = ?
+                    WHERE id = ?""",
+                (content, _normalize(content), source, _utc_now(), confidence, relevance,
+                 provenance, expires_at, memory_id),
             )
             if cursor.rowcount == 0:
                 raise MemoryNotFoundError("Memória não encontrada")
         return self.get(memory_id)
+
+    def purge_expired(self):
+        now = _utc_now()
+        with self._write_connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
+            )
+        return cursor.rowcount
 
     def delete(self, memory_id):
         with self._write_connection() as connection:
@@ -290,11 +352,11 @@ class MemoryStorage:
                 handle.write('{\n  "format_version": 1,\n  "exported_at": ')
                 json.dump(_utc_now(), handle, ensure_ascii=False)
                 handle.write(',\n  "memories": [')
-                sql = "SELECT * FROM memories"
-                values = ()
+                sql = "SELECT * FROM memories WHERE (expires_at IS NULL OR expires_at > ?)"
+                values = (_utc_now(),)
                 if kind is not None:
-                    sql += " WHERE kind = ?"
-                    values = (kind,)
+                    sql += " AND kind = ?"
+                    values = (_utc_now(), kind)
                 sql += " ORDER BY created_at, id"
                 with self._read_connection() as connection:
                     cursor = connection.execute(sql, values)

@@ -142,6 +142,7 @@ from spotify_control import (
     spotify_connected as spotify_token_connected,
 )
 from nova_ai.desktop_integration import DesktopNovaIntegration
+from nova_ai.actions import CancellationToken
 
 logger = logging.getLogger(__name__)
 
@@ -179,12 +180,15 @@ class DesktopPet(
         self._recent_errors = deque(maxlen=20)
         self.event_bus = EventBus()
         self.state_manager = StateManager()
+        self.permission_manager = PermissionManager()
         self.nova_integration = None
         try:
-            self.nova_integration = DesktopNovaIntegration()
+            self.nova_integration = DesktopNovaIntegration(
+                permission_manager=self.permission_manager
+            )
         except Exception:
             logger.exception("Núcleo Nova indisponível; mantendo a aplicação legado")
-        self.permission_manager = PermissionManager()
+        self._cognitive_cancel_token = None
         self.plugin_manager = PluginManager(context={"event_bus": self.event_bus,
                                                      "permissions": self.permission_manager},
                                             event_bus=self.event_bus)
@@ -948,6 +952,179 @@ class DesktopPet(
                 return
             self._finish_automation(automation_id, result)
 
+    def _start_cognitive_request(self, question):
+        if self.automation_active or self.ai_request_active:
+            self.show_bubble("Termino a tarefa atual antes de começar outra.", duration=3000)
+            return
+        self._record_interaction()
+        self.automation_active = True
+        self.state = "thinking"
+        self.show_bubble("Vou conferir a pasta Downloads e preparar uma prévia…", duration=999999)
+        threading.Thread(
+            target=self._cognitive_prepare_worker,
+            args=(question,), name="nova-cognitive-prepare", daemon=True,
+        ).start()
+
+    def _cognitive_prepare_worker(self, question):
+        try:
+            prepared = self.nova_integration.prepare_task(question)
+            error = None
+        except Exception as exc:
+            prepared, error = None, type(exc).__name__
+            logging.getLogger(__name__).exception("Falha ao preparar tarefa cognitiva")
+        self.post_ui_callback(self._handle_cognitive_prepared, question, prepared, error)
+
+    def _handle_cognitive_prepared(self, question, prepared, error):
+        if self._closing:
+            return
+        if error:
+            self._finish_cognitive_request(question, f"Não consegui preparar a tarefa ({error}).")
+            return
+        decision = prepared.decision
+        if decision.kind.value == "request_permission":
+            permission = next(iter(decision.permissions_required), None)
+            if permission is None:
+                self._finish_cognitive_request(question, "A tarefa requer uma permissão que não identifiquei.")
+                return
+            accepted = messagebox.askyesno(
+                "Permissão necessária",
+                f"Para preparar a prévia, a Nova precisa da permissão {permission}.\n\n"
+                "Conceder esta permissão não confirma a movimentação dos arquivos. Deseja concedê-la?",
+                parent=self.root,
+            )
+            if not accepted:
+                self._finish_cognitive_request(question, "Sem essa permissão, não alterei nenhum arquivo.")
+                return
+            try:
+                self.permission_manager.authorize("nova.core", permission, confirmed=True)
+                self.permission_manager.require("nova.core", permission, confirmed=True)
+            except (PermissionError, OSError, ValueError):
+                self._finish_cognitive_request(question, "Não consegui registrar essa permissão.")
+                return
+            self.state = "thinking"
+            self.show_bubble("Permissão registrada. Estou atualizando a prévia…", duration=999999)
+            threading.Thread(
+                target=self._cognitive_prepare_worker,
+                args=(question,), name="nova-cognitive-prepare", daemon=True,
+            ).start()
+            return
+        if decision.kind.value == "ask_clarification":
+            self._finish_cognitive_request(
+                question, prepared.task.clarification_question or "Pode explicar o que deseja organizar?"
+            )
+            return
+        if decision.kind.value != "require_confirmation" or not prepared.files_checked:
+            self._finish_cognitive_request(question, decision.reason or "Não posso executar essa tarefa agora.")
+            return
+        rows = prepared.inspection.data.get("plan", []) if prepared.inspection else []
+        if not rows:
+            self._finish_cognitive_request(question, "Não encontrei arquivos para organizar; nada foi alterado.")
+            return
+        operations = [(Path(row["source"]), Path(row["destination"])) for row in rows]
+        if not self._confirm_automation_plan(operations):
+            self._finish_cognitive_request(question, "Tudo bem. Cancelei a organização e mantive os arquivos no lugar.")
+            return
+        self._cognitive_cancel_token = CancellationToken()
+        self.state = "thinking"
+        self.show_bubble("Organizando os arquivos aprovados…", duration=999999)
+        self._show_cognitive_progress(self._cognitive_cancel_token)
+        threading.Thread(
+            target=self._cognitive_execute_worker,
+            args=(question, prepared, self._cognitive_cancel_token),
+            name="nova-cognitive-execute", daemon=True,
+        ).start()
+
+    def _cognitive_execute_worker(self, question, prepared, cancellation):
+        result = self.nova_integration.execute_task(
+            prepared, approved=True, cancellation=cancellation
+        )
+        self.post_ui_callback(self._handle_cognitive_execution, question, result)
+
+    def _show_cognitive_progress(self, cancellation):
+        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
+        dialog.title("Nova · Organização")
+        dialog.transient(self.root)
+        dialog.attributes("-topmost", True)
+        dialog.resizable(False, False)
+        ttk.Label(dialog, text="Organizando os arquivos aprovados…", padding=14).pack(fill="x")
+        button = ttk.Button(
+            dialog, text="Cancelar tarefa",
+            command=lambda: (cancellation.cancel(), button.configure(state="disabled", text="Cancelando…")),
+        )
+        button.pack(anchor="e", padx=12, pady=(0, 12))
+        dialog.protocol("WM_DELETE_WINDOW", cancellation.cancel)
+        self._cognitive_progress_dialog = dialog
+
+    def _handle_cognitive_execution(self, question, result):
+        self._cognitive_cancel_token = None
+        self._finish_cognitive_controls()
+        if self._closing:
+            return
+        self.state = "thumbs_up" if result.verified else "curious"
+        self.show_bubble(result.message, duration=6000)
+        if result.verified and self.nova_integration.last_undo_mapping:
+            if messagebox.askyesno(
+                    "Organização concluída",
+                    "A organização foi verificada. Deseja desfazer e restaurar os arquivos?",
+                    parent=self.root):
+                self._request_cognitive_undo(question)
+        else:
+            self._record_local_interaction(question, result.message)
+
+    def _request_cognitive_undo(self, question):
+        for permission in ("file.read", "file.move"):
+            if self.permission_manager.allowed("nova.core", permission):
+                continue
+            if not messagebox.askyesno(
+                    "Permissão para restaurar",
+                    f"Desfazer requer {permission}. Conceder a permissão não executa a restauração; "
+                    "a solicitação de desfazer já foi confirmada separadamente. Deseja conceder?",
+                    parent=self.root):
+                self.show_bubble("Restauração cancelada; os arquivos continuam organizados.", duration=5000)
+                return
+            try:
+                self.permission_manager.authorize("nova.core", permission, confirmed=True)
+            except (OSError, ValueError):
+                self.show_bubble("Não consegui registrar a permissão de restauração.", duration=5000)
+                return
+        self.automation_active = True
+        self.show_bubble("Restaurando os arquivos…", duration=999999)
+        threading.Thread(
+            target=self._cognitive_undo_worker,
+            args=(question,), name="nova-cognitive-undo", daemon=True,
+        ).start()
+
+    def _cognitive_undo_worker(self, question):
+        try:
+            result = self.nova_integration.undo_last_organization(approved=True)
+            message = result.summary if result is not None else "Não há uma organização disponível para desfazer."
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Falha ao desfazer organização")
+            message = f"Não consegui restaurar os arquivos ({type(exc).__name__})."
+        self.post_ui_callback(self._handle_cognitive_undo, question, message)
+
+    def _handle_cognitive_undo(self, question, message):
+        self._finish_cognitive_controls()
+        if not self._closing:
+            self._record_local_interaction(question, message)
+            self.show_bubble(message, duration=6000)
+
+    def _finish_cognitive_controls(self):
+        self.automation_active = False
+        self.state = "walk"
+        dialog = getattr(self, "_cognitive_progress_dialog", None)
+        self._cognitive_progress_dialog = None
+        if dialog is not None:
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
+
+    def _finish_cognitive_request(self, question, message):
+        self._finish_cognitive_controls()
+        self._record_local_interaction(question, message)
+        self.show_bubble(message, duration=6000)
+
     def _on_ai_response_event(self, event):
         answer = event.payload.get("answer")
         if isinstance(answer, str) and not self._closing:
@@ -1137,6 +1314,9 @@ class DesktopPet(
         cancel_ai = getattr(self, "_ai_cancel", None)
         if cancel_ai is not None:
             cancel_ai.set()
+        cognitive_cancel = getattr(self, "_cognitive_cancel_token", None)
+        if cognitive_cancel is not None:
+            cognitive_cancel.cancel()
         event_bus = getattr(self, "event_bus", None)
         if event_bus is not None:
             event_bus.publish(Event(EventType.APPLICATION_SHUTDOWN, {}))
@@ -1435,6 +1615,10 @@ class DesktopPet(
         spotify_request = parse_spotify_command(question)
         if spotify_request:
             self._start_spotify_request(question, spotify_request)
+            return
+        integration = getattr(self, "nova_integration", None)
+        if integration is not None and integration.classify_task(question):
+            self._start_cognitive_request(question)
             return
         app = self._matching_app(question)
         if app:

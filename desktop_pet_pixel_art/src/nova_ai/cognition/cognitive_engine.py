@@ -158,7 +158,9 @@ class CognitiveEngine:
             if self.dispatcher is None:
                 return ExecutionResult(task.task_id, TaskStatus.AWAITING_PERMISSION,
                                        "Despachante seguro de ferramentas indisponível.")
-            arguments = dict(step.parameters)
+            # Parameters supplied by a planner never control the action name or
+            # destination paths; only the authenticated read-only preview does.
+            arguments = {}
             if (prepared.inspection is not None
                     and isinstance(prepared.inspection.data.get("plan"), list)):
                 arguments["plan"] = prepared.inspection.data["plan"]
@@ -169,6 +171,10 @@ class CognitiveEngine:
         except Exception as exc:
             # Evita transformar erro interno em alegação de sucesso.
             logger.exception("Falha ao executar ação cognitiva")
+            cause = getattr(exc, "cause", None)
+            if cancellation is not None and cancellation.cancelled:
+                return ExecutionResult(task.task_id, TaskStatus.CANCELLED,
+                                       "A tarefa foi cancelada; movimentos já feitos foram revertidos.")
             return ExecutionResult(task.task_id, TaskStatus.FAILED,
                                    f"A execução falhou ({type(exc).__name__}).")
 

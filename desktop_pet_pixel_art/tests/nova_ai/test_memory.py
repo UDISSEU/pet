@@ -76,6 +76,83 @@ class MemorySystemTests(unittest.TestCase):
         self.assertTrue(loaded.created_at)
         self.assertTrue(loaded.updated_at)
 
+    def test_all_user_categories_preserve_provenance_and_expiration(self):
+        for kind in ("profile", "project", "conversation", "learning"):
+            with self.subTest(kind=kind):
+                saved = self.manager.add(
+                    kind, f"Projeto {kind}: preferência local", consent=True,
+                    provenance="user_provided", expires_in_days=30,
+                )
+                self.assertEqual(saved.kind.value, kind)
+                self.assertEqual(saved.provenance, "user_provided")
+                self.assertIsNotNone(saved.expires_at)
+        uncertain = self.manager.add(
+            "learning", "Talvez o usuário prefira temas claros.", consent=True,
+            provenance="uncertain",
+        )
+        self.assertEqual(self.manager.get(uncertain.memory_id).provenance, "uncertain")
+
+    def test_expired_records_are_hidden_and_purged(self):
+        saved = self.manager.add(
+            "conversation", "Reunião temporária amanhã", consent=True,
+            expires_in_days=1,
+        )
+        self.manager.storage.update(
+            saved.memory_id, content=saved.content, source=saved.source,
+            confidence=saved.confidence, relevance=saved.relevance, consent=True,
+            provenance=saved.provenance, expires_at="2000-01-01T00:00:00+00:00",
+        )
+        self.assertEqual(self.manager.search("reunião temporária"), [])
+        self.assertEqual(self.manager.storage.purge_expired(), 1)
+
+    def test_update_changes_provenance_and_expiration_after_explicit_consent(self):
+        saved = self.manager.add("project", "Projeto Nova: ativo", consent=True)
+        updated = self.manager.update(
+            saved.memory_id, content="Projeto Nova: pausado", consent=True,
+            provenance="user_provided", expires_in_days=14,
+        )
+        self.assertEqual(updated.provenance, "user_provided")
+        self.assertIsNotNone(updated.expires_at)
+
+    def test_conflict_detection_suggests_same_subject_without_overwriting(self):
+        saved = self.manager.add("profile", "Cidade: Belém", consent=True)
+        conflicts = self.manager.find_conflicts("profile", "Cidade: Manaus")
+        self.assertEqual([row.memory_id for row in conflicts], [saved.memory_id])
+        self.assertEqual(self.manager.get(saved.memory_id).content, "Cidade: Belém")
+
+    def test_schema_v1_is_migrated_without_losing_existing_memory(self):
+        legacy = self.root / "legacy-v1.sqlite3"
+        connection = sqlite3.connect(legacy)
+        connection.executescript("""
+            CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK(kind IN ('episodic','semantic','procedural','preference')),
+                content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 8000),
+                normalized_content TEXT NOT NULL,
+                source TEXT NOT NULL CHECK(length(source) BETWEEN 1 AND 128),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+                relevance REAL NOT NULL CHECK(relevance BETWEEN 0 AND 1),
+                consent_granted INTEGER NOT NULL CHECK(consent_granted = 1),
+                UNIQUE(kind, normalized_content)
+            );
+            INSERT INTO memories VALUES (
+                'legacy', 'semantic', 'Nova funciona offline', 'nova funciona offline',
+                'user', '2025-01-01T00:00:00+00:00', '2025-01-01T00:00:00+00:00',
+                0.8, 0.8, 1
+            );
+            PRAGMA application_id = 1313822273;
+            PRAGMA user_version = 1;
+        """)
+        connection.close()
+        migrated = MemoryManager(MemoryStorage(legacy))
+        record = migrated.get("legacy")
+        self.assertEqual(record.content, "Nova funciona offline")
+        self.assertEqual(record.provenance, "user_provided")
+        self.assertIsNone(record.expires_at)
+        self.assertEqual(migrated.add("project", "Projeto X", consent=True).kind.value, "project")
+
     def test_all_memory_categories_are_supported_without_executing_procedures(self):
         episodic = EpisodicMemory(self.manager).record_event(
             "A Nova concluiu uma sessão de foco.", consent=True

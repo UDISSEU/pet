@@ -1,7 +1,9 @@
 """API de alto nível; grava apenas após consentimento explícito."""
 
 import re
+import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from .errors import (
     ConsentRequiredError,
@@ -14,6 +16,7 @@ from .types import MemoryKind, record_from_row
 
 _MAX_CONTENT_CHARS = 8_000
 _MAX_SOURCE_CHARS = 128
+_PROVENANCE = {"user_provided", "inference", "uncertain", "system_observation"}
 _SENSITIVE_PATTERNS = (
     re.compile(
         r"(?i)\b(?:password|passwd|senha|credential|credencial|api[_ -]?key|"
@@ -54,6 +57,13 @@ class MemoryManager:
     def __init__(self, storage=None):
         self.storage = storage if storage is not None else MemoryStorage()
         self.retrieval = MemoryRetrieval(self.storage)
+        self._last_expiry_cleanup = 0.0
+
+    def _purge_expired_if_due(self):
+        now = time.monotonic()
+        if now - self._last_expiry_cleanup >= 60:
+            self.storage.purge_expired()
+            self._last_expiry_cleanup = now
 
     @staticmethod
     def _require_consent(consent):
@@ -69,9 +79,11 @@ class MemoryManager:
 
     def add(
         self, kind, content, *, source="user", consent=False,
-        confidence=0.8, relevance=0.8,
+        confidence=0.8, relevance=0.8, provenance="user_provided",
+        expires_in_days=None,
     ):
         self._require_consent(consent)
+        self._purge_expired_if_due()
         kind = _kind(kind)
         content = _clean_text(content, "content", _MAX_CONTENT_CHARS)
         source = _clean_text(source, "source", _MAX_SOURCE_CHARS)
@@ -79,6 +91,9 @@ class MemoryManager:
         self._reject_sensitive_content(source)
         confidence = _validate_confidence(confidence, "confidence")
         relevance = _validate_confidence(relevance, "relevance")
+        if not isinstance(provenance, str) or provenance not in _PROVENANCE:
+            raise ValueError("provenance inválida")
+        expires_at = self._expiry(expires_in_days)
         duplicate = self.find_duplicate(kind, content)
         if duplicate is not None:
             return duplicate
@@ -91,6 +106,8 @@ class MemoryManager:
                 "confidence": confidence,
                 "relevance": relevance,
                 "consent_granted": True,
+                "provenance": provenance,
+                "expires_at": expires_at,
             })
         except DuplicateMemoryError:
             # Another process may have inserted the same record after our lookup.
@@ -101,6 +118,7 @@ class MemoryManager:
         return record_from_row(row)
 
     def get(self, memory_id):
+        self._purge_expired_if_due()
         return record_from_row(self.storage.get(memory_id))
 
     def find_duplicate(self, kind, content):
@@ -110,15 +128,48 @@ class MemoryManager:
         return record_from_row(row) if row else None
 
     def search(self, query="", *, kind=None, limit=20):
+        self._purge_expired_if_due()
         results = self.retrieval.search(query, kind=kind, limit=limit)
         return [item.memory for item in results]
 
     def search_scored(self, query="", *, kind=None, limit=20):
+        self._purge_expired_if_due()
         return self.retrieval.search(query, kind=kind, limit=limit)
+
+    @staticmethod
+    def _expiry(days):
+        if days is None:
+            return None
+        if type(days) is not int or not 1 <= days <= 3650:
+            raise ValueError("expires_in_days deve estar entre 1 e 3650")
+        expires = datetime.now(timezone.utc) + timedelta(days=days)
+        return expires.isoformat(timespec="seconds")
+
+    def find_conflicts(self, kind, content, *, limit=20):
+        """Find likely conflicts sharing an explicit `subject: value` label.
+
+        Results are suggestions only. The caller must ask the user before updating
+        or deleting an existing record.
+        """
+        kind = _kind(kind)
+        content = _clean_text(content, "content", _MAX_CONTENT_CHARS)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit deve estar entre 1 e 100")
+        match = re.match(r"^\s*([^:]{2,80}):\s*(.+)$", content)
+        if not match:
+            return []
+        subject = " ".join(match.group(1).casefold().split())
+        value = " ".join(match.group(2).casefold().split())
+        candidates = self.search(subject, kind=kind, limit=limit)
+        return [record for record in candidates if record.content.casefold() != content.casefold()
+                and (candidate := re.match(r"^\s*([^:]{2,80}):\s*(.+)$", record.content))
+                and " ".join(candidate.group(1).casefold().split()) == subject
+                and " ".join(candidate.group(2).casefold().split()) != value]
 
     def update(
         self, memory_id, *, content=None, source=None, consent=False,
-        confidence=None, relevance=None,
+        confidence=None, relevance=None, provenance=None, expires_in_days=None,
+        clear_expiry=False,
     ):
         self._require_consent(consent)
         existing = self.storage.get(memory_id)
@@ -136,6 +187,17 @@ class MemoryManager:
         new_relevance = existing["relevance"] if relevance is None else _validate_confidence(
             relevance, "relevance"
         )
+        new_provenance = existing["provenance"] if provenance is None else provenance
+        if not isinstance(new_provenance, str) or new_provenance not in _PROVENANCE:
+            raise ValueError("provenance inválida")
+        if type(clear_expiry) is not bool:
+            raise ValueError("clear_expiry deve ser booleano")
+        if expires_in_days is not None:
+            new_expiry = self._expiry(expires_in_days)
+        elif clear_expiry:
+            new_expiry = None
+        else:
+            new_expiry = existing["expires_at"]
         duplicate = self.storage.find_duplicate(
             existing["kind"], new_content, exclude_id=memory_id
         )
@@ -145,6 +207,7 @@ class MemoryManager:
         row = self.storage.update(
             memory_id, content=new_content, source=new_source,
             confidence=new_confidence, relevance=new_relevance, consent=True,
+            provenance=new_provenance, expires_at=new_expiry,
         )
         return record_from_row(row)
 

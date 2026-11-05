@@ -31,11 +31,24 @@ _EMOTION_FOR_STATE = {
     BehaviorState.ERROR: SimulatedEmotion.CONCERNED,
 }
 
+_PROMPT_GUIDANCE = {
+    BehaviorState.IDLE: "Mantenha um tom tranquilo e deixe a pessoa conduzir.",
+    BehaviorState.THINKING: "Mostre curiosidade com perguntas úteis; não invente certeza.",
+    BehaviorState.WORKING: "Seja objetiva e informe apenas ações realmente concluídas.",
+    BehaviorState.HAPPY: "Use leveza moderada, sem exagerar intimidade ou elogios.",
+    BehaviorState.SLEEPING: "Seja breve e tranquila; não sugira que está literalmente dormindo.",
+    BehaviorState.ERROR: "Explique a limitação com calma e indique um próximo passo seguro.",
+}
+
 
 @dataclass(frozen=True)
 class EmotionalState:
     behavior: BehaviorState = BehaviorState.IDLE
     emotion: SimulatedEmotion = SimulatedEmotion.CALM
+
+    @property
+    def prompt_guidance(self):
+        return _PROMPT_GUIDANCE[self.behavior]
 
     @classmethod
     def for_behavior(cls, behavior):

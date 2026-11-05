@@ -268,6 +268,136 @@ class ActionSystemTests(unittest.TestCase):
         self.assertTrue(undo.success)
         self.assertEqual(source.read_text(encoding="utf-8"), "keep me")
 
+    def _preview_for(self, root, names):
+        import nova_ai.actions.file_manager as file_module
+
+        for name in names:
+            (root / name).write_text(name, encoding="utf-8")
+        with mock.patch.object(file_module, "_downloads_root", return_value=root):
+            return FileOrganizerPreviewTool().execute({}).data["plan"]
+
+    def test_downloads_root_symlink_is_rejected(self):
+        import nova_ai.actions.file_manager as file_module
+
+        real = Path(self.temp.name) / "real-downloads"
+        real.mkdir()
+        link = Path(self.temp.name) / "Downloads"
+        link.symlink_to(real, target_is_directory=True)
+        with mock.patch.object(file_module.Path, "home", return_value=Path(self.temp.name)):
+            with self.assertRaises((OSError, ValueError)):
+                file_module._downloads_root()
+
+    def test_category_directory_symlink_is_rejected(self):
+        import nova_ai.actions.file_manager as file_module
+
+        source = self.root / "report.pdf"
+        source.write_text("document", encoding="utf-8")
+        external = Path(self.temp.name) / "external"
+        external.mkdir()
+        (self.root / "Documentos").symlink_to(external, target_is_directory=True)
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            with self.assertRaises(ValueError):
+                FileOrganizerPreviewTool().execute({})
+        self.assertTrue(source.exists())
+
+    def test_external_destination_and_traversal_plan_are_rejected(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["safe.txt"])
+        external = Path(self.temp.name) / "outside.txt"
+        forged = dict(plan[0], destination=str(external))
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            with self.assertRaises(ValueError):
+                FileOrganizerTool().execute({"plan": [forged]})
+            forged = dict(plan[0], source=str(self.root / ".." / "outside.txt"))
+            with self.assertRaises(ValueError):
+                FileOrganizerTool().execute({"plan": [forged]})
+
+    def test_replacing_source_with_symlink_invalidates_plan(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["safe.txt"])
+        replacement = Path(self.temp.name) / "replacement.txt"
+        replacement.write_text("outside", encoding="utf-8")
+        (self.root / "safe.txt").unlink()
+        (self.root / "safe.txt").symlink_to(replacement)
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            with self.assertRaises(ValueError):
+                FileOrganizerTool().execute({"plan": plan})
+        self.assertEqual(replacement.read_text(encoding="utf-8"), "outside")
+
+    def test_existing_destination_is_not_overwritten(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["safe.txt"])
+        category = self.root / "Documentos"
+        category.mkdir()
+        existing = category / "safe.txt"
+        existing.write_text("keep", encoding="utf-8")
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            with self.assertRaises((ValueError, FileExistsError)):
+                FileOrganizerTool().execute({"plan": plan})
+        self.assertEqual(existing.read_text(encoding="utf-8"), "keep")
+
+    def test_tampered_plan_token_is_rejected(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["safe.txt"])
+        plan[0]["destination"] = str(self.root / "Documentos" / "different.txt")
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            with self.assertRaises(ValueError):
+                FileOrganizerTool().execute({"plan": plan})
+
+    def test_undo_rejects_adulterated_paths_and_token(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["safe.txt"])
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            organized = FileOrganizerTool().execute({"plan": plan})
+            row = dict(organized.data["undo_mapping"][0])
+            row["source"] = str(self.root / ".." / "outside.txt")
+            with self.assertRaises(ValueError):
+                UndoFileOrganizationTool().execute({"undo_mapping": [row]})
+            row = dict(organized.data["undo_mapping"][0])
+            row["destination"] = str(self.root / "Documentos" / "other.txt")
+            with self.assertRaises(ValueError):
+                UndoFileOrganizationTool().execute({"undo_mapping": [row]})
+
+    def test_interruption_rolls_back_all_moves(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["one.txt", "two.txt"])
+
+        class InterruptAfterFirstMove:
+            calls = 0
+
+            def checkpoint(self):
+                self.calls += 1
+                if self.calls == 2:
+                    raise RuntimeError("interrupted")
+
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            with self.assertRaises(RuntimeError):
+                FileOrganizerTool().execute_with_context({"plan": plan}, InterruptAfterFirstMove())
+        self.assertTrue((self.root / "one.txt").exists())
+        self.assertTrue((self.root / "two.txt").exists())
+        self.assertFalse((self.root / "Documentos" / "one.txt").exists())
+
+    def test_normal_files_organize_and_restore_with_exclusive_rename(self):
+        import nova_ai.actions.file_manager as file_module
+
+        plan = self._preview_for(self.root, ["notes.txt", "photo.png"])
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            organized = FileOrganizerTool().execute({"plan": plan})
+            self.assertTrue((self.root / "Documentos" / "notes.txt").exists())
+            self.assertTrue((self.root / "Imagens" / "photo.png").exists())
+            undone = UndoFileOrganizationTool().execute(
+                {"undo_mapping": organized.data["undo_mapping"]}
+            )
+        self.assertTrue(undone.success)
+        self.assertTrue((self.root / "notes.txt").exists())
+        self.assertTrue((self.root / "photo.png").exists())
+
     def test_default_registry_contains_only_explicit_local_tools(self):
         registry = create_default_tool_registry(directory_policy=self.policy)
         self.assertIn("system.clock", registry.names())

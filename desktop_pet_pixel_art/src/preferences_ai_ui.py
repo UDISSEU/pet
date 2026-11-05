@@ -19,6 +19,9 @@ class AIPreferencesTabMixin:
         groq_model = getattr(context, 'groq_model', None)
         mistral_model = getattr(context, 'mistral_model', None)
         ollama_model = getattr(context, 'ollama_model', None)
+        ollama_num_ctx = getattr(context, 'ollama_num_ctx', None)
+        ollama_num_predict = getattr(context, 'ollama_num_predict', None)
+        ollama_num_threads = getattr(context, 'ollama_num_threads', None)
         online_ai_enabled = getattr(context, 'online_ai_enabled', None)
         spotify_client_id = getattr(context, 'spotify_client_id', None)
         window = getattr(context, 'window', None)
@@ -67,11 +70,21 @@ class AIPreferencesTabMixin:
                 return
             try:
                 timeout_value = int(ai_timeout.get())
+                local_limits = {
+                    "ollama_num_ctx": int(ollama_num_ctx.get()),
+                    "ollama_num_predict": int(ollama_num_predict.get()),
+                    "ollama_num_threads": int(ollama_num_threads.get()),
+                }
             except ValueError:
-                test_status.set("Informe um timeout entre 5 e 30 segundos.")
+                test_status.set("Confira timeout e limites locais numéricos.")
                 return
             if not 5 <= timeout_value <= 30:
                 test_status.set("Informe um timeout entre 5 e 30 segundos.")
+                return
+            if not (512 <= local_limits["ollama_num_ctx"] <= 2048
+                    and 16 <= local_limits["ollama_num_predict"] <= 256
+                    and 1 <= local_limits["ollama_num_threads"] <= 2):
+                test_status.set("Contexto: 512–2048; resposta: 16–256; threads: 1–2.")
                 return
             provider_name = ai_provider.get()
             provider_settings = dict(self.settings)
@@ -79,6 +92,7 @@ class AIPreferencesTabMixin:
                 ai_provider=provider_name,
                 ai_timeout=timeout_value,
                 ollama_model=ollama_model.get().strip(),
+                **local_limits,
                 gemini_model=gemini_model.get().strip(),
                 groq_model=groq_model.get().strip(),
                 mistral_model=mistral_model.get().strip(),
@@ -95,6 +109,12 @@ class AIPreferencesTabMixin:
         test_button.configure(command=test_selected_provider)
         ttk.Label(ai_provider_card, text="Modelo Ollama", style="Hint.TLabel").pack(anchor="w")
         ttk.Entry(ai_provider_card, textvariable=ollama_model, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
+        ttk.Label(ai_provider_card, text="Contexto Ollama (512–2048 tokens)", style="Hint.TLabel").pack(anchor="w")
+        ttk.Entry(ai_provider_card, textvariable=ollama_num_ctx, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
+        ttk.Label(ai_provider_card, text="Resposta Ollama (16–256 tokens)", style="Hint.TLabel").pack(anchor="w")
+        ttk.Entry(ai_provider_card, textvariable=ollama_num_predict, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
+        ttk.Label(ai_provider_card, text="Threads CPU Ollama (1–2; padrão 1)", style="Hint.TLabel").pack(anchor="w")
+        ttk.Entry(ai_provider_card, textvariable=ollama_num_threads, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
         ttk.Label(ai_provider_card, text="Modelo Gemini", style="Hint.TLabel").pack(anchor="w")
         ttk.Entry(ai_provider_card, textvariable=gemini_model, style="Autonomy.TEntry").pack(fill="x", pady=(2, 6))
         ttk.Label(ai_provider_card, text="Modelo Groq", style="Hint.TLabel").pack(anchor="w")

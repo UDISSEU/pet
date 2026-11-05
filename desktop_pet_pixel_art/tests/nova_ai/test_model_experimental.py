@@ -2,8 +2,13 @@
 
 import importlib.util
 import tempfile
+import sys
 import unittest
 from pathlib import Path
+
+SRC = Path(__file__).resolve().parents[2] / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from nova_ai.core.errors import ModelError
 from nova_ai.model import (

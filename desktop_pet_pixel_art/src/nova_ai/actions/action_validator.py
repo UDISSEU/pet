@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import math
+import os
+import stat
 
 
 class ActionValidationError(ValueError):
@@ -56,20 +58,21 @@ class DirectoryAccessPolicy:
         configured = default if authorized_roots is None else authorized_roots
         for plugin, roots in configured.items():
             for root in roots:
-                if authorized_roots is None:
-                    self._roots.setdefault(plugin, []).append(
-                        Path(root).expanduser().resolve()
-                    )
-                elif Path(root).expanduser().is_dir():
-                    self.authorize(plugin, root)
+                requested = Path(root).expanduser().absolute()
+                if self.has_symlink_component(requested):
+                    continue
+                if requested.is_dir():
+                    self._roots.setdefault(plugin, []).append(requested)
 
     def authorize(self, plugin_id, directory):
         if not isinstance(plugin_id, str) or not plugin_id.strip():
             raise ActionValidationError("Plugin inválido para autorização de diretório")
         requested = Path(directory).expanduser()
-        if self.has_symlink_component(requested) or not requested.exists() or not requested.is_dir():
+        if (not requested.is_absolute() or ".." in requested.parts
+                or self.has_symlink_component(requested) or not requested.exists()
+                or not requested.is_dir()):
             raise ActionValidationError("Somente diretórios existentes podem ser autorizados")
-        root = requested.resolve()
+        root = requested.absolute()
         roots = self._roots.setdefault(plugin_id, [])
         if root not in roots:
             roots.append(root)
@@ -81,7 +84,9 @@ class DirectoryAccessPolicy:
         requested = Path(directory).expanduser()
         if self.has_symlink_component(requested):
             raise ActionValidationError("Acesso a links simbólicos não é permitido")
-        candidate = requested.resolve()
+        if not requested.is_absolute() or ".." in requested.parts:
+            raise ActionValidationError("Caminho de diretório malformado")
+        candidate = requested.absolute()
         for root in self._roots.get(plugin_id, ()):
             if candidate == root or root in candidate.parents:
                 return candidate
@@ -89,8 +94,22 @@ class DirectoryAccessPolicy:
 
     @staticmethod
     def has_symlink_component(path):
-        current = Path(path).absolute()
-        for component in (current, *current.parents):
-            if component.is_symlink():
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = candidate.absolute()
+        if ".." in candidate.parts:
+            return True
+        current = Path(candidate.anchor)
+        for component in candidate.parts[1:]:
+            current = current / component
+            try:
+                mode = os.lstat(current).st_mode
+            except FileNotFoundError:
+                # Missing descendants cannot currently be symlinks; continue
+                # checking any existing ancestor on subsequent iterations.
+                continue
+            except OSError:
+                return True
+            if stat.S_ISLNK(mode):
                 return True
         return False
