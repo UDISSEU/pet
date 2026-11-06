@@ -300,6 +300,19 @@ class ActionSystemTests(unittest.TestCase):
                 FileOrganizerPreviewTool().execute({})
         self.assertTrue(source.exists())
 
+    def test_incomplete_downloads_preview_is_marked_blocked(self):
+        import nova_ai.actions.file_manager as file_module
+
+        for index in range(501):
+            (self.root / f"document-{index:03}.txt").write_text("content", encoding="utf-8")
+        with mock.patch.object(file_module, "_downloads_root", return_value=self.root):
+            preview = FileOrganizerPreviewTool().execute({})
+
+        self.assertFalse(preview.success)
+        self.assertTrue(preview.data["limit_reached"])
+        self.assertEqual(len(preview.data["plan"]), 500)
+        self.assertIn("bloqueada", preview.summary)
+
     def test_external_destination_and_traversal_plan_are_rejected(self):
         import nova_ai.actions.file_manager as file_module
 

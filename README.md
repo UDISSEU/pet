@@ -61,7 +61,7 @@ As pastas `movimentação Nova/` e `movimento 2.0/` guardam materiais visuais de
 
 Pedidos locais conhecidos, como algumas automações e ações de sistema, podem ser tratados sem chamar um modelo de IA. As operações de arquivo que modificam conteúdo apresentam uma prévia e pedem confirmação; a interface também exige confirmação para esvaziar a Lixeira ou executar determinadas ações de manutenção.
 
-## Histórico e ramificações
+## Histórico e evolução
 
 O histórico começa em **8 de outubro de 2026**, com a primeira versão da mascote e seus materiais gráficos. Os marcos identificados mostram a evolução do protótipo para uma aplicação desktop mais completa:
 
@@ -69,21 +69,8 @@ O histórico começa em **8 de outubro de 2026**, com a primeira versão da masc
 - **Organização do repositório:** remoção posterior de ambientes virtuais e arquivos redundantes do rastreamento, além da adoção de `.gitignore`.
 - **Expansão da aplicação:** inclusão de lançador Linux, provedores de IA, módulos separados para interface e animação e testes automatizados.
 - **Automações e integrações:** ferramentas locais para organização e análise de arquivos, integração com Spotify e controles de permissão.
-- **Estado atual de `main`:** aplicação modular em Python, com interface Tkinter, testes e documentação de arquitetura.
 
-As ramificações disponíveis no momento da análise são:
-
-| Branch | Referência no momento da análise |
-|---|---|
-| `main` | `94f827a` |
-| `feat/automacoes` | `3793db1` |
-| `feature/nova-complete` | `05ef1c2` |
-| `fix/analise-nova` | `9faa883` |
-| `javascript` | `4eb8625` |
-| `ramificação2.0` | `c05b40a` |
-| `testegeral` | `d0ed922` |
-
-Os nomes indicam linhas de trabalho distintas, mas a presença de uma branch não significa, por si só, que suas alterações já estejam integradas à `main`. Para conferir o conteúdo e a relação entre elas, consulte os respectivos históricos e compare cada branch com `main`.
+O projeto é uma aplicação desktop em Python/Tkinter, com animações, provedores de IA, automações locais, testes e documentação de arquitetura. O estado das branches e dos commits muda ao longo do desenvolvimento; consulte o Git para obter essas referências atualizadas.
 
 ## Instalação
 

@@ -36,7 +36,7 @@ Uma instalação existente é detectada antes da atualização. Para automatizar
 - Abra o menu com o botão direito e escolha **Perguntar** para conversar. Cumprimentos, elogios, piadas, dança, aceno, joinha, descanso e esconde-esconde também são respondidos localmente, sem chamar o modelo.
 - No menu, escolha **Calendário** para abrir o calendário local.
 - Em **Foco e rotina**, escolha uma prioridade e a duração da sessão. A Nova usa a animação de estudo durante o foco, dá um joinha ao concluir e dança ao fim da pausa.
-- Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps. A aba **Automações** mostra indicadores do notebook, arquivos grandes, duplicados e espaço por pasta; também oferece organização de Downloads e capturas com prévia e desfazer, e esvaziamento confirmado da Lixeira. Avisos de pausa e bateria baixa respeitam foco e silêncio. No menu **Perguntar**, intents locais executam essas ações sem consultar a IA.
+- Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps. A aba **Automações** mostra indicadores do notebook, arquivos grandes, duplicados e espaço por pasta; também oferece organização de Downloads e capturas com prévia e desfazer, e esvaziamento confirmado da Lixeira. As prévias são preparadas fora da thread da interface; a organização cognitiva é bloqueada se houver mais de 500 arquivos elegíveis, para evitar confirmar uma operação parcial. Avisos de pausa e bateria baixa respeitam foco e silêncio. No menu **Perguntar**, intents locais executam essas ações sem consultar a IA.
 - Na aba **Foco e rotina**, você pode ativar o aceno ao iniciar, comentários por período do dia, bocejo após cinco minutos sem interação, comemoração ao concluir o foco, recadinhos ocasionais (intervalo mínimo de 30 minutos), dança espontânea e lembretes de pausa saudável. A rotina da noite também pode ser desligada. As falas espontâneas respeitam o horário silencioso e o modo selecionado.
 - Na aba **Meu Computador**, confira atualizações, atualize pacotes e revise limpezas do APT. A autenticação é feita pelo Linux; a remoção de pacotes mostra uma prévia antes de pedir confirmação.
 - Na aba **Histórico**, consulte mensagens com data e hora e apague uma mensagem selecionada ou todo o histórico.
@@ -85,7 +85,7 @@ O desenho, a conversa e as animações funcionam sem recursos específicos do X1
 ## Verificar
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -t . -v
 ```
 
 Os testes são executados na integração contínua com Python 3.10–3.13. O workflow também verifica Ruff, Bandit, cobertura, consistência e auditoria de dependências, instalação limpa/inicialização e testes Tk separados.

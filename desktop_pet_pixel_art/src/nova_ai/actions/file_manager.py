@@ -288,7 +288,11 @@ class FileOrganizerPreviewTool(Tool):
                 count += 1
         finally:
             os.close(root_fd)
-        return ActionResult(True, f"Prévia: {len(plan)} arquivo(s) seriam movidos.",
+        summary = (
+            "A prévia foi limitada a 500 arquivos; a organização completa foi bloqueada."
+            if has_more else f"Prévia: {len(plan)} arquivo(s) seriam movidos."
+        )
+        return ActionResult(not has_more, summary,
                             {"root": str(root), "plan": plan, "limit_reached": has_more})
 
 

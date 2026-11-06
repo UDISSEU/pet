@@ -798,34 +798,21 @@ class DesktopPet(
         if self.automation_active:
             self.show_bubble("Já estou cuidando de uma automação.", duration=2500)
             return
-        if automation["id"] in ("trash_duplicates", "empty_trash"):
+        confirmed_plan = None
+        preview_messages = {
+            "organize_downloads": "Estou conferindo os arquivos de Downloads…",
+            "organize_screenshots": "Estou procurando capturas de tela…",
+            "trash_duplicates": "Estou comparando os arquivos…",
+            "empty_trash": "Estou conferindo a Lixeira…",
+        }
+        if automation["id"] in preview_messages:
             self.automation_active = True
             for button in getattr(self, "_automation_action_buttons", {}).values():
                 button.configure(state="disabled")
             self.state = "thinking"
-            message = "Estou comparando os arquivos…" if automation["id"] == "trash_duplicates" else "Estou conferindo a Lixeira…"
-            self.show_bubble(message, duration=999999)
+            self.show_bubble(preview_messages[automation["id"]], duration=999999)
             threading.Thread(target=self._automation_preview_worker, args=(automation["id"],), daemon=True).start()
             return
-        if automation["id"] in ("organize_downloads", "organize_screenshots", "empty_trash"):
-            try:
-                operations = (
-                    preview_downloads() if automation["id"] == "organize_downloads" else
-                    preview_screenshots() if automation["id"] == "organize_screenshots" else
-                    preview_empty_trash()
-                )
-            except (OSError, ValueError) as exc:
-                self._finish_automation(automation["id"], {"title": "Não consegui ler os arquivos", "lines": [str(exc)], "status": "error"})
-                return
-            if not operations:
-                empty_titles = {"organize_downloads": "Downloads já está em ordem", "organize_screenshots": "Nenhuma captura para organizar", "empty_trash": "A Lixeira já está vazia"}
-                self._finish_automation(automation["id"], {"title": empty_titles[automation["id"]], "lines": ["Não encontrei itens para esta ação."], "status": "ok"})
-                return
-            if not self._confirm_automation_plan(operations):
-                return
-            confirmed_plan = tuple(operations)
-        else:
-            confirmed_plan = None
         self.automation_active = True
         for button in getattr(self, "_automation_action_buttons", {}).values():
             button.configure(state="disabled")
@@ -836,17 +823,24 @@ class DesktopPet(
 
     def _automation_preview_worker(self, automation_id):
         try:
-            operations = preview_duplicate_removals() if automation_id == "trash_duplicates" else preview_empty_trash()
-            result = {"title": "Prévia de cópias", "lines": [], "status": "preview", "plan": operations}
+            previewers = {
+                "organize_downloads": (preview_downloads, "Prévia de Downloads"),
+                "organize_screenshots": (preview_screenshots, "Prévia de capturas de tela"),
+                "trash_duplicates": (preview_duplicate_removals, "Prévia de cópias"),
+                "empty_trash": (preview_empty_trash, "Prévia da Lixeira"),
+            }
+            previewer, title = previewers[automation_id]
+            operations = previewer()
+            result = {"title": title, "lines": [], "status": "preview", "plan": operations}
         except Exception as exc:
             logging.warning("Prévia da automação %s falhou (%s)", automation_id, type(exc).__name__)
             result = {"title": "Não consegui preparar a prévia", "lines": [f"Ocorreu um erro ({type(exc).__name__})."], "status": "error"}
         event_type = EventType.TASK_FINISHED if result.get("status") == "preview" else EventType.TASK_FAILED
         self.event_bus.post(Event(event_type, {"automation_id": automation_id, "result": result}))
 
-    def _confirm_automation_plan(self, operations):
+    def _confirm_automation_plan(self, operations, *, title="Prévia · Organizar Downloads"):
         dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
-        dialog.title("Prévia · Organizar Downloads")
+        dialog.title(title)
         dialog.transient(self.root)
         dialog.attributes("-topmost", True)
         dialog.resizable(True, True)
@@ -947,13 +941,21 @@ class DesktopPet(
             except tk.TclError:
                 pass
         if not self._closing:
-            if result.get("status") == "preview" and automation_id in ("trash_duplicates", "empty_trash"):
+            if result.get("status") == "preview" and automation_id in (
+                "organize_downloads", "organize_screenshots", "trash_duplicates", "empty_trash",
+            ):
                 operations = result.get("plan", [])
                 if not operations:
-                    title = "Nenhuma cópia duplicada encontrada" if automation_id == "trash_duplicates" else "A Lixeira já está vazia"
+                    empty_titles = {
+                        "organize_downloads": "Downloads já está em ordem",
+                        "organize_screenshots": "Nenhuma captura para organizar",
+                        "trash_duplicates": "Nenhuma cópia duplicada encontrada",
+                        "empty_trash": "A Lixeira já está vazia",
+                    }
+                    title = empty_titles[automation_id]
                     self._finish_automation(automation_id, {"title": title, "lines": ["Não encontrei itens para esta ação."], "status": "ok"})
                     return
-                if not self._confirm_automation_plan(operations):
+                if not self._confirm_automation_plan(operations, title=result.get("title", "Prévia da automação")):
                     self.state = "walk"
                     self.show_bubble("Tudo bem, mantive os arquivos como estavam.", duration=3500)
                     return
@@ -962,7 +964,13 @@ class DesktopPet(
                 for button in getattr(self, "_automation_action_buttons", {}).values():
                     button.configure(state="disabled")
                 self.state = "thinking"
-                self.show_bubble("Estou movendo as cópias para a Lixeira…", duration=999999)
+                progress_messages = {
+                    "organize_downloads": "Estou organizando Downloads…",
+                    "organize_screenshots": "Estou organizando as capturas…",
+                    "trash_duplicates": "Estou movendo as cópias para a Lixeira…",
+                    "empty_trash": "Estou esvaziando a Lixeira…",
+                }
+                self.show_bubble(progress_messages[automation_id], duration=999999)
                 threading.Thread(target=self._automation_worker, args=(automation, tuple(operations)), daemon=True).start()
                 return
             self._finish_automation(automation_id, result)
@@ -993,6 +1001,15 @@ class DesktopPet(
             return
         if error:
             self._finish_cognitive_request(question, f"Não consegui preparar a tarefa ({error}).")
+            return
+        inspection = prepared.inspection
+        if inspection is not None and inspection.data.get("limit_reached"):
+            self._finish_cognitive_request(
+                question,
+                "Downloads contém mais de 500 arquivos para organizar. "
+                "A prévia está incompleta, então não alterei nenhum arquivo. "
+                "Reduza a quantidade e tente novamente.",
+            )
             return
         decision = prepared.decision
         if decision.kind.value == "request_permission":

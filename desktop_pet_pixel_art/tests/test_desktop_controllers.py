@@ -25,10 +25,105 @@ import preferences_computer_ui
 import preferences_memory_ui
 import preferences_ui
 import speech_controller
+import routine_controller
 from desktop_pet import DesktopPet
 
 
 class DesktopControllerRegressionTests(unittest.TestCase):
+    def test_automation_file_preview_is_dispatched_to_worker(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.settings = {"automations": {"enabled": {}}}
+        pet.automation_active = False
+        pet.ai_request_active = False
+        pet.app_launch_active = False
+        pet.permission_manager = mock.Mock()
+        pet._authorize_core_action = mock.Mock()
+        pet._automation_action_buttons = {}
+        pet.show_bubble = mock.Mock()
+        pet.event_bus = mock.Mock()
+        automation = next(
+            item for item in desktop_pet.AUTOMATIONS
+            if item["id"] == "organize_screenshots"
+        )
+
+        with (
+            mock.patch("desktop_pet.threading.Thread") as thread,
+            mock.patch("desktop_pet.preview_screenshots") as preview,
+        ):
+            pet._request_automation(automation)
+
+        preview.assert_not_called()
+        thread.assert_called_once()
+        self.assertEqual(thread.call_args.kwargs["target"], pet._automation_preview_worker)
+        thread.return_value.start.assert_called_once_with()
+
+    def test_cognitive_preview_limit_is_not_confirmed(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._closing = False
+        pet._finish_cognitive_request = mock.Mock()
+        prepared = SimpleNamespace(
+            inspection=SimpleNamespace(data={"limit_reached": True}),
+        )
+
+        pet._handle_cognitive_prepared("organize downloads", prepared, None)
+
+        pet._finish_cognitive_request.assert_called_once()
+        self.assertIn("mais de 500", pet._finish_cognitive_request.call_args.args[1])
+
+    def test_due_reminder_is_not_announced_when_persistence_fails(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        reminder = {
+            "at": "2000-01-01T00:00:00+00:00",
+            "text": "Beber água",
+        }
+        pet._closing = False
+        pet._state = "walk"
+        pet.settings = {"reminders": [reminder], "user_name": "Ada"}
+        pet._speech_history = []
+        pet._can_speak_spontaneously = mock.Mock(return_value=True)
+        pet._spontaneous_ready = mock.Mock(return_value=True)
+        pet.root = mock.Mock()
+        pet.show_bubble = mock.Mock()
+
+        with (
+            mock.patch.object(routine_controller, "save_settings", return_value=False),
+            mock.patch.object(routine_controller, "pick_line") as pick_line,
+        ):
+            pet.check_reminders()
+
+        self.assertNotIn("done", reminder)
+        pick_line.assert_not_called()
+        pet.show_bubble.assert_called_once()
+        self.assertIn("continua pendente", pet.show_bubble.call_args.args[0])
+        pet.root.after.assert_called_once_with(15000, pet.check_reminders)
+
+    def test_due_reminder_is_announced_after_persistence_succeeds(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        reminder = {
+            "at": "2000-01-01T00:00:00+00:00",
+            "text": "Beber água",
+        }
+        pet._closing = False
+        pet._state = "walk"
+        pet.settings = {"reminders": [reminder], "user_name": "Ada"}
+        pet._speech_history = []
+        pet._can_speak_spontaneously = mock.Mock(return_value=True)
+        pet._spontaneous_ready = mock.Mock(return_value=True)
+        pet.root = mock.Mock()
+        pet.show_bubble = mock.Mock()
+
+        with (
+            mock.patch.object(routine_controller, "save_settings", return_value=True),
+            mock.patch.object(routine_controller, "pick_line", return_value="Lembrete!") as pick_line,
+            mock.patch.object(routine_controller, "record_spontaneous_speech") as record_speech,
+        ):
+            pet.check_reminders()
+
+        self.assertTrue(reminder["done"])
+        pick_line.assert_called_once()
+        record_speech.assert_called_once()
+        pet.show_bubble.assert_called_once_with("Lembrete! Beber água", duration=12000)
+
     def test_animation_frame_selection_keeps_elapsed_time_and_frame(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet.state = "walk"

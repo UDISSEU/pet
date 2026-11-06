@@ -5,6 +5,11 @@ APP_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP_FILE="$APPLICATIONS_DIR/nova.desktop"
 VENV_DIR="$APP_DIR/.venv"
+INSTALL_MARKER="$VENV_DIR/.nova-desktop-file-path"
+SAVED_DESKTOP_FILE=
+if [ -f "$INSTALL_MARKER" ]; then
+    IFS= read -r SAVED_DESKTOP_FILE < "$INSTALL_MARKER" || SAVED_DESKTOP_FILE=
+fi
 YES=0
 ACTION=install
 
@@ -49,12 +54,18 @@ confirm() {
 }
 
 launcher_belongs_to_app() {
-    [ -f "$DESKTOP_FILE" ] &&
-        grep -Fq "$APP_DIR/launchers/run-nova.sh" "$DESKTOP_FILE"
+    [ -f "$1" ] &&
+        grep -Fq "$APP_DIR/launchers/run-nova.sh" "$1"
 }
 
 if [ "$ACTION" = uninstall ]; then
-    if [ -e "$VENV_DIR" ] || launcher_belongs_to_app; then
+    LAUNCHER_TO_REMOVE=
+    if [ -n "$SAVED_DESKTOP_FILE" ] && launcher_belongs_to_app "$SAVED_DESKTOP_FILE"; then
+        LAUNCHER_TO_REMOVE=$SAVED_DESKTOP_FILE
+    elif launcher_belongs_to_app "$DESKTOP_FILE"; then
+        LAUNCHER_TO_REMOVE=$DESKTOP_FILE
+    fi
+    if [ -e "$VENV_DIR" ] || [ -n "$LAUNCHER_TO_REMOVE" ]; then
         if ! confirm "Remover o ambiente virtual da Nova e seu lançador?"; then
             printf '%s\n' "Desinstalação cancelada."
             exit 1
@@ -66,8 +77,8 @@ if [ "$ACTION" = uninstall ]; then
     if [ -e "$VENV_DIR" ] || [ -L "$VENV_DIR" ]; then
         rm -rf -- "$VENV_DIR"
     fi
-    if launcher_belongs_to_app; then
-        rm -f -- "$DESKTOP_FILE"
+    if [ -n "$LAUNCHER_TO_REMOVE" ]; then
+        rm -f -- "$LAUNCHER_TO_REMOVE"
     fi
     printf '%s\n' "Nova removida. Configurações e dados pessoais foram preservados."
     exit 0
@@ -129,11 +140,11 @@ if [ -x "$VENV_DIR/bin/python" ] &&
     fi
     rm -rf -- "$VENV_DIR"
 fi
-if [ -e "$DESKTOP_FILE" ] && ! launcher_belongs_to_app; then
+if [ -e "$DESKTOP_FILE" ] && ! launcher_belongs_to_app "$DESKTOP_FILE"; then
     printf 'O lançador existente não pertence a esta instalação: %s\n' "$DESKTOP_FILE" >&2
     exit 1
 fi
-if [ -e "$VENV_DIR" ] || launcher_belongs_to_app; then
+if [ -e "$VENV_DIR" ] || launcher_belongs_to_app "$DESKTOP_FILE"; then
     printf '%s\n' "Instalação anterior detectada."
     if ! confirm "Atualizar/reutilizar a instalação existente?"; then
         printf '%s\n' "Instalação cancelada."
@@ -154,5 +165,11 @@ mkdir -p "$APPLICATIONS_DIR"
 SED_APP_DIR="$(printf '%s\n' "$APP_DIR" | sed 's/[\\&|]/\\&/g')"
 sed "s|@APP_DIR@|$SED_APP_DIR|g" "$APP_DIR/launchers/nova.desktop.in" > "$DESKTOP_FILE"
 chmod 644 "$DESKTOP_FILE"
+if [ -n "$SAVED_DESKTOP_FILE" ] && [ "$SAVED_DESKTOP_FILE" != "$DESKTOP_FILE" ] &&
+    launcher_belongs_to_app "$SAVED_DESKTOP_FILE"; then
+    rm -f -- "$SAVED_DESKTOP_FILE"
+fi
+printf '%s\n' "$DESKTOP_FILE" > "$INSTALL_MARKER"
+chmod 600 "$INSTALL_MARKER"
 printf 'Nova instalada em %s\n' "$DESKTOP_FILE"
 printf '%s\n' "Verificação de dependências e importação de inicialização concluída."

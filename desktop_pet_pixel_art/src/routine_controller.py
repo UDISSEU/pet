@@ -103,24 +103,42 @@ class RoutineControllerMixin:
             and self._spontaneous_ready()
         )
         due = []
+        due_items = []
         for item in self.settings.get("reminders", []):
             parsed = valid_reminder_time(item.get("at")) if isinstance(item, dict) else None
             if (available and parsed and not item.get("done")
                     and parsed.timestamp() <= now):
+                due_items.append((item, "done" in item, item.get("done")))
                 item["done"] = True
                 due.append(item.get("text", "Você tem um lembrete."))
         if due:
-            save_settings(self.settings)
-            self._reminder_started_at = time.monotonic()
-            self._reminder_animation_until = (
-                self._reminder_started_at + REMINDER_ANIMATION_SECONDS
-            )
-            line = pick_line(
-                "reminder_due", name=self.settings.get("user_name", ""),
-                rng=random, history=self._speech_history,
-            )
-            record_spontaneous_speech()
-            self.show_bubble(f"{line} {'; '.join(due)}", duration=12000)
+            if not save_settings(self.settings):
+                for item, had_done, previous_done in due_items:
+                    if had_done:
+                        item["done"] = previous_done
+                    else:
+                        item.pop("done", None)
+                logging.getLogger(__name__).error(
+                    "Não foi possível salvar lembretes vencidos; eles permanecem pendentes."
+                )
+                if not getattr(self, "_reminder_save_warning_shown", False):
+                    self.show_bubble(
+                        "Não consegui salvar o lembrete. Ele continua pendente e tentarei novamente.",
+                        duration=6000,
+                    )
+                    self._reminder_save_warning_shown = True
+            else:
+                self._reminder_save_warning_shown = False
+                self._reminder_started_at = time.monotonic()
+                self._reminder_animation_until = (
+                    self._reminder_started_at + REMINDER_ANIMATION_SECONDS
+                )
+                line = pick_line(
+                    "reminder_due", name=self.settings.get("user_name", ""),
+                    rng=random, history=self._speech_history,
+                )
+                record_spontaneous_speech()
+                self.show_bubble(f"{line} {'; '.join(due)}", duration=12000)
         self.root.after(15000, self.check_reminders)
 
     def show_start_greeting(self):
