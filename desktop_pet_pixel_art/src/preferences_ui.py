@@ -230,7 +230,37 @@ class PreferencesUIMixin(
         groq_model = tk.StringVar(value=self.settings.get("groq_model", "openai/gpt-oss-20b"))
         mistral_model = tk.StringVar(value=self.settings.get("mistral_model", "mistral-small-latest"))
         spotify_client_id = tk.StringVar(value=self.settings.get("spotify_client_id", ""))
-        memory_items = list(self.settings.get("memories", []))
+        profile_manager = getattr(self, "profile_manager", None)
+        active_profile = profile_manager.active_profile if profile_manager else None
+        memory_items = (
+            list(self.settings.get("memories", []))
+            if active_profile is None or active_profile.profile_id == "legacy"
+            else []
+        )
+        profile_options = {}
+        profile_labels = []
+        if profile_manager is not None:
+            for profile in profile_manager.profiles:
+                label = (
+                    f"{profile.name} · perfil principal"
+                    if profile.profile_id == "legacy"
+                    else f"{profile.name} · {profile.profile_id[:6]}"
+                )
+                profile_options[label] = profile.profile_id
+                profile_labels.append(label)
+        profile_selection = tk.StringVar(
+            value=next(
+                (
+                    label for label, profile_id in profile_options.items()
+                    if active_profile and profile_id == active_profile.profile_id
+                ),
+                "",
+            )
+        )
+        profile_name = tk.StringVar()
+        profile_status = tk.StringVar(
+            value=f"Perfil ativo: {active_profile.name}" if active_profile else ""
+        )
         reminder_items = list(self.settings.get("reminders", []))
         app_items = list(self.settings.get("apps", []))
 
@@ -243,6 +273,7 @@ class PreferencesUIMixin(
             return frame
 
         context.__dict__.update(locals())
+        context.switch_profile = self.switch_user_profile
         self._build_ai_preferences_tab(context)
 
         self._build_behavior_preferences_tabs(context)
@@ -330,7 +361,7 @@ class PreferencesUIMixin(
                 humor_style={label: key for key, label in humor_labels.items()}[
                     humor_style.get()
                 ],
-                memories=memory_items, reminders=reminder_items, apps=app_items,
+                reminders=reminder_items, apps=app_items,
                 confirm_app_launch=confirm_app_launch.get(),
                 auto_speech=speech.get(), observe_apps=observe.get(), auto_sit=auto_sit.get(),
                 announce_charger=announce_charger.get(), announce_usb=announce_usb.get(),
@@ -354,7 +385,14 @@ class PreferencesUIMixin(
                 mistral_model=mistral_model.get().strip(),
                 spotify_client_id=spotify_client_id.get().strip(),
             )
-            if not save_settings(updated):
+            if (not hasattr(self, "profile_manager")
+                    or self.profile_manager.active_profile.profile_id == "legacy"):
+                updated["memories"] = memory_items
+            settings_path = (
+                self.profile_manager.settings_path()
+                if hasattr(self, "profile_manager") else None
+            )
+            if not save_settings(updated, settings_path):
                 messagebox.showerror("Erro ao salvar", "Não consegui salvar as preferências.", parent=window)
                 return
             self.settings = updated

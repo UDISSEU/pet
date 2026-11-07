@@ -156,7 +156,7 @@ class AIPreferencesTabMixin:
                 return
             updated = dict(self.settings)
             updated["spotify_client_id"] = client_id
-            if not save_settings(updated):
+            if not save_settings(updated, getattr(self, "settings_path", None)):
                 spotify_status.set("Não consegui salvar as preferências.")
                 return
             self.settings = updated

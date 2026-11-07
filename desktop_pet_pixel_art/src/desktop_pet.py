@@ -143,6 +143,7 @@ from spotify_control import (
     spotify_connected as spotify_token_connected,
 )
 from nova_ai.desktop_integration import DesktopNovaIntegration
+from nova_ai.profiles import UserProfileManager
 from nova_ai.actions import CancellationToken
 
 logger = logging.getLogger(__name__)
@@ -176,8 +177,11 @@ class DesktopPet(
             integration.sync_visual_state(value)
 
     def __init__(self):
-        self.history = load_history()
-        self.settings = load_settings()
+        self.profile_manager = UserProfileManager()
+        self.settings_path = self.profile_manager.settings_path()
+        self.settings = load_settings(self.settings_path)
+        self.history_path = self.profile_manager.history_path()
+        self.history = load_history(self.history_path)
         self._recent_errors = deque(maxlen=20)
         self.event_bus = EventBus()
         self.state_manager = StateManager()
@@ -185,7 +189,8 @@ class DesktopPet(
         self.nova_integration = None
         try:
             self.nova_integration = DesktopNovaIntegration(
-                permission_manager=self.permission_manager
+                permission_manager=self.permission_manager,
+                profile_manager=self.profile_manager,
             )
         except Exception:
             logger.exception("Núcleo Nova indisponível; mantendo a aplicação legado")
@@ -606,7 +611,7 @@ class DesktopPet(
     def forget_memories(self):
         if messagebox.askyesno("Apagar memórias", "Apagar todas as memórias que você salvou?", parent=self.root):
             self.settings["memories"] = []
-            save_settings(self.settings)
+            save_settings(self.settings, getattr(self, "settings_path", None))
             self.show_bubble("Apaguei as memórias salvas.", duration=2500)
 
 
@@ -1230,7 +1235,7 @@ class DesktopPet(
         timestamp = datetime.now().astimezone().isoformat(timespec="minutes")
         auto_settings.setdefault("activity", []).insert(0, {"id": automation_id, "summary": summary, "timestamp": timestamp})
         auto_settings["activity"] = auto_settings["activity"][:10]
-        save_settings(self.settings)
+        save_settings(self.settings, getattr(self, "settings_path", None))
         label = getattr(self, "_automation_status_labels", {}).get(automation_id)
         if label is not None:
             try:
@@ -1412,13 +1417,36 @@ class DesktopPet(
 
     def forget_history(self):
         self.history = []
-        if save_history(self.history):
+        if save_history(self.history, self.history_path):
             self.show_bubble("Memória limpa!", duration=2500)
         else:
             self.show_bubble(
                 "Memória limpa nesta sessão, mas não consegui salvar.",
                 duration=4000,
             )
+
+    def switch_user_profile(self, profile_id):
+        if self.ai_request_active:
+            raise RuntimeError("Aguarde a conversa terminar antes de trocar de perfil")
+        integration = getattr(self, "nova_integration", None)
+        if integration is None:
+            raise RuntimeError("A troca de perfil está indisponível")
+        profile = integration.select_profile(profile_id)
+        self.profile_manager = integration.profile_manager
+        self.settings_path = self.profile_manager.settings_path(profile.profile_id)
+        self.settings = load_settings(self.settings_path)
+        self.history_path = self.profile_manager.history_path(profile.profile_id)
+        self.history = load_history(self.history_path)
+        defaults = {
+            "quietinha": (False, False, False, False),
+            "companhia": (True, True, False, True),
+            "proativa": (True, True, True, True),
+        }[self.settings["mode"]]
+        self.auto_speech_var.set(self.settings.get("auto_speech", defaults[0]))
+        self.observe_apps_var.set(self.settings.get("observe_apps", defaults[1]))
+        self.peekaboo_var.set(self.settings.get("peekaboo", defaults[2]))
+        self.auto_sit_var.set(self.settings.get("auto_sit", defaults[3]))
+        return profile
 
     def ask_user_name(self):
         if self._closing or self.settings.get("user_name") or self._user_name_dialog:
@@ -1467,7 +1495,7 @@ class DesktopPet(
                 return
             updated = dict(self.settings)
             updated["user_name"] = value[:60]
-            if not save_settings(updated):
+            if not save_settings(updated, getattr(self, "settings_path", None)):
                 error.set("Não consegui salvar agora. Confira as permissões e tente novamente.")
                 return
             self.settings = updated
@@ -1713,8 +1741,16 @@ class DesktopPet(
         self._show_idea_icon = False
         self._thinking_started_at = time.monotonic()
         self.show_bubble("pensando...", duration=999999)
-        memories = list(self.settings.get("memories", []))
-        user_name = self.settings.get("user_name", "").strip()[:60]
+        memories = (
+            list(self.settings.get("memories", []))
+            if self.profile_manager.active_profile.profile_id == "legacy"
+            else []
+        )
+        user_name = (
+            self.settings.get("user_name", "").strip()[:60]
+            if self.profile_manager.active_profile.profile_id == "legacy"
+            else self.profile_manager.active_profile.name
+        )
         threading.Thread(
             target=self._ask_worker,
             args=(request_history, memories, dict(self.settings), user_name),
@@ -1728,7 +1764,7 @@ class DesktopPet(
             {"role": "assistant", "content": answer, "timestamp": timestamp},
         ))
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
-        if not save_history(self.history):
+        if not save_history(self.history, self.history_path):
             return f"{answer}\nNão consegui salvar o histórico."
         return answer
 
@@ -1932,7 +1968,7 @@ class DesktopPet(
             "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
         })
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
-        history_saved = save_history(self.history)
+        history_saved = save_history(self.history, self.history_path)
         failed = answer == PROVIDER_FAILURE_MESSAGE
         self.state = "curious" if failed else "walk"
         self._show_idea_icon = True

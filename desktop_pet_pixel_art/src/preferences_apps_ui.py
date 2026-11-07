@@ -240,7 +240,7 @@ class AppsPreferencesTabMixin:
         def persist_app_items():
             updated = dict(self.settings)
             updated["apps"] = [dict(item) for item in app_items]
-            if not save_settings(updated):
+            if not save_settings(updated, getattr(self, "settings_path", None)):
                 app_error_label.configure(foreground="#B42318")
                 app_error.set("Não consegui salvar os apps. Confira as permissões e tente novamente.")
                 return False

@@ -20,7 +20,7 @@ class RoutineControllerMixin:
             previous_date is not None and (today - previous_date).days >= 2
         )
         self.settings["last_seen_date"] = today.isoformat()
-        if not save_settings(self.settings):
+        if not save_settings(self.settings, getattr(self, "settings_path", None)):
             logging.getLogger(__name__).warning(
                 "Não foi possível salvar a data da última visita da Nova."
             )
@@ -112,7 +112,7 @@ class RoutineControllerMixin:
                 item["done"] = True
                 due.append(item.get("text", "Você tem um lembrete."))
         if due:
-            if not save_settings(self.settings):
+            if not save_settings(self.settings, getattr(self, "settings_path", None)):
                 for item, had_done, previous_done in due_items:
                     if had_done:
                         item["done"] = previous_done
@@ -151,7 +151,7 @@ class RoutineControllerMixin:
         self._routine_greeted = True
         self._miss_you_pending = False
         self.settings["last_context_date"] = datetime.now().astimezone().date().isoformat()
-        save_settings(self.settings)
+        save_settings(self.settings, getattr(self, "settings_path", None))
         self._schedule_pose_callback(
             round(VIDEO_REACTION_SECONDS * 1000),
             "greeting",
@@ -171,7 +171,7 @@ class RoutineControllerMixin:
             return
         if self._routine_greeted:
             self.settings["last_context_date"] = today
-            save_settings(self.settings)
+            save_settings(self.settings, getattr(self, "settings_path", None))
             return
         category = "miss_you" if self._miss_you_pending else "greeting"
         if not self._show_spontaneous_pose(category, "greeting", duration=6500):
@@ -180,7 +180,7 @@ class RoutineControllerMixin:
         self._routine_greeted = True
         self._miss_you_pending = False
         self.settings["last_context_date"] = today
-        save_settings(self.settings)
+        save_settings(self.settings, getattr(self, "settings_path", None))
         self._schedule_pose_callback(
             round(VIDEO_REACTION_SECONDS * 1000),
             "greeting",
@@ -199,7 +199,7 @@ class RoutineControllerMixin:
         )
         if available and random.random() < 0.08:
             self.settings["last_note_at"] = int(now)
-            save_settings(self.settings)
+            save_settings(self.settings, getattr(self, "settings_path", None))
             self._show_personality_line("compliment", duration=6000, spontaneous=True)
         self.root.after(300000, self.check_occasional_note)
 
@@ -253,7 +253,7 @@ class RoutineControllerMixin:
                 and self.state == "walk" and self._can_speak_spontaneously()
                 and self._spontaneous_ready()):
             self.settings["last_evening_date"] = today
-            save_settings(self.settings)
+            save_settings(self.settings, getattr(self, "settings_path", None))
             self.state = "yawning"
             record_spontaneous_speech()
             self._schedule_pose_callback(
@@ -309,7 +309,7 @@ class RoutineControllerMixin:
                 )
             if shown:
                 self.settings["last_surprise_date"] = today
-                save_settings(self.settings)
+                save_settings(self.settings, getattr(self, "settings_path", None))
                 self._schedule_pose_callback(
                     6500, self.state, self.finish_surprise
                 )

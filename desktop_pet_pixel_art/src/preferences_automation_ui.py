@@ -32,7 +32,7 @@ class AutomationPreferencesTabMixin:
         status_enabled = tk.BooleanVar(value=automation_settings["enabled"].get("laptop_status", True))
         def toggle_status_automation():
             self.settings["automations"]["enabled"]["laptop_status"] = status_enabled.get()
-            save_settings(self.settings)
+            save_settings(self.settings, getattr(self, "settings_path", None))
         ttk.Checkbutton(status_header, text="Ativada", variable=status_enabled, command=toggle_status_automation).pack(side="right", padx=(6, 0))
 
         metric_grid = ttk.Frame(status_card, style="Card.TFrame")
@@ -73,7 +73,7 @@ class AutomationPreferencesTabMixin:
             enabled_var = tk.BooleanVar(value=automation_settings["enabled"].get(item["id"], True))
             def toggle_file_automation(automation=item, variable=enabled_var):
                 self.settings["automations"]["enabled"][automation["id"]] = variable.get()
-                save_settings(self.settings)
+                save_settings(self.settings, getattr(self, "settings_path", None))
             ttk.Checkbutton(row, text="Ativada", variable=enabled_var, command=toggle_file_automation).pack(side="left")
             action_button = ttk.Button(row, text=button_text, style="Primary.TButton" if item["id"] == "organize_downloads" else "Secondary.TButton", command=lambda automation=item: self._request_automation(automation))
             action_button.pack(side="right")
@@ -89,7 +89,7 @@ class AutomationPreferencesTabMixin:
             enabled_var = tk.BooleanVar(value=automation_settings["enabled"].get(item["id"], True))
             def toggle_item(automation=item, variable=enabled_var):
                 self.settings["automations"]["enabled"][automation["id"]] = variable.get()
-                save_settings(self.settings)
+                save_settings(self.settings, getattr(self, "settings_path", None))
             ttk.Checkbutton(row, text="Ativada", variable=enabled_var, command=toggle_item).pack(side="left")
             ttk.Label(row, text=item["name"], style="CardTitle.TLabel").pack(side="left", padx=(5, 0), fill="x", expand=True)
             button = ttk.Button(row, text=button_text, style=button_style, command=lambda automation=item: self._request_automation(automation))
@@ -123,14 +123,14 @@ class AutomationPreferencesTabMixin:
         def toggle_pause():
             self.settings["automations"]["enabled"]["pause_reminder"] = pause_enabled.get()
             self.settings["routine_break_tip"] = pause_enabled.get()
-            save_settings(self.settings)
+            save_settings(self.settings, getattr(self, "settings_path", None))
         ttk.Checkbutton(wellbeing_card, text="Lembrete de pausa saudável", variable=pause_enabled, command=toggle_pause).pack(anchor="w", pady=2)
         self._automation_status_labels["pause_reminder"] = ttk.Label(wellbeing_card, text=automation_settings["last_run"].get("pause_reminder", "Sugestão após 50 minutos de atividade."), style="Hint.TLabel", wraplength=445)
         self._automation_status_labels["pause_reminder"].pack(anchor="w", padx=(24, 0), pady=(0, 3))
         battery_enabled = tk.BooleanVar(value=automation_settings["enabled"].get("low_battery_alert", True))
         def toggle_battery_alert():
             self.settings["automations"]["enabled"]["low_battery_alert"] = battery_enabled.get()
-            save_settings(self.settings)
+            save_settings(self.settings, getattr(self, "settings_path", None))
         ttk.Checkbutton(wellbeing_card, text="Avisar quando a bateria chegar a 20%", variable=battery_enabled, command=toggle_battery_alert).pack(anchor="w", pady=2)
         self._automation_status_labels["low_battery_alert"] = ttk.Label(wellbeing_card, text=automation_settings["last_run"].get("low_battery_alert", "Verificação periódica enquanto a Nova estiver aberta."), style="Hint.TLabel", wraplength=445)
         self._automation_status_labels["low_battery_alert"].pack(anchor="w", padx=(24, 0), pady=(0, 3))

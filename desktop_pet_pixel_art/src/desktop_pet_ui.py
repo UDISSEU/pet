@@ -221,4 +221,4 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
             peekaboo=self.peekaboo_var.get(),
             auto_sit=self.auto_sit_var.get(),
         )
-        save_settings(self.settings)
+        save_settings(self.settings, getattr(self, "settings_path", None))

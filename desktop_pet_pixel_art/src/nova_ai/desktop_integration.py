@@ -3,8 +3,9 @@
 from pathlib import Path
 
 from nova_ai.core import NovaAI, NovaAIConfig
-from nova_ai.memory import MemoryManager, PreferenceMemory
+from nova_ai.memory import MemoryManager, MemoryStorage, PreferenceMemory
 from nova_ai.personality import PersonalityEngine
+from nova_ai.profiles import UserProfileManager
 from nova_ai.actions import create_default_tool_registry
 from nova_ai.actions.base import CancellationToken
 from nova_ai.cognition import CognitiveEngine, DecisionKind, IntentName
@@ -13,12 +14,17 @@ class DesktopNovaIntegration:
     """Adapta memória e personalidade sem criar UI, filas ou workers próprios."""
 
     def __init__(self, *, config=None, memory_manager=None, personality=None,
-                 permission_manager=None, actions=None, cognitive_engine=None):
+                 permission_manager=None, actions=None, cognitive_engine=None,
+                 profile_manager=None, profile_id=None):
         self.core = NovaAI(config=config or NovaAIConfig()).initialize()
-        self.memory = memory_manager or MemoryManager()
-        self.personality = personality or PersonalityEngine(
-            preference_memory=PreferenceMemory(self.memory)
-        )
+        self.profile_manager = profile_manager or UserProfileManager()
+        if profile_id is not None:
+            self.profile_manager.select(profile_id)
+        self.profile = self.profile_manager.active_profile
+        self._managed_memory = memory_manager is None
+        self._managed_personality = personality is None
+        self.memory = memory_manager or self._new_memory_manager()
+        self.personality = personality or self._new_personality()
         # A UI state from a previous run is not a persistent personality trait.
         self.personality.transition_behavior("IDLE")
         self.permission_manager = permission_manager
@@ -30,6 +36,39 @@ class DesktopNovaIntegration:
         )
         self._visual_behavior = None
         self.last_undo_mapping = None
+
+    def _new_memory_manager(self, profile=None):
+        profile = profile or self.profile
+        return MemoryManager(MemoryStorage(self.profile_manager.memory_path(
+            profile.profile_id
+        )))
+
+    def _new_personality(self, profile=None, memory=None):
+        profile = profile or self.profile
+        memory = memory or self.memory
+        return PersonalityEngine(
+            preference_memory=PreferenceMemory(memory),
+            state_path=self.profile_manager.personality_state_path(
+                profile.profile_id
+            ),
+        )
+
+    def select_profile(self, profile_id):
+        """Switch local memory and preferences without moving legacy records."""
+        if not self._managed_memory or not self._managed_personality:
+            raise RuntimeError(
+                "A troca de perfil exige serviços de memória e personalidade gerenciados"
+            )
+        profile = self.profile_manager.get(profile_id)
+        memory = self._new_memory_manager(profile)
+        personality = self._new_personality(profile, memory)
+        self.profile_manager.select(profile_id)
+        self.profile = profile
+        self.memory = memory
+        self.personality = personality
+        self.personality.transition_behavior("IDLE")
+        self._visual_behavior = None
+        return self.profile
 
     def classify_task(self, text):
         """Return true only for the one task intentionally supported today."""
@@ -83,7 +122,10 @@ class DesktopNovaIntegration:
         return True
 
     def build_context(self, question, legacy_memories=(), *, limit=8):
-        memories = list(legacy_memories or ())[:limit]
+        memories = (
+            list(legacy_memories or ())[:limit]
+            if self.profile.profile_id == "legacy" else []
+        )
         try:
             records = self.memory.search(question, limit=limit)
         except Exception:

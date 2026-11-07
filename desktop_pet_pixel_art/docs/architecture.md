@@ -54,9 +54,14 @@ O modo de foco usa temporizadores Tkinter: enquanto a sessão ou a pausa está a
 
 ## Dados do usuário
 
-- `~/.desktop_pet_history.json`: histórico curto de conversa.
+- `~/.desktop_pet_history.json`: histórico curto do perfil principal legado.
 - `~/.config/desktop_pet/settings.json`: modo, preferências, horários, rotinas, foco, memórias, lembretes e apps cadastrados.
+- `~/.config/desktop_pet/user_profiles.json`: cadastro local dos perfis e perfil ativo. O perfil `legacy` continua usando `nova_memory.sqlite3`; novos perfis recebem bancos SQLite e estado de personalidade em diretórios próprios sob `~/.config/desktop_pet/profiles/`.
+- `~/.config/desktop_pet/profiles/<id>/history.json`: histórico curto separado para cada perfil adicional.
+- `~/.config/desktop_pet/profiles/<id>/settings.json`: preferências gerais do perfil. Perfis novos começam com os padrões do aplicativo, sem copiar preferências, aplicativos, memórias ou nome do perfil principal.
 - `~/.config/desktop_pet/downloads_undo.json`: mapa da última organização confirmada de Downloads.
+
+`nova_ai/profiles.py` fornece isolamento local para memória, personalidade, histórico e preferências gerais. Perfis podem ser criados e selecionados na aba **Memórias** das Preferências; o histórico legado permanece no caminho original e não é copiado. As memórias JSON antigas só são editáveis no perfil principal; a aba também permite cadastrar, corrigir e remover memórias SQLite com confirmação explícita, no armazenamento do perfil ativo. Preferências de rotina, humor, provedor, aplicativos, automações e nome são carregadas e salvas no `settings.json` de cada perfil. Dados de permissões e integrações do sistema que não fazem parte das preferências continuam no escopo da conta Linux.
 
 ## Provedores de IA
 

@@ -285,7 +285,7 @@ class DeviceControllerMixin:
         self.settings.setdefault("automations", {}).setdefault("last_run", {})[
             "low_battery_alert"
         ] = message
-        save_settings(self.settings)
+        save_settings(self.settings, getattr(self, "settings_path", None))
         if label is not None:
             try:
                 label.configure(text=message)

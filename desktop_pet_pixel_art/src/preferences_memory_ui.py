@@ -2,7 +2,13 @@
 
 import tkinter as tk
 from datetime import datetime
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
+from nova_ai.memory.errors import (
+    DuplicateMemoryError,
+    MemoryNotFoundError,
+    MemoryStorageError,
+    SensitiveInformationError,
+)
 from ollama_client import save_history
 from preferences_common_ui import setup_list
 
@@ -16,9 +22,119 @@ class MemoryPreferencesTabMixin:
         item = getattr(context, 'item', None)
         memory_content = getattr(context, 'memory_content', None)
         memory_items = getattr(context, 'memory_items', None)
+        profile_labels = getattr(context, 'profile_labels', [])
+        profile_manager = getattr(context, 'profile_manager', None)
+        profile_name = getattr(context, 'profile_name', None)
+        profile_options = getattr(context, 'profile_options', {})
+        profile_selection = getattr(context, 'profile_selection', None)
+        profile_status = getattr(context, 'profile_status', None)
+        switch_profile = getattr(context, 'switch_profile', None)
         value = getattr(context, 'value', None)
         window = getattr(context, 'window', None)
-        memory_card = card(memory_content, "O que a Nova deve lembrar?", "Só use informações que você queira manter. Elas entram no contexto da IA local.")
+
+        if profile_manager is not None:
+            profile_card = card(
+                memory_content,
+                "Perfis pessoais",
+                "Cada perfil mantém sua própria memória SQLite, personalidade e histórico de conversa. "
+                "O perfil principal conserva os dados anteriores.",
+            )
+            profile_picker = ttk.Combobox(
+                profile_card, textvariable=profile_selection, values=profile_labels,
+                state="readonly",
+            )
+            profile_picker.pack(fill="x", pady=(4, 8))
+            profile_status_label = ttk.Label(
+                profile_card, textvariable=profile_status, style="Hint.TLabel",
+            )
+            profile_status_label.pack(anchor="w", pady=(4, 0))
+
+            def use_selected_profile():
+                profile_id = profile_options.get(profile_selection.get())
+                if profile_id is None:
+                    messagebox.showerror(
+                        "Perfil inválido", "Selecione um perfil cadastrado.", parent=window,
+                    )
+                    return
+                if profile_id == profile_manager.active_profile.profile_id:
+                    profile_status.set(
+                        f"Perfil já ativo: {profile_manager.active_profile.name}"
+                    )
+                    return
+                if not messagebox.askyesno(
+                    "Trocar perfil",
+                    "As alterações ainda não salvas destas Preferências serão descartadas. "
+                    "Deseja trocar de perfil agora?",
+                    parent=window,
+                ):
+                    return
+                try:
+                    profile = switch_profile(profile_id)
+                except (RuntimeError, ValueError) as exc:
+                    messagebox.showinfo("Não foi possível trocar", str(exc), parent=window)
+                    return
+                memory_items[:] = (
+                    list(self.settings.get("memories", []))
+                    if profile.profile_id == "legacy" else []
+                )
+                profile_status.set(f"Perfil ativo: {profile.name}")
+                window.destroy()
+                self.root.after_idle(
+                    lambda: self.open_autonomy_settings(selected_tab="memory")
+                )
+                return
+
+            ttk.Button(
+                profile_card, text="Usar perfil selecionado", style="Secondary.TButton",
+                command=use_selected_profile,
+            ).pack(anchor="e", pady=(0, 4))
+
+            profile_create_row = ttk.Frame(profile_card, style="Card.TFrame")
+            profile_create_row.pack(fill="x", pady=(8, 0))
+            profile_name_input = ttk.Entry(
+                profile_create_row, textvariable=profile_name, style="Autonomy.TEntry",
+            )
+            profile_name_input.pack(side="left", fill="x", expand=True, ipady=5)
+
+            def create_profile():
+                name = profile_name.get().strip()
+                if not name:
+                    messagebox.showinfo(
+                        "Nome do perfil", "Digite um nome para o novo perfil.", parent=window,
+                    )
+                    profile_name_input.focus_set()
+                    return
+                if self.ai_request_active:
+                    messagebox.showinfo(
+                        "Conversa em andamento",
+                        "Aguarde a conversa terminar antes de criar um perfil.",
+                        parent=window,
+                    )
+                    return
+                try:
+                    profile = profile_manager.create(name, activate=False)
+                    label = f"{profile.name} · {profile.profile_id[:6]}"
+                    profile_options[label] = profile.profile_id
+                    profile_labels.append(label)
+                    profile_picker.configure(values=profile_labels)
+                    profile_selection.set(label)
+                    profile_name.set("")
+                    use_selected_profile()
+                except (RuntimeError, ValueError) as exc:
+                    messagebox.showerror(
+                        "Não foi possível criar o perfil", str(exc), parent=window,
+                    )
+
+            ttk.Button(
+                profile_create_row, text="Criar e usar", style="Primary.TButton",
+                command=create_profile,
+            ).pack(side="left", padx=(8, 0))
+
+        memory_card = card(
+            memory_content, "O que a Nova deve lembrar?",
+            "Memórias manuais antigas pertencem ao perfil principal. "
+            "Memórias de outros perfis ficam no armazenamento local separado.",
+        )
         memory_entry = tk.StringVar()
         memory_form = ttk.Frame(memory_card, style="Card.TFrame")
         memory_form.pack(fill="x")
@@ -28,15 +144,204 @@ class MemoryPreferencesTabMixin:
             memory_content, memory_items, lambda item: item,
             "Suas memórias ficam neste computador e você pode removê-las quando quiser.",
         )
+        memory_add_button = None
+        memory_remove_button = None
+
         def add_memory():
             value = memory_entry.get().strip()
             if value:
                 memory_items.append(value)
                 memory_entry.set("")
                 refresh_memories()
-        ttk.Button(memory_form, text="Adicionar", style="Primary.TButton", command=add_memory).pack(side="left", padx=(8, 0))
+
+        def set_memory_controls(enabled):
+            state = "normal" if enabled else "disabled"
+            memory_input.configure(state=state)
+            if memory_add_button is not None:
+                memory_add_button.configure(state=state)
+            if memory_remove_button is not None:
+                memory_remove_button.configure(state=state)
+
+        if profile_manager is not None:
+            active_profile_id = profile_manager.active_profile.profile_id
+            set_memory_controls(active_profile_id == "legacy")
+
+        memory_add_button = ttk.Button(
+            memory_form, text="Adicionar", style="Primary.TButton", command=add_memory,
+        )
+        memory_add_button.pack(side="left", padx=(8, 0))
         memory_input.bind("<Return>", lambda _event: add_memory())
-        ttk.Button(memory_content, text="Remover selecionada", style="Secondary.TButton", command=remove_memory).pack(anchor="e", pady=(10, 0))
+        memory_remove_button = ttk.Button(
+            memory_content, text="Remover selecionada", style="Secondary.TButton",
+            command=remove_memory,
+        )
+        memory_remove_button.pack(anchor="e", pady=(10, 0))
+        if profile_manager is not None:
+            set_memory_controls(active_profile_id == "legacy")
+
+        integration = getattr(self, "nova_integration", None)
+        if integration is not None:
+            structured_card = card(
+                memory_content,
+                "Memórias privadas deste perfil",
+                "Essas informações ficam no SQLite local deste perfil. Só serão gravadas "
+                "quando você confirmar ao clicar em Guardar.",
+            )
+            structured_memories = []
+            structured_status = tk.StringVar(value="")
+            ttk.Label(
+                structured_card, textvariable=structured_status, style="Hint.TLabel",
+            ).pack(anchor="w", pady=(6, 0))
+
+            def refresh_structured_memories():
+                structured_list.delete(0, "end")
+                try:
+                    structured_memories[:] = integration.memory.search("", limit=100)
+                except MemoryStorageError as exc:
+                    structured_memories.clear()
+                    structured_status.set(f"Erro ao ler memórias: {exc}")
+                    return
+                for memory in structured_memories:
+                    structured_list.insert(
+                        "end", f"[{memory.kind.value}] {memory.content}"
+                    )
+                structured_status.set(
+                    f"{len(structured_memories)} memória(s) neste perfil."
+                )
+
+            kind_row = ttk.Frame(structured_card, style="Card.TFrame")
+            kind_row.pack(fill="x", pady=(8, 4))
+            ttk.Label(kind_row, text="Categoria", style="Hint.TLabel").pack(side="left")
+            memory_kind = tk.StringVar(value="profile")
+            kind_picker = ttk.Combobox(
+                kind_row,
+                textvariable=memory_kind,
+                state="readonly",
+                values=(
+                    "profile", "preference", "project", "episodic", "semantic",
+                    "procedural", "conversation", "learning",
+                ),
+                width=18,
+            )
+            kind_picker.pack(side="right")
+            structured_entry = tk.StringVar()
+            structured_form = ttk.Frame(structured_card, style="Card.TFrame")
+            structured_form.pack(fill="x")
+            structured_input = ttk.Entry(
+                structured_form, textvariable=structured_entry,
+                style="Autonomy.TEntry",
+            )
+            structured_input.pack(side="left", fill="x", expand=True, ipady=5)
+
+            def add_structured_memory():
+                content = structured_entry.get().strip()
+                if not content:
+                    messagebox.showinfo(
+                        "Memória vazia", "Escreva a informação que deseja guardar.",
+                        parent=window,
+                    )
+                    return
+                try:
+                    integration.memory.add(
+                        memory_kind.get(),
+                        content,
+                        source="user",
+                        consent=True,
+                        provenance="user_provided",
+                    )
+                except (
+                    ValueError, SensitiveInformationError, MemoryStorageError,
+                ) as exc:
+                    messagebox.showerror(
+                        "Não foi possível guardar", str(exc), parent=window,
+                    )
+                    return
+                structured_entry.set("")
+                refresh_structured_memories()
+
+            ttk.Button(
+                structured_form, text="Guardar", style="Primary.TButton",
+                command=add_structured_memory,
+            ).pack(side="left", padx=(8, 0))
+            structured_input.bind(
+                "<Return>", lambda _event: add_structured_memory()
+            )
+            structured_list, _refresh_structured_list, _remove_structured_item = setup_list(
+                structured_card, [], lambda memory: (
+                    f"[{memory.kind.value}] {memory.content}"
+                ),
+                "Nenhuma memória estruturada cadastrada neste perfil.",
+            )
+
+            structured_actions = ttk.Frame(structured_card, style="Card.TFrame")
+            structured_actions.pack(fill="x", pady=(8, 0))
+
+            def selected_structured_memory():
+                selected = structured_list.curselection()
+                return structured_memories[selected[0]] if selected else None
+
+            def edit_structured_memory():
+                memory = selected_structured_memory()
+                if memory is None:
+                    messagebox.showinfo(
+                        "Selecione uma memória", "Escolha uma memória para corrigir.",
+                        parent=window,
+                    )
+                    return
+                content = simpledialog.askstring(
+                    "Corrigir memória",
+                    "Atualize o conteúdo:",
+                    initialvalue=memory.content,
+                    parent=window,
+                )
+                if content is None:
+                    return
+                try:
+                    integration.memory.update(
+                        memory.memory_id, content=content, consent=True
+                    )
+                except (
+                    ValueError, DuplicateMemoryError, MemoryNotFoundError,
+                    SensitiveInformationError, MemoryStorageError,
+                ) as exc:
+                    messagebox.showerror(
+                        "Não foi possível corrigir", str(exc), parent=window,
+                    )
+                    return
+                refresh_structured_memories()
+
+            def delete_structured_memory():
+                memory = selected_structured_memory()
+                if memory is None:
+                    messagebox.showinfo(
+                        "Selecione uma memória", "Escolha uma memória para remover.",
+                        parent=window,
+                    )
+                    return
+                if not messagebox.askyesno(
+                    "Remover memória",
+                    "Apagar esta memória deste perfil? Essa ação não pode ser desfeita.",
+                    parent=window,
+                ):
+                    return
+                try:
+                    integration.memory.delete(memory.memory_id)
+                except (MemoryNotFoundError, MemoryStorageError) as exc:
+                    messagebox.showerror(
+                        "Não foi possível remover", str(exc), parent=window,
+                    )
+                    return
+                refresh_structured_memories()
+
+            ttk.Button(
+                structured_actions, text="Corrigir selecionada",
+                style="Secondary.TButton", command=edit_structured_memory,
+            ).pack(side="left")
+            ttk.Button(
+                structured_actions, text="Apagar selecionada",
+                style="Secondary.TButton", command=delete_structured_memory,
+            ).pack(side="right")
+            refresh_structured_memories()
 
         history_card = card(
             history_content, "Histórico de conversa",
@@ -161,7 +466,11 @@ class MemoryPreferencesTabMixin:
                 history_entries.append((first_line, last_line, index, start, end))
             history_view.configure(state="disabled")
             selected_history["index"] = None
-            history_status.set(f"{len(self.history)} mensagem(ns) salvas neste computador.")
+            profile = getattr(self, "profile_manager", None)
+            profile_name = profile.active_profile.name if profile else "principal"
+            history_status.set(
+                f"{len(self.history)} mensagem(ns) salvas no perfil {profile_name}."
+            )
             show_selected_history_message()
 
         def delete_history_message():
@@ -173,7 +482,7 @@ class MemoryPreferencesTabMixin:
                 messagebox.showinfo("Selecione uma mensagem", "Escolha uma mensagem na lista para apagá-la.", parent=window)
                 return
             removed = self.history.pop(index)
-            if not save_history(self.history):
+            if not save_history(self.history, self.history_path):
                 self.history.insert(index, removed)
                 messagebox.showerror("Erro ao salvar", "Não consegui apagar a mensagem do arquivo de histórico.", parent=window)
                 return
@@ -189,7 +498,7 @@ class MemoryPreferencesTabMixin:
                 return
             previous = self.history
             self.history = []
-            if not save_history(self.history):
+            if not save_history(self.history, self.history_path):
                 self.history = previous
                 messagebox.showerror("Erro ao salvar", "Não consegui apagar o arquivo de histórico.", parent=window)
             else:

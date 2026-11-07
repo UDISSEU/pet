@@ -241,7 +241,7 @@ def load_settings(path=SETTINGS_PATH):
 
 
 def save_settings(settings, path=SETTINGS_PATH):
-    path = Path(path)
+    path = Path(path) if path is not None else SETTINGS_PATH
     if not may_replace(path):
         logger.error("Gravação das configurações bloqueada para preservar %s", path.name)
         return False

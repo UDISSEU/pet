@@ -10,7 +10,7 @@ class InteractionControllerMixin:
     def _record_interaction(self):
         self.settings["interaction_count"] = self.settings.get("interaction_count", 0) + 1
         self.settings["last_seen_date"] = datetime.now().astimezone().date().isoformat()
-        if not save_settings(self.settings):
+        if not save_settings(self.settings, getattr(self, "settings_path", None)):
             logging.getLogger(__name__).warning(
                 "Não foi possível salvar os metadados da interação da Nova."
             )
