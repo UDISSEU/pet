@@ -1,6 +1,7 @@
 import json
 import sys
 import tempfile
+import threading
 import unittest
 import urllib.error
 from pathlib import Path
@@ -17,9 +18,7 @@ from ai.model_router import ModelRouter
 from ai.request_handler import answer_request
 from autonomy import load_settings, save_settings
 from providers.base_provider import ProviderError
-from providers.gemini_provider import GeminiProvider
-from providers.groq_provider import GroqProvider
-from providers.mistral_provider import MistralProvider
+from providers.provider_factory import create_provider
 from providers.ollama_provider import OllamaProvider
 
 
@@ -41,47 +40,36 @@ class FakeProvider:
 
 
 class TestAIProviders(unittest.TestCase):
-    def test_online_provider_is_not_used_without_both_authorizations(self):
-        online, local = FakeProvider("nuvem"), FakeProvider("local")
-        def factory(name, _settings):
-            return online if name == "gemini" else local
-        router = ModelRouter({"ai_provider": "gemini", "online_ai_enabled": True}, factory)
-        self.assertEqual(router.generate([], "prompt"), "local")
-        self.assertEqual((online.calls, local.calls), (0, 1))
-
-    def test_online_provider_falls_back_to_local_without_revealing_error(self):
-        online = FakeProvider(error=ProviderError("private detail"))
+    def test_router_uses_only_the_ollama_backend_contract(self):
         local = FakeProvider("resposta local")
-        def factory(name, _settings):
-            return online if name == "gemini" else local
-        router = ModelRouter({
-            "ai_provider": "gemini", "online_ai_enabled": True,
-            "allow_online_data": True, "confirm_free_tier": True,
-        }, factory)
+        factory = mock.Mock(return_value=local)
+        router = ModelRouter({"ai_provider": "ollama"}, factory)
         self.assertEqual(router.generate([], "prompt"), "resposta local")
+        factory.assert_called_once_with("ollama", {"ai_provider": "ollama"})
         self.assertEqual(local.calls, 1)
 
-    def test_failure_of_both_providers_is_reported_safely(self):
-        def factory(_name, _settings):
-            return FakeProvider(error=ProviderError("secret key value"))
-        router = ModelRouter({
-            "ai_provider": "groq", "online_ai_enabled": True,
-            "allow_online_data": True, "confirm_free_tier": True,
-        }, factory)
-        with self.assertRaises(ProviderError) as caught:
+    def test_router_rejects_non_ollama_provider_without_calling_factory(self):
+        factory = mock.Mock()
+        router = ModelRouter({"ai_provider": "disabled-provider"}, factory)
+        with self.assertRaisesRegex(ProviderError, "Somente o Ollama local"):
             router.generate([], "prompt")
-        self.assertNotIn("secret key", str(caught.exception))
+        factory.assert_not_called()
 
-    def test_online_provider_falls_back_after_unexpected_provider_exception(self):
-        online = FakeProvider(error=RuntimeError("private response payload"))
-        local = FakeProvider("resposta local")
-        def factory(name, _settings):
-            return online if name == "gemini" else local
-        router = ModelRouter({
-            "ai_provider": "gemini", "online_ai_enabled": True,
-            "allow_online_data": True, "confirm_free_tier": True,
-        }, factory)
-        self.assertEqual(router.generate([], "prompt"), "resposta local")
+    def test_router_rejects_unknown_provider_without_calling_factory(self):
+        factory = mock.Mock()
+        router = ModelRouter({"ai_provider": "unexpected"}, factory)
+        with self.assertRaisesRegex(ProviderError, "Somente o Ollama local"):
+            router.generate([], "prompt")
+        factory.assert_not_called()
+
+    def test_ollama_failure_is_sanitized_without_fallback(self):
+        local = FakeProvider(error=RuntimeError("private response payload"))
+        factory = mock.Mock(return_value=local)
+        router = ModelRouter({"ai_provider": "ollama"}, factory)
+        with self.assertRaisesRegex(ProviderError, "Não foi possível consultar a IA local") as caught:
+            router.generate([], "prompt")
+        self.assertNotIn("private response payload", str(caught.exception))
+        factory.assert_called_once_with("ollama", {"ai_provider": "ollama"})
         self.assertEqual(local.calls, 1)
 
     def test_unexpected_local_provider_exception_is_sanitized(self):
@@ -93,24 +81,12 @@ class TestAIProviders(unittest.TestCase):
             router.generate([], "prompt")
         self.assertNotIn("private data", str(caught.exception))
 
-    def test_unconfigured_online_provider_is_reported_without_fallback(self):
-        online, local = FakeProvider(available=False), FakeProvider("local")
-        def factory(name, _settings):
-            return online if name == "gemini" else local
-        router = ModelRouter({
-            "ai_provider": "gemini", "online_ai_enabled": True,
-            "allow_online_data": True, "confirm_free_tier": True,
-        }, factory)
-        with self.assertRaisesRegex(ProviderError, "chave.*não está configurada"):
-            router.generate([], "prompt")
-        self.assertEqual((online.calls, local.calls), (0, 0))
-
     def test_request_handler_returns_provider_error_without_logging_private_details(self):
         core = mock.Mock(process_message=mock.Mock(
-            side_effect=ProviderError("A chave do provedor online não está configurada.")
+            side_effect=ProviderError("O serviço Ollama local não está disponível.")
         ))
         self.assertEqual(
-            answer_request([], settings={"ai_provider": "gemini"}, core_factory=lambda **_kw: core),
+            answer_request([], settings={"ai_provider": "ollama"}, core_factory=lambda **_kw: core),
             "A IA não conseguiu responder agora. Tente novamente daqui a pouco.",
         )
 
@@ -123,37 +99,20 @@ class TestAIProviders(unittest.TestCase):
             )
         self.assertNotIn("private content", "\n".join(captured.output))
 
-    def test_invalid_provider_configuration_does_not_fall_back(self):
+    def test_invalid_ollama_configuration_is_sanitized(self):
         factory = mock.Mock(side_effect=ValueError("private setting"))
-        router = ModelRouter({
-            "ai_provider": "gemini", "online_ai_enabled": True,
-            "allow_online_data": True, "confirm_free_tier": True,
-        }, factory)
+        router = ModelRouter({"ai_provider": "ollama"}, factory)
         with self.assertRaisesRegex(ProviderError, "configuração.*inválida") as caught:
             router.generate([], "prompt")
         self.assertNotIn("private setting", str(caught.exception))
-        factory.assert_called_once_with("gemini", mock.ANY)
+        factory.assert_called_once_with("ollama", {"ai_provider": "ollama"})
 
-    def test_unknown_provider_is_rejected_instead_of_silently_selecting_local(self):
-        factory = mock.Mock()
-        router = ModelRouter({"ai_provider": "unexpected"}, factory)
-        with self.assertRaisesRegex(ProviderError, "não é reconhecido"):
-            router.generate([], "prompt")
-        factory.assert_not_called()
-
-    def test_fallback_factory_failure_returns_safe_combined_error(self):
-        online = FakeProvider(error=ProviderError("HTTP 503"))
-        def factory(name, _settings):
-            if name == "gemini":
-                return online
-            raise RuntimeError("private local configuration")
-        router = ModelRouter({
-            "ai_provider": "gemini", "online_ai_enabled": True,
-            "allow_online_data": True, "confirm_free_tier": True,
-        }, factory)
-        with self.assertRaisesRegex(ProviderError, "provedor online falhou.*IA local") as caught:
-            router.generate([], "prompt")
-        self.assertNotIn("private local configuration", str(caught.exception))
+    def test_factory_exposes_only_ollama(self):
+        self.assertEqual(create_provider("ollama", {}).name, "ollama")
+        for retired_provider in ("gemini", "groq", "mistral", "unknown"):
+            with self.subTest(provider=retired_provider):
+                with self.assertRaises(ValueError):
+                    create_provider(retired_provider, {})
 
     def test_context_is_bounded_and_filters_invalid_messages(self):
         history = ([{"role": "user", "content": "x" * 5000}] * 15 + [
@@ -271,37 +230,6 @@ class TestAIProviders(unittest.TestCase):
         )
         self.assertEqual(memories, ["Prefere respostas curtas"])
 
-    def test_gemini_uses_official_generate_content_request_shape(self):
-        response = mock.MagicMock()
-        response.__enter__.return_value.read.return_value = json.dumps({
-            "candidates": [{"content": {"parts": [{"text": "Olá"}]}}],
-        }).encode()
-        provider = GeminiProvider(api_key="dummy", model="gemini-3.8-flash")
-        with mock.patch("providers.gemini_provider.urllib.request.urlopen", return_value=response) as open_url:
-            self.assertEqual(provider.generate([{"role": "assistant", "content": "Oi"}], "Nova"), "Olá")
-        request = open_url.call_args.args[0]
-        self.assertTrue(request.full_url.endswith("/models/gemini-3.8-flash:generateContent"))
-        payload = json.loads(request.data)
-        self.assertEqual(payload["contents"][0]["role"], "model")
-        self.assertIn("systemInstruction", payload)
-        self.assertEqual(request.get_header("X-goog-api-key"), "dummy")
-
-    def test_groq_uses_chat_completions_and_auth_header(self):
-        response = mock.MagicMock()
-        response.__enter__.return_value.read.return_value = json.dumps({
-            "choices": [{"message": {"content": "Oi"}}],
-        }).encode()
-        provider = GroqProvider(api_key="dummy")
-        with mock.patch("providers.groq_provider.urllib.request.urlopen", return_value=response) as open_url:
-            self.assertEqual(provider.generate([], "Nova"), "Oi")
-        request = open_url.call_args.args[0]
-        self.assertEqual(request.full_url, provider.endpoint)
-        self.assertEqual(request.get_header("Authorization"), "Bearer dummy")
-
-    def test_online_provider_requires_api_key(self):
-        self.assertFalse(GeminiProvider(api_key="").is_available())
-        self.assertFalse(GroqProvider(api_key="").is_available())
-
     def test_ollama_availability_checks_model_list(self):
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps({
@@ -366,30 +294,55 @@ class TestAIProviders(unittest.TestCase):
         self.assertIn("HTTP 500", str(caught.exception))
         self.assertNotIn("secret response body", str(caught.exception))
 
-    def test_online_providers_reject_malformed_generation_responses(self):
-        cases = (
-            (GeminiProvider(api_key="dummy"), "providers.gemini_provider"),
-            (GroqProvider(api_key="dummy"), "providers.groq_provider"),
-            (MistralProvider(api_key="dummy"), "providers.mistral_provider"),
-        )
-        for provider, module in cases:
-            response = mock.MagicMock()
-            response.__enter__.return_value.read.return_value = b"[]"
-            with self.subTest(provider=provider.name), mock.patch(
-                f"{module}.urllib.request.urlopen", return_value=response
-            ):
-                with self.assertRaises(ProviderError):
-                    provider.generate([], "Nova")
+    def test_ollama_model_pull_reports_progress_and_requires_success(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.readline.side_effect = [
+            b'{"status":"pulling","completed":50,"total":100}\n',
+            b'{"status":"success"}\n',
+            b"",
+        ]
+        progress = []
+        provider = OllamaProvider(model="llama3.2:1b")
+        with mock.patch(
+            "providers.ollama_provider.urllib.request.urlopen",
+            return_value=response,
+        ) as open_url:
+            result = provider.pull_model(on_progress=progress.append)
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "http://localhost:11434/api/pull")
+        self.assertEqual(json.loads(request.data), {
+            "model": "llama3.2:1b", "stream": True,
+        })
+        self.assertEqual(result, "Modelo llama3.2:1b instalado.")
+        self.assertEqual(progress[0]["completed"], 50)
 
-    def test_gemini_http_429_becomes_a_sanitized_provider_error(self):
-        error = urllib.error.HTTPError("https://example.invalid", 429, "limit", {}, None)
-        provider = GeminiProvider(api_key="dummy")
-        with mock.patch("providers.gemini_provider.urllib.request.urlopen", side_effect=error) as open_url:
-            with self.assertRaises(ProviderError) as caught:
-                provider.generate([{"role": "user", "content": "Oi"}], "Nova", timeout=7)
-        self.assertIn("HTTP 429", str(caught.exception))
-        self.assertNotIn("dummy", str(caught.exception))
-        self.assertAlmostEqual(open_url.call_args.kwargs["timeout"], 7, delta=0.5)
+    def test_ollama_model_pull_rejects_remote_endpoints_and_invalid_names(self):
+        with mock.patch("providers.ollama_provider.urllib.request.urlopen") as open_url:
+            with self.assertRaisesRegex(ProviderError, "serviço Ollama local"):
+                OllamaProvider(url="https://example.invalid/api/chat").pull_model()
+            with self.assertRaisesRegex(ValueError, "nome de modelo"):
+                OllamaProvider(model="../bad model").pull_model()
+        open_url.assert_not_called()
+
+    def test_ollama_model_pull_can_be_cancelled(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.readline.side_effect = [
+            b'{"status":"pulling","completed":10,"total":100}\n',
+        ]
+        cancel_event = threading.Event()
+
+        def cancel_after_progress(_status):
+            cancel_event.set()
+
+        with mock.patch(
+            "providers.ollama_provider.urllib.request.urlopen",
+            return_value=response,
+        ):
+            with self.assertRaisesRegex(ProviderError, "cancelado"):
+                OllamaProvider().pull_model(
+                    on_progress=cancel_after_progress,
+                    cancel_event=cancel_event,
+                )
 
     def test_settings_keep_local_private_defaults_and_validate_timeout(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -397,13 +350,43 @@ class TestAIProviders(unittest.TestCase):
             self.assertTrue(save_settings({"ai_timeout": 999, "ai_provider": "unknown"}, path))
             settings = load_settings(path)
         self.assertEqual(settings["ai_provider"], "ollama")
-        self.assertFalse(settings["online_ai_enabled"])
-        self.assertFalse(settings["allow_online_data"])
-        self.assertFalse(settings["confirm_free_tier"])
+        self.assertNotIn("online_ai_enabled", settings)
+        self.assertNotIn("allow_online_data", settings)
+        self.assertNotIn("confirm_free_tier", settings)
+        self.assertNotIn("gemini_model", settings)
+        self.assertNotIn("groq_model", settings)
+        self.assertNotIn("mistral_model", settings)
         self.assertEqual(settings["ai_timeout"], 30)
         self.assertEqual(settings["ollama_num_ctx"], 1024)
         self.assertEqual(settings["ollama_num_predict"], 96)
         self.assertEqual(settings["ollama_num_threads"], 1)
+
+    def test_legacy_remote_settings_are_migrated_to_ollama(self):
+        legacy_settings = {
+            "ai_provider": "gemini",
+            "online_ai_enabled": True,
+            "allow_online_data": True,
+            "confirm_free_tier": True,
+            "gemini_model": "old-model",
+            "groq_model": "old-model",
+            "mistral_model": "old-model",
+            "user_name": "Nova user",
+            "memories": ["keep this memory"],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text(json.dumps(legacy_settings), encoding="utf-8")
+            settings = load_settings(path)
+            self.assertEqual(settings["ai_provider"], "ollama")
+            self.assertEqual(settings["user_name"], "Nova user")
+            self.assertEqual(settings["memories"], ["keep this memory"])
+            obsolete_keys = set(legacy_settings) - {"ai_provider", "user_name", "memories"}
+            self.assertFalse(obsolete_keys.intersection(settings))
+            self.assertTrue(save_settings(settings, path))
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["ai_provider"], "ollama")
+        self.assertEqual(saved["memories"], ["keep this memory"])
+        self.assertFalse(obsolete_keys.intersection(saved))
 
     def test_local_resource_settings_are_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:

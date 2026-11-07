@@ -512,6 +512,9 @@ class DesktopAppTests(unittest.TestCase):
             with self.subTest(question=question):
                 pet = DesktopPet.__new__(DesktopPet)
                 pet.settings = {"apps": saved_apps, "memories": []}
+                pet.profile_manager = mock.Mock()
+                pet.profile_manager.active_profile.profile_id = "test-profile"
+                pet.profile_manager.active_profile.name = "Test user"
                 pet._installed_apps_cache = None
                 pet.ai_request_active = False
                 pet.history = []

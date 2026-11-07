@@ -2,6 +2,8 @@
 
 Data: 5 de novembro de 2026
 
+> Registro histórico anterior à migração para Ollama-only. As referências a provedores remotos e fallback descrevem o estado daquela fase, não o runtime atual; consulte [a arquitetura atual](nova_ai/current_architecture.md).
+
 ## Provedores e modo offline
 
 - Ollama permanece o provedor local padrão. Gemini, Groq e Mistral dependem de autorização online, envio de dados habilitado e confirmação já existentes.

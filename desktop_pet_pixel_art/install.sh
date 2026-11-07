@@ -103,11 +103,6 @@ if ! python3 -c 'import tkinter' >/dev/null 2>&1; then
 fi
 
 printf '%s\n' "Diagnóstico de recursos opcionais:"
-if python3 -c 'import dbus' >/dev/null 2>&1; then
-    printf '%s\n' "  Secret Service: disponível (python3-dbus)."
-else
-    printf '%s\n' "  Secret Service: indisponível; chaves também podem ser fornecidas por variáveis de ambiente."
-fi
 if python3 -c 'import Xlib' >/dev/null 2>&1; then
     printf '%s\n' "  Integração X11: disponível (python-xlib)."
 else
@@ -173,3 +168,4 @@ printf '%s\n' "$DESKTOP_FILE" > "$INSTALL_MARKER"
 chmod 600 "$INSTALL_MARKER"
 printf 'Nova instalada em %s\n' "$DESKTOP_FILE"
 printf '%s\n' "Verificação de dependências e importação de inicialização concluída."
+printf '%s\n' "Nenhum serviço Ollama foi iniciado e nenhum modelo foi baixado."

@@ -5,7 +5,12 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from autonomy import is_quiet_now, save_settings, valid_reminder_time
 from config import APP_COMMENTS, REMINDER_ANIMATION_SECONDS, THUMBS_UP_ANIMATION_SECONDS, VIDEO_REACTION_SECONDS
+from nova_ai.memory.errors import MemoryStorageError
 from personality import pick_line, record_spontaneous_speech
+
+
+def _project_topic(content):
+    return " ".join(content.replace("\n", " ").replace("\t", " ").split())[:100]
 
 
 class RoutineControllerMixin:
@@ -145,12 +150,13 @@ class RoutineControllerMixin:
         if self._closing or self._routine_greeted or not self.settings.get("routine_greeting"):
             return
         category = "miss_you" if self._miss_you_pending else "greeting"
-        if not self._show_spontaneous_pose(category, "greeting", duration=6500):
+        now = datetime.now().astimezone()
+        if not self._show_greeting_pose(category, now):
             self.root.after(60000, self.show_start_greeting)
             return
         self._routine_greeted = True
         self._miss_you_pending = False
-        self.settings["last_context_date"] = datetime.now().astimezone().date().isoformat()
+        self.settings["last_context_date"] = now.date().isoformat()
         save_settings(self.settings, getattr(self, "settings_path", None))
         self._schedule_pose_callback(
             round(VIDEO_REACTION_SECONDS * 1000),
@@ -161,6 +167,62 @@ class RoutineControllerMixin:
     def finish_greeting(self):
         if not self._closing and self.state == "greeting":
             self.state = "walk"
+
+    def _project_followup_candidate(self, now):
+        if not self.settings.get("routine_context"):
+            return None
+        integration = getattr(self, "nova_integration", None)
+        if integration is None:
+            return None
+        try:
+            records = integration.project_memories(limit=20)
+        except MemoryStorageError:
+            logging.getLogger(__name__).exception(
+                "Não foi possível recuperar memórias de projetos para a saudação."
+            )
+            return None
+        history = self.settings.get("proactive_project_followups")
+        if not isinstance(history, dict):
+            history = {}
+            self.settings["proactive_project_followups"] = history
+        for record in records:
+            last_seen = history.get(record.memory_id)
+            if isinstance(last_seen, str):
+                try:
+                    last_seen_at = datetime.fromisoformat(last_seen)
+                    if last_seen_at.tzinfo is None:
+                        last_seen_at = last_seen_at.astimezone()
+                    cooldown_days = self.settings.get("project_followup_days", 7)
+                    if now - last_seen_at < timedelta(days=cooldown_days):
+                        continue
+                except ValueError:
+                    pass
+            topic = _project_topic(record.content)
+            if topic:
+                return record, topic
+        return None
+
+    def _show_greeting_pose(self, category, now):
+        candidate = self._project_followup_candidate(now)
+        if candidate:
+            record, topic = candidate
+            if self._show_spontaneous_pose(
+                "project_followup", "greeting", duration=6500, topic=topic
+            ):
+                history = self.settings["proactive_project_followups"]
+                history[record.memory_id] = now.isoformat()
+                if len(history) > 100:
+                    oldest = sorted(history.items(), key=lambda item: item[1])[:-100]
+                    for memory_id, _observed_at in oldest:
+                        history.pop(memory_id, None)
+                if not save_settings(
+                    self.settings, getattr(self, "settings_path", None)
+                ):
+                    logging.getLogger(__name__).warning(
+                        "A pergunta sobre projeto foi exibida, mas o cooldown não foi salvo."
+                    )
+                return True
+        return self._show_spontaneous_pose(category, "greeting", duration=6500)
 
     def show_context_greeting(self):
         if self._closing or not self.settings.get("routine_context"):
@@ -174,7 +236,7 @@ class RoutineControllerMixin:
             save_settings(self.settings, getattr(self, "settings_path", None))
             return
         category = "miss_you" if self._miss_you_pending else "greeting"
-        if not self._show_spontaneous_pose(category, "greeting", duration=6500):
+        if not self._show_greeting_pose(category, now):
             self.root.after(60000, self.show_context_greeting)
             return
         self._routine_greeted = True

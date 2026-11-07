@@ -56,6 +56,14 @@ class TestPersonality(unittest.TestCase):
             self.assertNotRegex(line, r",\s*[.!?]")
             self.assertFalse(line.endswith(","))
 
+    def test_project_followup_includes_the_saved_topic(self):
+        line = pick_line(
+            "project_followup", topic="Projeto Aurora",
+            rng=random.Random(3), history=[],
+        )
+        self.assertIn("Projeto Aurora", line)
+        self.assertNotIn("{topic}", line)
+
     def test_every_personality_category_has_six_or_more_lines(self):
         self.assertGreaterEqual(len(SPEECH_POOLS["jokes"]), 10)
         for category, lines in SPEECH_POOLS.items():

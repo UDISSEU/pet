@@ -1,7 +1,9 @@
 """Provedor local Ollama, usando a API HTTP oficial instalada localmente."""
 
 import json
+import re
 import threading
+from urllib.parse import urlsplit
 import urllib.error
 import urllib.request
 
@@ -9,6 +11,10 @@ from config import OLLAMA_MODEL, OLLAMA_URL
 from providers.base_provider import BaseProvider, ProviderError
 
 _LOCAL_INFERENCE_LOCK = threading.Lock()
+_MODEL_NAME = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127})?\Z"
+)
+_MAX_PULL_STATUS_BYTES = 16_384
 
 
 class OllamaProvider(BaseProvider):
@@ -45,6 +51,71 @@ class OllamaProvider(BaseProvider):
         if not self.is_available():
             raise ProviderError(f"Ollama não respondeu ou o modelo '{self.model}' não está instalado.")
         return f"Conectado ao Ollama; modelo {self.model} disponível."
+
+    @staticmethod
+    def validate_model_name(model):
+        if not isinstance(model, str) or not _MODEL_NAME.fullmatch(model):
+            raise ValueError("Informe um nome de modelo Ollama válido.")
+        return model
+
+    def pull_model(self, *, on_progress=None, cancel_event=None):
+        model = self.validate_model_name(self.model)
+        endpoint = urlsplit(self.url)
+        if (
+            endpoint.scheme != "http"
+            or endpoint.hostname not in ("localhost", "127.0.0.1", "::1")
+            or endpoint.username is not None
+            or endpoint.password is not None
+        ):
+            raise ProviderError("O download só pode ser solicitado ao serviço Ollama local.")
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProviderError("Download do modelo cancelado.")
+
+        request = urllib.request.Request(
+            f"{endpoint.scheme}://{endpoint.netloc}/api/pull",
+            data=json.dumps({"model": model, "stream": True}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        completed = False
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise ProviderError("Download do modelo cancelado.")
+                    line = response.readline(_MAX_PULL_STATUS_BYTES + 1)
+                    if len(line) > _MAX_PULL_STATUS_BYTES:
+                        raise ProviderError("O Ollama enviou um status de download inválido.")
+                    if not line:
+                        break
+                    try:
+                        status = json.loads(line.decode("utf-8"))
+                    except (UnicodeDecodeError, ValueError) as exc:
+                        raise ProviderError("O Ollama enviou um status de download inválido.") from exc
+                    if not isinstance(status, dict):
+                        raise ProviderError("O Ollama enviou um status de download inválido.")
+                    if status.get("error"):
+                        raise ProviderError("O Ollama não conseguiu baixar o modelo.")
+                    if on_progress is not None:
+                        on_progress({
+                            "status": status.get("status", ""),
+                            "completed": status.get("completed"),
+                            "total": status.get("total"),
+                        })
+                    completed = status.get("status") == "success"
+        except ProviderError:
+            raise
+        except urllib.error.HTTPError as exc:
+            raise ProviderError(
+                f"O Ollama recusou o download (HTTP {exc.code})."
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderError("Download do modelo cancelado.") from exc
+            raise ProviderError("Não foi possível concluir o download pelo Ollama.") from exc
+        if not completed:
+            raise ProviderError("O Ollama encerrou o download antes de confirmar a conclusão.")
+        return f"Modelo {model} instalado."
 
     def generate(self, messages, system_prompt, timeout=None):
         if not _LOCAL_INFERENCE_LOCK.acquire(blocking=False):

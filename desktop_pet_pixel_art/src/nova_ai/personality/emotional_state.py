@@ -5,6 +5,12 @@ from enum import Enum
 
 
 class BehaviorState(str, Enum):
+    CALM = "CALM"
+    CURIOUS = "CURIOUS"
+    CARING = "CARING"
+    PLAYFUL = "PLAYFUL"
+    FOCUSED = "FOCUSED"
+    RESTING = "RESTING"
     IDLE = "IDLE"
     THINKING = "THINKING"
     WORKING = "WORKING"
@@ -16,6 +22,8 @@ class BehaviorState(str, Enum):
 class SimulatedEmotion(str, Enum):
     CALM = "calm"
     CURIOUS = "curious"
+    CARING = "caring"
+    PLAYFUL = "playful"
     FOCUSED = "focused"
     JOYFUL = "joyful"
     RESTING = "resting"
@@ -23,6 +31,12 @@ class SimulatedEmotion(str, Enum):
 
 
 _EMOTION_FOR_STATE = {
+    BehaviorState.CALM: SimulatedEmotion.CALM,
+    BehaviorState.CURIOUS: SimulatedEmotion.CURIOUS,
+    BehaviorState.CARING: SimulatedEmotion.CARING,
+    BehaviorState.PLAYFUL: SimulatedEmotion.PLAYFUL,
+    BehaviorState.FOCUSED: SimulatedEmotion.FOCUSED,
+    BehaviorState.RESTING: SimulatedEmotion.RESTING,
     BehaviorState.IDLE: SimulatedEmotion.CALM,
     BehaviorState.THINKING: SimulatedEmotion.CURIOUS,
     BehaviorState.WORKING: SimulatedEmotion.FOCUSED,
@@ -32,6 +46,12 @@ _EMOTION_FOR_STATE = {
 }
 
 _PROMPT_GUIDANCE = {
+    BehaviorState.CALM: "Mantenha um tom tranquilo e deixe a pessoa conduzir.",
+    BehaviorState.CURIOUS: "Mostre curiosidade com perguntas úteis; não invente certeza.",
+    BehaviorState.CARING: "Responda com acolhimento, sem presumir emoções nem oferecer diagnósticos.",
+    BehaviorState.PLAYFUL: "Use brincadeiras leves apenas se combinarem com o pedido.",
+    BehaviorState.FOCUSED: "Seja objetiva e informe apenas ações realmente concluídas.",
+    BehaviorState.RESTING: "Use um tom tranquilo e menos comunicativo, sem sugerir que está literalmente dormindo.",
     BehaviorState.IDLE: "Mantenha um tom tranquilo e deixe a pessoa conduzir.",
     BehaviorState.THINKING: "Mostre curiosidade com perguntas úteis; não invente certeza.",
     BehaviorState.WORKING: "Seja objetiva e informe apenas ações realmente concluídas.",

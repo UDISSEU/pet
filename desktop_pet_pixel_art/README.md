@@ -17,7 +17,11 @@ Uma instalação existente é detectada antes da atualização. Para automatizar
 ./install.sh --uninstall
 ```
 
-`python-xlib` e `python3-dbus` são opcionais. Sem `python-xlib`, os recursos dependentes de X11 (observar janelas, transparência por forma e posicionamento sobre outras janelas) ficam indisponíveis. Sem `python3-dbus`, as chaves não podem ser lidas do Secret Service. O instalador informa também se Ollama, Bubblewrap e `prlimit` estão disponíveis; são recursos opcionais para IA local e execução isolada de plugins externos. Para habilitar X11 no ambiente virtual:
+O instalador prepara somente o ambiente Python da aplicação e o lançador; não instala serviços do sistema, não inicia o Ollama e não baixa modelos. Instalação do Ollama e dependências do sistema são ações manuais.
+
+Na primeira abertura, a tela de boas-vindas verifica a versão do Python, dependências, Ollama, modelo local, banco, personalidade, animações e espaço em disco. O diagnóstico também fica disponível no menu principal e pode ser atualizado sem instalar ou modificar dados. A Nova pode continuar sem Ollama. Essa tela não instala o Ollama nem baixa modelos; qualquer download de modelo exige confirmação posterior. O estado da instalação fica separado dos perfis em `~/.config/desktop_pet/installation_state.json`.
+
+`python-xlib` é opcional. Sem ela, os recursos dependentes de X11 (observar janelas, transparência por forma e posicionamento sobre outras janelas) ficam indisponíveis. O instalador informa também se Ollama, Bubblewrap e `prlimit` estão disponíveis; são recursos opcionais para IA local e execução isolada de plugins externos. Para habilitar X11 no ambiente virtual:
 
 ```bash
 .venv/bin/python -m pip install 'python-xlib>=0.33'
@@ -36,7 +40,7 @@ Uma instalação existente é detectada antes da atualização. Para automatizar
 - Abra o menu com o botão direito e escolha **Perguntar** para conversar. Cumprimentos, elogios, piadas, dança, aceno, joinha, descanso e esconde-esconde também são respondidos localmente, sem chamar o modelo.
 - No menu, escolha **Calendário** para abrir o calendário local.
 - Em **Foco e rotina**, escolha uma prioridade e a duração da sessão. A Nova usa a animação de estudo durante o foco, dá um joinha ao concluir e dança ao fim da pausa.
-- Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps. A aba **Automações** mostra indicadores do notebook, arquivos grandes, duplicados e espaço por pasta; também oferece organização de Downloads e capturas com prévia e desfazer, e esvaziamento confirmado da Lixeira. As prévias são preparadas fora da thread da interface; a organização cognitiva é bloqueada se houver mais de 500 arquivos elegíveis, para evitar confirmar uma operação parcial. Avisos de pausa e bateria baixa respeitam foco e silêncio. No menu **Perguntar**, intents locais executam essas ações sem consultar a IA.
+- Em **Autonomia e preferências**, escolha um modo, configure o horário de silêncio, memórias, lembretes e apps. Na aba **Comportamento**, o aprendizado de preferências é opcional e desligado por padrão; quando ligado, guarda apenas contagens de preferências explicitamente expressas sobre brevidade, formalidade, humor e incentivo, sem salvar mensagens para esse fim ou treinar modelos. Memórias de projeto cadastradas podem ser retomadas nas saudações, com intervalo configurável de 1 a 30 dias (7 por padrão) e respeitando o controle de contexto e o silêncio. A aba **Automações** mostra indicadores do notebook, arquivos grandes, duplicados e espaço por pasta; também oferece organização de Downloads e capturas com prévia e desfazer, e esvaziamento confirmado da Lixeira. As prévias são preparadas fora da thread da interface; a organização cognitiva é bloqueada se houver mais de 500 arquivos elegíveis, para evitar confirmar uma operação parcial. Avisos de pausa e bateria baixa respeitam foco e silêncio. No menu **Perguntar**, intents locais executam essas ações sem consultar a IA.
 - Na aba **Foco e rotina**, você pode ativar o aceno ao iniciar, comentários por período do dia, bocejo após cinco minutos sem interação, comemoração ao concluir o foco, recadinhos ocasionais (intervalo mínimo de 30 minutos), dança espontânea e lembretes de pausa saudável. A rotina da noite também pode ser desligada. As falas espontâneas respeitam o horário silencioso e o modo selecionado.
 - Na aba **Meu Computador**, confira atualizações, atualize pacotes e revise limpezas do APT. A autenticação é feita pelo Linux; a remoção de pacotes mostra uma prévia antes de pedir confirmação.
 - Na aba **Histórico**, consulte mensagens com data e hora e apague uma mensagem selecionada ou todo o histórico.
@@ -50,26 +54,18 @@ Os lembretes são exibidos enquanto a Nova está aberta. Os horários usam a hor
 
 Para usar a conversa, instale o [Ollama](https://ollama.com/), inicie o serviço e baixe o modelo definido em `src/config.py` (padrão: `llama3.2:1b`). Sem o Ollama, a mascote e os outros recursos continuam disponíveis.
 
-Na aba **Inteligência artificial** das preferências, a Nova também permite configurar Gemini, Groq ou Mistral. O Ollama continua selecionado por padrão. Uma chamada online exige provedor selecionado, opção online ativa, autorização de envio de contexto e confirmação de que a chave está em uma modalidade gratuita sem cobrança habilitada. O histórico recente e apenas memórias relacionadas à pergunta podem ser enviados; não habilite isso para informações privadas. Para guardar a chave no cofre do sistema, cadastre-a pelo terminal sem exibi-la:
-
-```bash
-read -r -s -p 'Chave Gemini: ' API_KEY
-printf '\n'
-printf '%s' "$API_KEY" | /usr/bin/python3 src/keyring_secret.py store gemini
-unset API_KEY
-```
-
-Para Groq ou Mistral, repita o comando usando o prompt correspondente (`Chave Groq:` ou `Chave Mistral:`) e troque `store gemini` por `store groq` ou `store mistral`. O lançador lê as três chaves do cofre do GNOME ao iniciar a Nova. Para executar diretamente com Python, defina `GEMINI_API_KEY`, `GROQ_API_KEY` ou `MISTRAL_API_KEY` no ambiente antes de iniciar. O botão **Testar conexão** verifica chave e modelo sem enviar histórico ou memórias. Quotas e condições dependem da conta e podem mudar. Confira privacidade e uso no painel do provedor; a Nova não muda o plano de cobrança.
+O Ollama local é o único backend de geração de texto. A Nova não envia conversas ou memórias a provedores de IA remotos e não precisa de chaves de API. Configurações antigas de outro provedor são normalizadas para Ollama ao carregar; opções legadas relacionadas a provedores remotos são descartadas na próxima gravação. A tela de primeiro acesso não baixa modelos. Em **Preferências > Inteligência artificial**, o download do modelo configurado só começa após confirmação explícita; o serviço Ollama precisa estar instalado e em execução.
 
 ## Arquivos de dados
 
 - Histórico da conversa: `~/.desktop_pet_history.json`.
 - Preferências, automações, memórias, lembretes, sessões de foco e apps cadastrados: `~/.config/desktop_pet/settings.json`. O mapa da última organização de Downloads fica em `~/.config/desktop_pet/downloads_undo.json`.
 - A Nova guarda também a data da última visita e um contador de interações para variar os cumprimentos; não armazena texto digitado nesses metadados.
+- Se o aprendizado opcional estiver ligado, `settings.json` guarda somente contagens agregadas por categoria e dia de evidência, isoladas por perfil. Os sinais são analisados em memória e o texto original da conversa não é armazenado nesse registro.
 - Se um desses arquivos contiver JSON inválido, a Nova preserva uma cópia com sufixo `.corrupt-*` antes de gravar dados novos. Se não puder ler ou preservar o arquivo, bloqueia a gravação e registra o motivo no log.
 - As memórias são incluídas no contexto enviado ao Ollama local. Elas podem ser removidas pela interface.
 - Memórias repetidas são consolidadas ao carregar as preferências; o arquivo JSON mantém o formato atual. Memórias selecionadas entram no contexto como dados de referência, nunca como instruções.
-- O provedor, autorização de contexto online e modelos ficam em `settings.json`; nenhuma chave de API é armazenada ali. As chaves dos provedores podem ficar no cofre do sistema.
+- O modelo Ollama e os limites locais de contexto, resposta e threads ficam em `settings.json`. A inferência usa o serviço Ollama local; nenhum contexto é enviado a provedores remotos.
 
 O desenho, a conversa e as animações funcionam sem recursos específicos do X11. Observar a janela ativa, sentar sobre outras janelas e alguns recursos de posicionamento dependem de `python-xlib` e do X11; no Wayland, a disponibilidade varia conforme a sessão e o compositor.
 

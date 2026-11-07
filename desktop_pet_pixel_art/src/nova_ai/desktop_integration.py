@@ -1,14 +1,21 @@
 """Composição local e opcional entre o núcleo Nova e o desktop legado."""
 
 from pathlib import Path
+import logging
 
+from autonomy import save_settings
 from nova_ai.core import NovaAI, NovaAIConfig
 from nova_ai.memory import MemoryManager, MemoryStorage, PreferenceMemory
-from nova_ai.personality import PersonalityEngine
+from nova_ai.memory.errors import MemoryStorageError
+from nova_ai.personality import EmotionDetector, PersonalityEngine
+from nova_ai.personality import PreferenceLearner
 from nova_ai.profiles import UserProfileManager
 from nova_ai.actions import create_default_tool_registry
 from nova_ai.actions.base import CancellationToken
 from nova_ai.cognition import CognitiveEngine, DecisionKind, IntentName
+
+logger = logging.getLogger(__name__)
+
 
 class DesktopNovaIntegration:
     """Adapta memória e personalidade sem criar UI, filas ou workers próprios."""
@@ -25,6 +32,8 @@ class DesktopNovaIntegration:
         self._managed_personality = personality is None
         self.memory = memory_manager or self._new_memory_manager()
         self.personality = personality or self._new_personality()
+        self.preference_learner = PreferenceLearner()
+        self.emotion_detector = EmotionDetector()
         # A UI state from a previous run is not a persistent personality trait.
         self.personality.transition_behavior("IDLE")
         self.permission_manager = permission_manager
@@ -128,7 +137,10 @@ class DesktopNovaIntegration:
         )
         try:
             records = self.memory.search(question, limit=limit)
-        except Exception:
+        except MemoryStorageError:
+            logger.exception(
+                "Falha ao recuperar memórias do perfil; atenderei sem esse contexto."
+            )
             return memories
         seen = {str(item).casefold() for item in memories}
         for record in records:
@@ -141,17 +153,58 @@ class DesktopNovaIntegration:
                 seen.add(record.content.casefold())
         return memories
 
-    def personality_instructions(self):
+    def project_memories(self, *, limit=20):
+        """Return explicitly saved project memories for a contextual greeting."""
+        return self.memory.search("", kind="project", limit=limit)
+
+    def learn_from_interaction(self, message, settings):
+        """Store only explicit, daily preference signals when learning is enabled."""
+        if not isinstance(settings, dict) or settings.get("adaptive_learning_enabled") is not True:
+            return False
+        state, changed = self.preference_learner.observe(
+            message, settings.get("adaptive_learning_state")
+        )
+        if not changed:
+            return False
+        settings["adaptive_learning_state"] = state
+        if not save_settings(
+            settings, self.profile_manager.settings_path(self.profile.profile_id)
+        ):
+            logger.warning(
+                "Não foi possível salvar evidências agregadas de preferências adaptativas."
+            )
+        return True
+
+    def personality_instructions(self, settings=None, user_message=None):
         if (self._visual_behavior
                 and self.personality.get_behavior_state() != self._visual_behavior):
             self.personality.transition_behavior(self._visual_behavior)
-        return self.personality.build_personality_instructions()
+        instructions = self.personality.build_personality_instructions()
+        if isinstance(settings, dict) and settings.get("adaptive_learning_enabled") is True:
+            guidance = self.preference_learner.guidance(
+                settings.get("adaptive_learning_state")
+            )
+            if guidance:
+                instructions += "\nPreferências observadas gradualmente:\n" + "\n".join(
+                    f"- {item}" for item in guidance
+                )
+        tone_state = self.emotion_detector.detect(user_message)
+        if tone_state is not None:
+            instructions += (
+                "\nAjuste temporário para esta mensagem, sem diagnóstico ou memória: "
+                f"{tone_state.value}. {self.personality.emotional_state.for_behavior(tone_state).prompt_guidance}"
+            )
+        return instructions
 
     def sync_visual_state(self, visual_state):
-        mapping = {"thinking": "THINKING", "curious": "THINKING", "walk": "IDLE",
-                   "idle": "IDLE", "sleep": "SLEEPING", "sleeping": "SLEEPING",
+        mapping = {"thinking": "THINKING", "curious": "CURIOUS", "walk": "IDLE",
+                   "idle": "IDLE", "calm": "CALM", "sleep": "SLEEPING",
+                   "sleeping": "SLEEPING", "resting": "RESTING",
                    "error": "ERROR", "working": "WORKING", "happy": "HAPPY",
-                   "thumbs_up": "HAPPY", "dance": "HAPPY", "sitting": "IDLE",
+                   "celebrating": "HAPPY", "greeting": "HAPPY",
+                   "thumbs_up": "HAPPY", "dance": "HAPPY", "sitting": "RESTING",
+                   "yawning": "RESTING", "focused": "FOCUSED",
+                   "caring": "CARING", "playful": "PLAYFUL",
                    "reminder": "THINKING", "busy": "WORKING"}
         behavior = mapping.get(str(visual_state).lower())
         if behavior:

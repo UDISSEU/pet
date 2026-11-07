@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from autonomy import find_installed_apps, resolve_app_command, save_settings, valid_reminder_time
 from preferences_common_ui import setup_list
+from ui_theme import fit_window_to_screen
 
 
 class AppsPreferencesTabMixin:
@@ -132,8 +133,7 @@ class AppsPreferencesTabMixin:
             picker.title("Selecionar aplicativo instalado")
             picker.transient(window)
             picker.attributes("-topmost", True)
-            picker.geometry("460x500")
-            picker.minsize(380, 360)
+            fit_window_to_screen(picker, 460, 500, min_width=380, min_height=360)
             picker.configure(bg="#E3E8F0")
             content = ttk.Frame(picker, style="Autonomy.TFrame", padding=18)
             content.pack(fill="both", expand=True)
@@ -147,7 +147,6 @@ class AppsPreferencesTabMixin:
             search_entry = ttk.Entry(content, textvariable=query, style="Autonomy.TEntry")
             search_entry.pack(fill="x", ipady=5, pady=(0, 10))
             result_frame = ttk.Frame(content, style="Card.TFrame", padding=1)
-            result_frame.pack(fill="both", expand=True)
             result_list = tk.Listbox(
                 result_frame, activestyle="none", relief="flat", bd=0,
                 highlightthickness=0, selectforeground="#202B45",
@@ -206,8 +205,9 @@ class AppsPreferencesTabMixin:
             filter_results()
             result_list.bind("<Double-Button-1>", use_selected_app)
             picker_buttons = ttk.Frame(content, style="Autonomy.TFrame")
-            picker_buttons.pack(fill="x", pady=(12, 0))
+            picker_buttons.pack(fill="x", side="bottom", pady=(12, 0))
             ttk.Button(picker_buttons, text="Cancelar", style="Secondary.TButton", command=picker.destroy).pack(side="right")
+            result_frame.pack(fill="both", expand=True)
             ttk.Button(picker_buttons, text="Usar selecionado", style="Primary.TButton", command=use_selected_app).pack(side="right", padx=(0, 8))
             picker.bind("<Return>", use_selected_app)
             picker.bind("<Escape>", lambda _event: picker.destroy())

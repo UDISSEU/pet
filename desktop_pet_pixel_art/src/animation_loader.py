@@ -12,10 +12,15 @@ logger = logging.getLogger(__name__)
 class AnimationLoader:
     """Load one preview synchronously and the full videos on a daemon thread."""
 
-    def __init__(self, videos, frame_loader=load_video_frames,
+    def __init__(self, videos, frame_loader=None,
                  preview_loader=load_video_preview):
         self.videos = dict(videos)
-        self.frame_loader = frame_loader
+        self.frame_loader = (
+            load_video_frames if frame_loader is None else frame_loader
+        )
+        self._supports_cooperative_cancel = (
+            frame_loader is None or frame_loader is load_video_frames
+        )
         self.preview_loader = preview_loader
         self.results = queue.Queue()
         self._stop = threading.Event()
@@ -40,7 +45,12 @@ class AnimationLoader:
             if self._stop.is_set():
                 return
             try:
-                frames = self.frame_loader(filename)
+                if self._supports_cooperative_cancel:
+                    frames = self.frame_loader(filename, should_stop=self._stop.is_set)
+                else:
+                    frames = self.frame_loader(filename)
+                if self._stop.is_set():
+                    return
                 if not frames:
                     raise ValueError("A animação não contém quadros.")
             except Exception as exc:

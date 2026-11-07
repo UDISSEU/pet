@@ -2,6 +2,8 @@
 
 Data: 5 de novembro de 2026
 
+> Registro histórico anterior à remoção dos provedores remotos. O comando de testes abaixo registra a execução daquela fase e inclui `test_keyring_secret`, removido depois; consulte [a arquitetura atual](nova_ai/current_architecture.md) para o estado vigente.
+
 ## Estado
 
 **Validação parcial; critérios de conclusão de ponta a ponta ainda não aprovados.** Os componentes locais e a inferência Ollama foram exercitados, mas a janela Tk e animações não puderam ser iniciadas neste ambiente.

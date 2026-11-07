@@ -3,7 +3,7 @@
 import calendar
 from datetime import date
 import tkinter as tk
-from ui_theme import COLORS, make_header
+from ui_theme import COLORS, fit_window_to_screen, make_header
 
 MONTH_NAMES = (
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -18,7 +18,6 @@ def open_calendar_window(parent, *, on_back=None, on_open=None):
 
     window = tk.Toplevel(parent)
     window.title("Calendário")
-    window.resizable(False, False)
     window.transient(parent)
     window.attributes("-topmost", True)
     window.configure(bg=COLORS["background"])
@@ -92,4 +91,5 @@ def open_calendar_window(parent, *, on_back=None, on_open=None):
                 ).grid(row=row, column=column, padx=1, pady=1)
 
     draw_month()
+    fit_window_to_screen(window, 420, 420, min_width=360, min_height=380)
     return window

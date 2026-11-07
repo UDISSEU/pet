@@ -14,6 +14,7 @@ from nova_ai.memory.errors import ConsentRequiredError
 from nova_ai.personality import (
     BehaviorRules,
     BehaviorState,
+    EmotionDetector,
     EmotionalState,
     NovaIdentity,
     PersonalityEngine,
@@ -160,6 +161,22 @@ class PersonalitySystemTests(unittest.TestCase):
         self.assertEqual(state["simulated_emotion"], "joyful")
         self.assertEqual(state["identity"].name, "Nova")
         self.assertEqual(state["response_style"].tone, Tone.NATURAL_FRIENDLY)
+
+    def test_explicit_tone_cues_are_temporary_and_do_not_diagnose(self):
+        detector = EmotionDetector()
+        self.assertEqual(detector.detect("Estou muito frustrada hoje."), BehaviorState.CARING)
+        self.assertEqual(detector.detect("Consegui terminar, deu certo!"), BehaviorState.HAPPY)
+        self.assertEqual(detector.detect("kkkk isso foi ótimo"), BehaviorState.PLAYFUL)
+        self.assertEqual(detector.detect("Preciso focar, seja objetiva."), BehaviorState.FOCUSED)
+        self.assertIsNone(detector.detect("Hoje trabalhei no meu projeto."))
+        self.assertIsNone(detector.detect("Não consegui abrir o projeto."))
+        engine = self.make_engine()
+        for state in (
+            BehaviorState.CARING, BehaviorState.PLAYFUL, BehaviorState.FOCUSED,
+            BehaviorState.RESTING, BehaviorState.CURIOUS, BehaviorState.CALM,
+        ):
+            self.assertEqual(EmotionalState.for_behavior(state).behavior, state)
+        self.assertEqual(engine.behavior_state, BehaviorState.IDLE)
 
 
 if __name__ == "__main__":

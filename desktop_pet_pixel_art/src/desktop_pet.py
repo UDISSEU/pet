@@ -67,6 +67,7 @@ from autonomy import (
     save_settings,
     valid_reminder_time,
 )
+from first_run import run_first_access_if_needed
 from assistant_actions import (
     current_date_answer,
     is_open_calendar_request,
@@ -1899,19 +1900,14 @@ class DesktopPet(
             if permissions is not None:
                 self._authorize_core_action("ai.use")
                 permissions.require("nova.core", "ai.use")
-                if (request_settings.get("ai_provider") in ("gemini", "groq", "mistral")
-                        and request_settings.get("online_ai_enabled")
-                        and request_settings.get("allow_online_data")
-                        and request_settings.get("confirm_free_tier")):
-                    self._authorize_core_action("network.access", confirmed=True)
-                    permissions.require("nova.core", "network.access", confirmed=True)
             integration = getattr(self, "nova_integration", None)
             if integration is not None:
                 question = next((item.get("content", "") for item in reversed(history)
                                  if item.get("role") == "user"), "")
+                integration.learn_from_interaction(question, request_settings)
                 memories = integration.build_context(question, memories)
                 request_settings["nova_personality_instructions"] = (
-                    integration.personality_instructions()
+                    integration.personality_instructions(request_settings, question)
                 )
             answer = answer_request(
                 history, memories=memories, settings=request_settings,
@@ -1942,6 +1938,20 @@ class DesktopPet(
             logging.getLogger(__name__).exception("Falha inesperada no teste do provedor de IA")
             result = "O teste de conexão falhou por um erro inesperado."
         self._provider_test_results.put((window, status_var, button, result, button_state))
+
+    def _ollama_pull_worker(self, settings, on_progress, on_complete, cancel_event):
+        try:
+            provider = create_provider("ollama", settings)
+            result = provider.pull_model(
+                on_progress=on_progress,
+                cancel_event=cancel_event,
+            )
+        except ProviderError as exc:
+            result = str(exc)
+        except Exception:
+            logging.getLogger(__name__).exception("Falha inesperada ao baixar modelo Ollama")
+            result = "O download do modelo falhou por um erro inesperado."
+        on_complete(result)
 
     def _drain_provider_test_results(self):
         try:
@@ -2008,6 +2018,8 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     try:
+        if not run_first_access_if_needed(PROJECT_ROOT / "launchers" / "nova-icon.png"):
+            sys.exit(0)
         pet = DesktopPet()
         pet.run()
     except Exception as exc:

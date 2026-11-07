@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from permissions import SENSITIVE
-from ui_theme import COLORS, make_header
+from ui_theme import COLORS, fit_window_to_screen, make_header
 
 CORE_PERMISSIONS = (
     ("file.read", "Ler arquivos selecionados"),
@@ -43,8 +43,7 @@ class PermissionsUIMixin:
         self._permissions_window = window
         self._activate_panel(window)
         window.title("Permissões da Nova")
-        window.geometry("560x640")
-        window.minsize(500, 500)
+        fit_window_to_screen(window, 560, 640, min_width=500, min_height=420)
         window.configure(bg=COLORS["background"])
         make_header(window, "Permissões", "Controle o que a Nova e cada habilidade podem acessar.",
                     eyebrow="NOVA  /  PRIVACIDADE",

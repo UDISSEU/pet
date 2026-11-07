@@ -63,7 +63,6 @@ class TkWindowSmokeTests(unittest.TestCase):
                 self.assertIs(pet.show_dashboard(), dashboard)
                 self.assertIs(pet.show_notifications(), notifications)
                 self.assertIs(pet.open_permissions(), permissions)
-                dashboard.geometry("560x540")
                 root.update_idletasks()
                 root.update()
                 deadline = time.monotonic() + 5
@@ -116,10 +115,60 @@ class TkWindowSmokeTests(unittest.TestCase):
                     and widget.cget("text") == "Modo silencioso"
                 )
                 self.assertGreater(silent_control.winfo_height(), 0)
+                for label in ("Marcar como lida", "Descartar", "Limpar descartadas"):
+                    button = next(
+                        widget for widget in descendants(notifications)
+                        if isinstance(widget, ttk.Button) and widget.cget("text") == label
+                    )
+                    self.assertTrue(button.winfo_ismapped(), f"{label} não está visível")
+                    self.assertLessEqual(
+                        button.winfo_rooty() + button.winfo_height(),
+                        notifications.winfo_rooty() + notifications.winfo_height(),
+                        f"{label} ficou fora da janela",
+                    )
+                    self.assertGreaterEqual(
+                        button.winfo_rootx(), notifications.winfo_rootx(),
+                        f"{label} começou fora da janela",
+                    )
+                    self.assertLessEqual(
+                        button.winfo_rootx() + button.winfo_width(),
+                        notifications.winfo_rootx() + notifications.winfo_width(),
+                        f"{label} ficou fora da janela",
+                    )
+                self.assertTrue(silent_control.winfo_ismapped())
                 self.assertLessEqual(
                     silent_control.winfo_rootx() + silent_control.winfo_width(),
                     notifications.winfo_rootx() + notifications.winfo_width(),
                 )
+                self.assertLessEqual(
+                    silent_control.winfo_rooty() + silent_control.winfo_height(),
+                    notifications.winfo_rooty() + notifications.winfo_height(),
+                )
+                category_toggle = next(
+                    widget for widget in descendants(notifications)
+                    if isinstance(widget, ttk.Checkbutton)
+                    and widget.cget("text") == "Ativar categoria"
+                )
+                self.assertTrue(category_toggle.winfo_ismapped())
+                for control in (category_toggle, silent_control):
+                    self.assertGreaterEqual(
+                        control.winfo_rootx(), notifications.winfo_rootx()
+                    )
+                    self.assertGreaterEqual(
+                        control.winfo_rooty(), notifications.winfo_rooty()
+                    )
+                    self.assertLessEqual(
+                        control.winfo_rootx() + control.winfo_width(),
+                        notifications.winfo_rootx() + notifications.winfo_width(),
+                    )
+                    self.assertLessEqual(
+                        control.winfo_rooty() + control.winfo_height(),
+                        notifications.winfo_rooty() + notifications.winfo_height(),
+                    )
+                silent_control.invoke()
+                self.assertTrue(pet.notification_manager.silent)
+                silent_control.invoke()
+                self.assertFalse(pet.notification_manager.silent)
                 self.assertTrue(all(window.winfo_exists() for window in windows))
                 self.assertTrue(all(window.winfo_ismapped() for window in windows))
                 for window in windows:

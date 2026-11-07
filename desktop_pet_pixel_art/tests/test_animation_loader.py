@@ -3,6 +3,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -109,6 +110,30 @@ class TestAnimationLoader(unittest.TestCase):
         self.assertIsNotNone(loader._thread)
         loader._thread.join(timeout=2)
         self.assertFalse(loader._thread.is_alive())
+
+    def test_close_cancels_the_default_frame_loader(self):
+        started = threading.Event()
+
+        def cancellable_loader(_filename, *, should_stop):
+            started.set()
+            while not should_stop():
+                time.sleep(0.005)
+            return []
+
+        with patch("animation_loader.load_video_frames", cancellable_loader):
+            loader = AnimationLoader(
+                {"idle": "idle.mp4"},
+                preview_loader=lambda _filename: "preview",
+            )
+            loader.start()
+            self.assertTrue(started.wait(2))
+            thread = loader._thread
+            loader.close()
+
+        self.assertIsNotNone(thread)
+        self.assertFalse(thread.is_alive())
+        self.assertIsNone(loader._thread)
+        self.assertEqual(loader.drain(), [])
 
     def test_video_frames_share_one_crop_scale_and_feet_anchor(self):
         character = ((40, 20, 70, 100), (25, 30, 35, 255))

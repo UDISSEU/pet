@@ -8,6 +8,7 @@ class BehaviorPreferencesTabMixin:
     def _build_behavior_preferences_tabs(self, context):
         announce_charger = getattr(context, 'announce_charger', None)
         announce_usb = getattr(context, 'announce_usb', None)
+        adaptive_learning = getattr(context, 'adaptive_learning', None)
         auto_sit = getattr(context, 'auto_sit', None)
         behavior_content = getattr(context, 'behavior_content', None)
         break_minutes = getattr(context, 'break_minutes', None)
@@ -26,6 +27,7 @@ class BehaviorPreferencesTabMixin:
         routine_break_tip = getattr(context, 'routine_break_tip', None)
         routine_content = getattr(context, 'routine_content', None)
         routine_context = getattr(context, 'routine_context', None)
+        project_followup_days = getattr(context, 'project_followup_days', None)
         routine_dance = getattr(context, 'routine_dance', None)
         routine_evening = getattr(context, 'routine_evening', None)
         routine_focus_celebration = getattr(context, 'routine_focus_celebration', None)
@@ -80,6 +82,18 @@ class BehaviorPreferencesTabMixin:
             behavior_card,
             text="Controla a frequência das brincadeiras nas respostas da IA.",
             style="Hint.TLabel",
+        ).pack(anchor="w", pady=(1, 2))
+        ttk.Checkbutton(
+            behavior_card,
+            text="Aprender minhas preferências de comunicação",
+            variable=adaptive_learning,
+        ).pack(anchor="w", pady=(10, 2))
+        ttk.Label(
+            behavior_card,
+            text="Opcional. Registra apenas contagens de preferências explícitas; "
+            "não guarda mensagens nem as usa para treinar modelos.",
+            style="Hint.TLabel",
+            wraplength=420,
         ).pack(anchor="w", pady=(1, 2))
 
         quiet_card = card(behavior_content, "Horário de silêncio", "A Nova pausa falas, observações e lembretes durante esse período.")
@@ -136,6 +150,15 @@ class BehaviorPreferencesTabMixin:
             routine_card, text="Comentário de bom dia, boa tarde ou boa noite",
             variable=routine_context,
         ).pack(anchor="w", pady=4)
+        followup_row = ttk.Frame(routine_card, style="Card.TFrame")
+        followup_row.pack(fill="x", pady=(2, 6))
+        ttk.Label(
+            followup_row, text="Intervalo para retomar um projeto (dias)"
+        ).pack(side="left")
+        ttk.Spinbox(
+            followup_row, from_=1, to=30, increment=1,
+            textvariable=project_followup_days, width=5,
+        ).pack(side="right")
         ttk.Checkbutton(
             routine_card, text="Bocejar depois de 5 minutos sem interação",
             variable=routine_idle_yawn,

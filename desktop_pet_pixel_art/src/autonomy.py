@@ -20,6 +20,14 @@ from json_persistence import (
 logger = logging.getLogger(__name__)
 
 SETTINGS_PATH = Path.home() / ".config" / "desktop_pet" / "settings.json"
+LEGACY_REMOTE_AI_SETTINGS = (
+    "online_ai_enabled",
+    "allow_online_data",
+    "confirm_free_tier",
+    "gemini_model",
+    "groq_model",
+    "mistral_model",
+)
 DEFAULT_SETTINGS = {
     "mode": "companhia",
     "humor_style": "equilibrada",
@@ -38,6 +46,19 @@ DEFAULT_SETTINGS = {
     "routine_greeting": True,
     "routine_context": True,
     "last_context_date": "",
+    "project_followup_days": 7,
+    "adaptive_learning_enabled": False,
+    "adaptive_learning_state": {
+        "version": 1,
+        "evidence": {
+            "verbosity": {"concise": 0, "detailed": 0},
+            "tone": {"formal": 0, "casual": 0},
+            "humor": {"playful": 0, "restrained": 0},
+            "support": {"encouraging": 0, "restrained": 0},
+        },
+        "last_observed": {},
+    },
+    "proactive_project_followups": {},
     "routine_idle_yawn": True,
     "routine_focus_celebration": True,
     "routine_note": True,
@@ -52,17 +73,11 @@ DEFAULT_SETTINGS = {
     "last_seen_date": "",
     "interaction_count": 0,
     "ai_provider": "ollama",
-    "online_ai_enabled": False,
-    "allow_online_data": False,
-    "confirm_free_tier": False,
     "ai_timeout": 30,
     "ollama_model": "llama3.2:1b",
     "ollama_num_ctx": 1024,
     "ollama_num_predict": 96,
     "ollama_num_threads": 1,
-    "gemini_model": "gemini-3.8-flash",
-    "groq_model": "openai/gpt-oss-20b",
-    "mistral_model": "mistral-small-latest",
     "automations": {"enabled": {"laptop_status": True, "organize_downloads": True, "undo_downloads": True, "large_files": True, "duplicates": True, "trash_duplicates": True, "disk_summary": True, "empty_trash": True, "organize_screenshots": True, "pause_reminder": True, "low_battery_alert": True}, "last_run": {}, "activity": []},
 }
 
@@ -109,6 +124,24 @@ def load_settings(path=SETTINGS_PATH):
     if not isinstance(result.get("user_name"), str):
         result["user_name"] = ""
     result["user_name"] = result["user_name"].strip()[:60]
+    if not isinstance(result.get("adaptive_learning_enabled"), bool):
+        result["adaptive_learning_enabled"] = False
+    from nova_ai.personality.preference_learner import PreferenceLearner
+    result["adaptive_learning_state"] = PreferenceLearner.normalize_state(
+        result.get("adaptive_learning_state")
+    )
+    followups = result.get("proactive_project_followups")
+    if not isinstance(followups, dict):
+        followups = {}
+    result["proactive_project_followups"] = {
+        memory_id: observed_at
+        for memory_id, observed_at in list(followups.items())[:100]
+        if isinstance(memory_id, str)
+        and len(memory_id) == 32
+        and all(character in "0123456789abcdef" for character in memory_id)
+        and isinstance(observed_at, str)
+        and _valid_iso_timestamp(observed_at)
+    }
     if not isinstance(result.get("memories"), list):
         result["memories"] = []
     memories = []
@@ -157,6 +190,13 @@ def load_settings(path=SETTINGS_PATH):
     for key in ("announce_charger", "announce_usb"):
         if not isinstance(result.get(key), bool):
             result[key] = True
+    try:
+        followup_days = result.get("project_followup_days", 7)
+        if isinstance(followup_days, bool):
+            raise ValueError
+        result["project_followup_days"] = min(30, max(1, int(followup_days)))
+    except (TypeError, ValueError):
+        result["project_followup_days"] = 7
     if not isinstance(result.get("spotify_client_id"), str):
         result["spotify_client_id"] = ""
     result["spotify_client_id"] = result["spotify_client_id"].strip()[:128]
@@ -208,11 +248,9 @@ def load_settings(path=SETTINGS_PATH):
         )
     except (TypeError, ValueError):
         result["interaction_count"] = 0
-    if result.get("ai_provider") not in ("ollama", "gemini", "groq", "mistral"):
-        result["ai_provider"] = "ollama"
-    for key in ("online_ai_enabled", "allow_online_data", "confirm_free_tier"):
-        if not isinstance(result.get(key), bool):
-            result[key] = False
+    result["ai_provider"] = "ollama"
+    for key in LEGACY_REMOTE_AI_SETTINGS:
+        result.pop(key, None)
     try:
         result["ai_timeout"] = min(30, max(5, int(result.get("ai_timeout", 30))))
     except (TypeError, ValueError):
@@ -229,15 +267,18 @@ def load_settings(path=SETTINGS_PATH):
             result[key] = min(maximum, max(minimum, int(value)))
         except (TypeError, ValueError):
             result[key] = default
-    for key, default in (
-        ("ollama_model", "llama3.2:1b"),
-        ("gemini_model", "gemini-3.8-flash"),
-        ("groq_model", "openai/gpt-oss-20b"),
-        ("mistral_model", "mistral-small-latest"),
-    ):
+    for key, default in (("ollama_model", "llama3.2:1b"),):
         value = result.get(key)
         result[key] = value.strip()[:100] if isinstance(value, str) and value.strip() else default
     return result
+
+
+def _valid_iso_timestamp(value):
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def save_settings(settings, path=SETTINGS_PATH):
@@ -254,6 +295,9 @@ def save_settings(settings, path=SETTINGS_PATH):
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
         payload = dict(settings)
+        payload["ai_provider"] = "ollama"
+        for key in LEGACY_REMOTE_AI_SETTINGS:
+            payload.pop(key, None)
         user_name = payload.get("user_name")
         if not isinstance(user_name, str) or not user_name.strip():
             try:

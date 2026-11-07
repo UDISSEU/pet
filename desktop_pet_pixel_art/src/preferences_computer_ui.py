@@ -5,6 +5,7 @@ import subprocess
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
+from ui_theme import fit_window_to_screen
 
 
 class ComputerPreferencesTabMixin:
@@ -43,7 +44,7 @@ class ComputerPreferencesTabMixin:
             details_window = self._set_nova_window_icon(tk.Toplevel(window))
             details_window.title("Detalhes da operação")
             details_window.transient(window)
-            details_window.geometry("620x380")
+            fit_window_to_screen(details_window, 620, 380, min_width=500, min_height=300)
             details_window.configure(bg="#E3E8F0")
             frame = ttk.Frame(details_window, style="Autonomy.TFrame", padding=14)
             frame.pack(fill="both", expand=True)
@@ -66,7 +67,6 @@ class ComputerPreferencesTabMixin:
             dialog = self._set_nova_window_icon(tk.Toplevel(window))
             dialog.title(title)
             dialog.transient(window)
-            dialog.resizable(False, False)
             dialog.configure(bg="#E3E8F0")
             frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=20)
             frame.pack(fill="both", expand=True)
@@ -83,7 +83,7 @@ class ComputerPreferencesTabMixin:
             ttk.Button(
                 actions, text=confirm_label, style="Primary.TButton", command=confirm,
             ).pack(side="right", padx=(0, 8))
-            dialog.geometry("500x220")
+            fit_window_to_screen(dialog, 500, 220, min_width=420, min_height=200)
             dialog.grab_set()
             dialog.focus_set()
 
@@ -91,8 +91,7 @@ class ComputerPreferencesTabMixin:
             dialog = self._set_nova_window_icon(tk.Toplevel(window))
             dialog.title(title)
             dialog.transient(window)
-            dialog.geometry("620x440")
-            dialog.minsize(500, 350)
+            fit_window_to_screen(dialog, 620, 440, min_width=500, min_height=350)
             dialog.configure(bg="#E3E8F0")
             frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=16)
             frame.pack(fill="both", expand=True)
@@ -104,7 +103,6 @@ class ComputerPreferencesTabMixin:
                 wraplength=440,
             ).pack(anchor="w", pady=(4, 12))
             table_frame = ttk.Frame(frame, style="Card.TFrame", padding=4)
-            table_frame.pack(fill="both", expand=True)
             columns = ("package", "current", "action")
             table = ttk.Treeview(
                 table_frame, columns=columns, show="headings", height=12,
@@ -134,7 +132,7 @@ class ComputerPreferencesTabMixin:
                     frame, text="Não há pacotes para mostrar.", style="Hint.TLabel",
                 ).pack(anchor="w", pady=(8, 0))
             buttons = ttk.Frame(frame, style="Autonomy.TFrame")
-            buttons.pack(fill="x", pady=(12, 0))
+            buttons.pack(fill="x", side="bottom", pady=(12, 0))
             ttk.Button(buttons, text="Fechar", style="Secondary.TButton", command=dialog.destroy).pack(side="right")
             if packages and action_label and on_action:
                 def do_action():
@@ -144,6 +142,7 @@ class ComputerPreferencesTabMixin:
                 ttk.Button(
                     buttons, text=action_label, style="Primary.TButton", command=do_action,
                 ).pack(side="right", padx=(0, 8))
+            table_frame.pack(fill="both", expand=True)
             dialog.grab_set()
             dialog.focus_set()
 

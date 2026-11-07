@@ -15,6 +15,23 @@ COLORS = {
 }
 
 
+def fit_window_to_screen(
+    window, width, height, *, min_width=480, min_height=360, vertical_margin=48,
+):
+    """Size and center a resizable panel without exceeding the available display."""
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+    width = max(320, min(width, screen_width - 32))
+    height = max(240, min(height, screen_height - vertical_margin))
+    window.resizable(True, True)
+    window.minsize(min(min_width, width), min(min_height, height))
+    window.geometry(f"{width}x{height}")
+    window.update_idletasks()
+    x = max(0, (screen_width - window.winfo_width()) // 2)
+    y = max(0, (screen_height - window.winfo_height()) // 2)
+    window.geometry(f"+{x}+{y}")
+
+
 def make_header(parent, title, subtitle, *, eyebrow="NOVA  /  PAINEL", back_command=None):
     """Build the compact navy header shared by top-level panels."""
     import tkinter as tk

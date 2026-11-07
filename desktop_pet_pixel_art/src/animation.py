@@ -22,7 +22,7 @@ WATERMARK_BOTTOM_FRACTION = 0.08
 WATERMARK_MAX_COMPONENT_FRACTION = 0.002
 
 
-def load_video_frames(filename):
+def load_video_frames(filename, *, should_stop=None):
     path = resolve_movement_path(filename)
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
@@ -37,7 +37,7 @@ def load_video_frames(filename):
     next_sample_at_ms = 0.0
     allow_empty_frames = path.name == MOVEMENT_VIDEOS["vanishing"]
     try:
-        while True:
+        while should_stop is None or not should_stop():
             success, frame = capture.read()
             if not success:
                 break
@@ -61,10 +61,12 @@ def load_video_frames(filename):
     finally:
         capture.release()
 
+    if should_stop is not None and should_stop():
+        return []
     if not frames:
         raise ValueError(f"O vídeo de movimento não contém quadros: {path}")
     return prepare_video_frames(
-        frames, path.name, allow_empty=allow_empty_frames
+        frames, path.name, allow_empty=allow_empty_frames, should_stop=should_stop,
     )
 
 
@@ -89,7 +91,7 @@ def prepare_video_frame(frame, description, allow_empty=False):
     return prepare_video_frames([frame], description, allow_empty)[0]
 
 
-def prepare_video_frames(frames, description, allow_empty=False):
+def prepare_video_frames(frames, description, allow_empty=False, should_stop=None):
     """Prepare a whole clip against one shared crop, scale, and foot anchor."""
     if not frames:
         raise ValueError(f"O vídeo de movimento não contém quadros: {description}.")
@@ -97,6 +99,8 @@ def prepare_video_frames(frames, description, allow_empty=False):
     processed_frames = []
     union = None
     for frame in frames:
+        if should_stop is not None and should_stop():
+            return []
         processed = remove_video_background(frame.convert("RGBA"))
         processed = remove_corner_watermark_components(processed)
         bounds = processed.getchannel("A").getbbox()
@@ -130,6 +134,8 @@ def prepare_video_frames(frames, description, allow_empty=False):
 
     output = []
     for processed, bounds in processed_frames:
+        if should_stop is not None and should_stop():
+            return []
         canvas = Image.new("RGBA", (VIDEO_MAX_W, VIDEO_MAX_H), (0, 0, 0, 0))
         if bounds is not None:
             cropped = processed.crop(union)

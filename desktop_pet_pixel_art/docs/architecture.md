@@ -2,11 +2,12 @@
 
 ## Visão geral
 
-`src/desktop_pet.py` inicializa a aplicação e coordena o ciclo Tkinter, mantendo a API pública `DesktopPet`. Mixins de controladores implementam animação, interação, rotina, dispositivos, fala e gerenciamento de janelas sem alterar os nomes dos métodos usados pela aplicação. `desktop_pet_ui.py` conserva o mixin público de interface; a construção das preferências é composta por módulos menores, um por conjunto de abas. A interface é desenhada em pixel art com Pillow. Um quadro de prévia do vídeo idle é decodificado na abertura; `AnimationLoader` carrega o restante em uma thread daemon e entrega quadros por fila para a thread Tkinter.
+`src/desktop_pet.py` inicializa a aplicação e coordena o ciclo Tkinter, mantendo a API pública `DesktopPet`. Mixins de controladores implementam animação, interação, rotina, dispositivos, fala e gerenciamento de janelas sem alterar os nomes dos métodos usados pela aplicação. `desktop_pet_ui.py` conserva o mixin público de interface; a construção das preferências é composta por módulos menores, um por conjunto de abas. A interface é desenhada em pixel art com Pillow. Um quadro de prévia do vídeo idle é decodificado na abertura; `AnimationLoader` carrega o restante em uma thread daemon e entrega quadros por fila para a thread Tkinter. Ao fechar, o carregador recebe cancelamento cooperativo durante a decodificação e preparação dos quadros.
 
 ## Módulos
 
 - `desktop_pet.py`: inicialização e coordenação principal; `DesktopPet` mantém a API e o ciclo `tick()`.
+- `first_run.py`, `environment_check.py`, `diagnostics_ui.py` e `installation_state.py`: boas-vindas no primeiro acesso, diagnóstico local atualizável e somente leitura, orientações de reparo e estado global da instalação, separado dos perfis.
 - `animation_controller.py`: seleção, reprodução, renderização e sincronização das animações.
 - `interaction_controller.py`: cliques, arraste e registro das interações.
 - `routine_controller.py`: foco, horários silenciosos, lembretes e rotinas periódicas.
@@ -17,7 +18,7 @@
 - `preferences_ui.py`: janela de preferências, persistência e navegação entre abas.
 - `preferences_*_ui.py`: construção separada das abas de automações, IA, comportamento/rotina, computador, memórias/histórico e lembretes/aplicativos. `preferences_common_ui.py` compartilha os widgets de listas.
 - `animation.py`: decodifica vídeos, prepara quadros e remove o fundo claro.
-- `animation_loader.py`: carrega as sequências completas em segundo plano; mantém a prévia caso um vídeo individual falhe e não acessa widgets Tkinter.
+- `animation_loader.py`: carrega as sequências completas em segundo plano, mantém a prévia caso um vídeo individual falhe, cancela cooperativamente o trabalho em andamento ao fechar e não acessa widgets Tkinter.
 - `app_intents.py`: reconhece e associa pedidos de abertura de aplicativos sem executar comandos.
 - `autonomy.py`: leitura e gravação de preferências, horários silenciosos, lembretes e busca de lançadores Linux `.desktop`.
 - `json_persistence.py`: faz cópias não destrutivas de JSONs inválidos e bloqueia gravação quando não consegue preservar o original.
@@ -26,9 +27,8 @@
 - `calendar_view.py`: calendário mensal local; não sincroniza com contas externas.
 - `config.py`: caminhos dos assets, animações e parâmetros padrão.
 - `ollama_client.py`: API e persistência do histórico JSON legado.
-- `keyring_secret.py`: leitura e gravação de chaves Gemini, Groq e Mistral no cofre Secret Service do ambiente de desktop; fecha a sessão aberta e a conexão D-Bus mesmo quando uma operação falha.
-- `providers/`: provedores independentes via HTTP; não adicionam SDKs à aplicação.
-- `ai/`: personalidade, contexto e roteamento; `AICore` conecta a conversa à seleção de provedor. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
+- `providers/`: contrato comum e adaptador Ollama, acessado pela API HTTP local.
+- `ai/`: personalidade, contexto e roteamento; `AICore` conecta a conversa ao Ollama local. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
 - `x11_helper.py`: observação da janela ativa e geometria de janelas em ambientes X11. O módulo falha de forma segura se X11 ou `python-xlib` não estiverem disponíveis.
 - `event_bus.py`: barramento tipado, com publicação síncrona e fila `post`/`drain` para encaminhar eventos de workers à thread Tkinter.
 - `state_manager.py`: catálogo de estados compatível com as poses existentes, prioridade, geração e retorno de poses temporárias. `DesktopPet.state` permanece como fachada de compatibilidade e espelha as transições no controlador.
@@ -40,17 +40,27 @@
 
 As dependências obrigatórias estão em `requirements.txt`. `python-xlib` é opcional e pode ser instalado separadamente para habilitar recursos que dependem de X11; sua ausência não impede os recursos gerais da mascote.
 
+## Primeiro acesso
+
+Antes de criar `DesktopPet`, `run_first_access_if_needed()` lê `~/.config/desktop_pet/installation_state.json` e mostra a tela de boas-vindas somente se a configuração ainda não foi concluída. `check_environment()` verifica Python, dependências, recursos gráficos, banco/perfil, memória física, espaço em disco e a API local de tags do Ollama. A tela **Diagnóstico do sistema**, no menu, permite repetir as verificações e oferece instruções de reparo. O diagnóstico não cria o registro de perfis, não preserva/move arquivos inválidos, não instala dependências, não inicia serviços e não baixa modelos; a ausência do Ollama é opcional. A instalação de dependências usa `./install.sh` após fechar o aplicativo; correções de banco requerem avaliação manual para evitar apagar dados.
+
 ## Fluxo da conversa
 
 1. A interface recebe a pergunta e verifica primeiro data, calendário e intents locais de automação allowlist.
 2. Automações reconhecidas localmente não passam pelos provedores de IA. Relatórios são somente leitura; movimentações mostram prévia e pedem confirmação; a Lixeira exige confirmação antes de apagar. Operações demoradas rodam em thread e retornam por Event Bus ou pela fila de callbacks UI, consumida pelo ciclo Tkinter. Avisos de pausa e bateria são verificados periodicamente, respeitando foco e horário silencioso.
 3. Se a solicitação corresponder a um app cadastrado, a Nova mostra o comando e pede confirmação.
-4. Outras perguntas são processadas por `ai.request_handler.answer_request` em uma thread de trabalho. Ollama é o padrão e fallback. Gemini/Groq/Mistral só recebem contexto quando selecionados, ativados e com autorização de privacidade e confirmação explícita do nível gratuito. A resposta volta por uma fila; a thread não manipula widgets Tkinter.
+4. Outras perguntas são processadas por `ai.request_handler.answer_request` em uma thread de trabalho e encaminhadas exclusivamente ao Ollama local. Uma falha é comunicada sem fallback remoto. A resposta volta por uma fila; a thread não manipula widgets Tkinter.
 5. Preferências e histórico são gravados em arquivos JSON por substituição atômica. Ao encontrar JSON inválido, a Nova guarda uma cópia `*.corrupt-*` antes de permitir uma nova gravação. Se não conseguir criar essa cópia, bloqueia a substituição.
 
 As memórias explícitas são selecionadas por relevância e adicionadas ao contexto como dados de referência, nunca como instruções. Preferências duplicadas são removidas ao carregar as configurações, sem alterar o formato JSON existente. O seletor de apps lê lançadores `*.desktop` dos diretórios XDG de aplicações; comandos são divididos em argumentos e executados sem shell.
 
 O modo de foco usa temporizadores Tkinter: enquanto a sessão ou a pausa está ativa, as falas espontâneas, observações de apps e lembretes aguardam. A pausa reaproveita a animação de descanso existente. As rotinas de boas-vindas e encerramento são opcionais e dependem de a aplicação estar aberta.
+
+`nova_ai.desktop_integration` conecta o fluxo de conversa existente à identidade permanente, às regras de comportamento, ao estado visual e às memórias do perfil ativo; não cria um roteador ou provedor paralelo. O detector local de tom considera apenas expressões claras na mensagem atual e não persiste estados emocionais nem faz diagnósticos. Estados temporários (`CALM`, `CURIOUS`, `CARING`, `PLAYFUL`, `FOCUSED` e `RESTING`, além dos estados visuais legados) só ajustam a orientação da resposta.
+
+O aprendizado de preferências de comunicação é opcional e vem desligado. Quando habilitado em **Preferências > Comportamento**, guarda no `settings.json` do perfil somente contagens agregadas de sinais explícitos de brevidade, formalidade, humor e incentivo/acolhimento, no máximo uma por categoria por dia. Uma orientação só é aplicada após ao menos três dias de evidência e margem suficiente sobre sinais contrários. Mensagens brutas não são copiadas para esse estado e não há treinamento de modelos. Perfis mantêm contagens independentes.
+
+Saudações podem retomar uma memória de projeto cadastrada explicitamente no SQLite do perfil ativo. A pergunta respeita o controle de contexto, horário silencioso e limites de fala espontânea existentes; o intervalo por memória é configurável entre 1 e 30 dias (7 por padrão). Sem memória de projeto, mantém-se a saudação normal.
 
 ## Dados do usuário
 
@@ -61,15 +71,11 @@ O modo de foco usa temporizadores Tkinter: enquanto a sessão ou a pausa está a
 - `~/.config/desktop_pet/profiles/<id>/settings.json`: preferências gerais do perfil. Perfis novos começam com os padrões do aplicativo, sem copiar preferências, aplicativos, memórias ou nome do perfil principal.
 - `~/.config/desktop_pet/downloads_undo.json`: mapa da última organização confirmada de Downloads.
 
-`nova_ai/profiles.py` fornece isolamento local para memória, personalidade, histórico e preferências gerais. Perfis podem ser criados e selecionados na aba **Memórias** das Preferências; o histórico legado permanece no caminho original e não é copiado. As memórias JSON antigas só são editáveis no perfil principal; a aba também permite cadastrar, corrigir e remover memórias SQLite com confirmação explícita, no armazenamento do perfil ativo. Preferências de rotina, humor, provedor, aplicativos, automações e nome são carregadas e salvas no `settings.json` de cada perfil. Dados de permissões e integrações do sistema que não fazem parte das preferências continuam no escopo da conta Linux.
+`nova_ai/profiles.py` fornece isolamento local para memória, personalidade, histórico e preferências gerais. Perfis podem ser criados e selecionados na aba **Memórias** das Preferências; o histórico legado permanece no caminho original e não é copiado. As memórias JSON antigas só são editáveis no perfil principal; a aba também permite cadastrar, corrigir e remover memórias SQLite com confirmação explícita, no armazenamento do perfil ativo. Preferências de rotina, humor, provedor, aplicativos, automações, nome e, quando habilitado, contagens de aprendizagem são carregadas e salvas no `settings.json` de cada perfil. Dados de permissões e integrações do sistema que não fazem parte das preferências continuam no escopo da conta Linux.
 
-## Provedores de IA
+## Backend de IA
 
-As implementações usam HTTP da biblioteca padrão Python. Gemini usa `models.generateContent`, Groq usa `chat/completions`, e Mistral usa `/v1/chat/completions`; as chaves são `GEMINI_API_KEY`, `GROQ_API_KEY` e `MISTRAL_API_KEY`. Os modelos são configuráveis pela aba **Inteligência artificial**. O botão **Testar conexão** consulta apenas a disponibilidade do modelo e não envia conversa. Limites e preços variam por provedor e podem mudar; confira os painéis antes de habilitar. A Nova não ativa planos nem muda configurações de cobrança. Erros do provedor online recorrem ao Ollama local; não há fallback para um serviço pago.
-
-O lançador tenta carregar as chaves Gemini, Groq e Mistral do cofre Secret Service antes de iniciar a interface. As chaves não são gravadas em `settings.json`; a execução direta de `desktop_pet.py` continua aceitando-as pelo ambiente.
-
-Referências oficiais consultadas: [Gemini API generateContent](https://ai.google.dev/api/generate-content), [modelos Gemini](https://ai.google.dev/gemini-api/docs/models), [Groq chat completions](https://console.groq.com/docs/api-reference), [modelos e limites Groq](https://console.groq.com/docs/models).
+O roteador e a fábrica expõem somente o adaptador Ollama. A Nova se conecta ao serviço local em `localhost`; erros não acionam fallback para serviços remotos. O modelo e limites de recursos são configuráveis em **Inteligência artificial**. O botão de download envia um pedido de pull ao Ollama apenas após confirmação; a operação ocorre em worker, exibe progresso e pode ser cancelada. Configurações antigas são normalizadas para Ollama, e as opções legadas de provedores remotos são removidas da próxima gravação.
 
 Os lembretes são verificados pelo próprio processo da Nova. Eles são mostrados quando o app está em execução e não estão no horário silencioso.
 

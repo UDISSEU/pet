@@ -3,6 +3,7 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
+from ui_theme import fit_window_to_screen
 
 
 class DashboardUIMixin:
@@ -30,8 +31,7 @@ class DashboardUIMixin:
         self._dashboard_window = window
         self._activate_panel(window)
         window.title("Painel da Nova")
-        window.geometry("580x570")
-        window.minsize(520, 520)
+        fit_window_to_screen(window, 580, 570, min_width=520, min_height=440)
         window.configure(bg="#F2F5F9")
 
         colors = {
@@ -78,8 +78,23 @@ class DashboardUIMixin:
         )
         back_button.pack(side="right", anchor="n", padx=(0, 6), pady=3)
 
-        content = tk.Frame(window, bg="#F2F5F9", padx=14, pady=8)
-        content.pack(fill="both", expand=True)
+        body = tk.Frame(window, bg="#F2F5F9")
+        body.pack(fill="both", expand=True)
+        canvas = tk.Canvas(body, bg="#F2F5F9", bd=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        content = tk.Frame(canvas, bg="#F2F5F9", padx=14, pady=8)
+        content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+        content.bind(
+            "<Configure>",
+            lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda event: canvas.itemconfigure(content_window, width=event.width),
+        )
 
         def section_title(parent, text):
             tk.Label(
@@ -202,7 +217,7 @@ class DashboardUIMixin:
                  bg=colors["surface"], fg=colors["muted"], font=small_font,
                  anchor="w").pack(fill="x")
 
-        controls = tk.Frame(content, bg="#F2F5F9")
+        controls = tk.Frame(window, bg="#F2F5F9", padx=14, pady=8)
         controls.pack(fill="x", side="bottom")
         tk.Label(controls, text="Atualizar a cada", bg="#F2F5F9",
                  fg=colors["muted"], font=small_font).pack(side="left")
@@ -277,10 +292,9 @@ class DashboardUIMixin:
             unread = getattr(self.notification_manager, "unread_count", 0)
             activity_var.set(f"{task_count} tarefas · {active_plugins} plugins ativos")
             activity_detail_var.set(f"{errors} erros · {unread} notificações não lidas")
-            provider = metrics.get("ai_provider", "ollama")
             ai_status = metrics.get("ai_status", "idle")
             spotify = metrics.get("integrations", {}).get("spotify", False)
-            services_var.set(f"IA  {provider} · {ai_status}")
+            services_var.set(f"IA  Ollama · {ai_status}")
             services_detail_var.set(
                 f"Spotify  {'conectado' if spotify else 'não configurado'}"
             )

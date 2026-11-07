@@ -63,6 +63,46 @@ class DesktopIntegrationTests(unittest.TestCase):
         self.integration.sync_visual_state("idle")
         self.integration.personality_instructions()
         self.assertEqual(self.integration.personality.get_behavior_state(), "IDLE")
+        expected = {
+            "focused": "FOCUSED",
+            "curious": "CURIOUS",
+            "caring": "CARING",
+            "playful": "PLAYFUL",
+            "resting": "RESTING",
+            "celebrating": "HAPPY",
+            "greeting": "HAPPY",
+        }
+        for visual, behavior in expected.items():
+            self.integration.sync_visual_state(visual)
+            self.integration.personality_instructions()
+            self.assertEqual(self.integration.personality.get_behavior_state(), behavior)
+
+    def test_adaptive_learning_is_opt_in_and_saves_only_aggregated_evidence(self):
+        settings = {"adaptive_learning_enabled": False}
+        with mock.patch("nova_ai.desktop_integration.save_settings") as save:
+            self.assertFalse(self.integration.learn_from_interaction(
+                "Prefiro respostas curtas.", settings
+            ))
+            save.assert_not_called()
+            settings["adaptive_learning_enabled"] = True
+            self.assertTrue(self.integration.learn_from_interaction(
+                "Prefiro respostas curtas.", settings
+            ))
+        save.assert_called_once()
+        serialized_settings = str(settings)
+        self.assertNotIn("Prefiro respostas curtas.", serialized_settings)
+        settings["adaptive_learning_state"]["evidence"]["verbosity"]["concise"] = 3
+        self.assertIn("Prefira respostas breves e diretas", self.integration.personality_instructions(settings))
+        self.assertIn("Você é Nova", self.integration.personality_instructions(settings))
+
+    def test_explicit_emotional_tone_changes_only_the_current_response_guidance(self):
+        original_state = self.integration.personality.get_behavior_state()
+        instructions = self.integration.personality_instructions(
+            {}, "Estou muito sobrecarregada hoje."
+        )
+        self.assertIn("sem diagnóstico ou memória", instructions)
+        self.assertIn("Responda com acolhimento", instructions)
+        self.assertEqual(self.integration.personality.get_behavior_state(), original_state)
 
     def test_core_initializes_without_loading_model_or_training(self):
         self.assertTrue(self.integration.core.initialized)

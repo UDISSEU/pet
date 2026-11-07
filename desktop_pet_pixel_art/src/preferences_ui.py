@@ -4,7 +4,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 from autonomy import save_settings
-from ui_theme import COLORS, make_header
+from ui_theme import COLORS, fit_window_to_screen, make_header
 from types import SimpleNamespace
 from preferences_automation_ui import AutomationPreferencesTabMixin
 from preferences_ai_ui import AIPreferencesTabMixin
@@ -24,8 +24,7 @@ class PreferencesUIMixin(
         window.title("Preferências da Nova")
         window.transient(self.root)
         window.attributes("-topmost", True)
-        window.geometry("560x600")
-        window.minsize(520, 550)
+        fit_window_to_screen(window, 560, 600, min_width=520, min_height=440)
         window.configure(bg=COLORS["background"])
         self._activate_panel(window)
         make_header(
@@ -190,6 +189,12 @@ class PreferencesUIMixin(
         break_minutes = tk.StringVar(value=str(self.settings.get("break_minutes", 5)))
         routine_greeting = tk.BooleanVar(value=self.settings.get("routine_greeting", True))
         routine_context = tk.BooleanVar(value=self.settings.get("routine_context", True))
+        project_followup_days = tk.StringVar(
+            value=str(self.settings.get("project_followup_days", 7))
+        )
+        adaptive_learning = tk.BooleanVar(
+            value=self.settings.get("adaptive_learning_enabled", False)
+        )
         routine_idle_yawn = tk.BooleanVar(value=self.settings.get("routine_idle_yawn", True))
         routine_focus_celebration = tk.BooleanVar(value=self.settings.get("routine_focus_celebration", True))
         routine_note = tk.BooleanVar(value=self.settings.get("routine_note", True))
@@ -217,18 +222,11 @@ class PreferencesUIMixin(
         confirm_app_launch = tk.BooleanVar(
             value=self.settings.get("confirm_app_launch", True)
         )
-        ai_provider = tk.StringVar(value=self.settings.get("ai_provider", "ollama"))
-        online_ai_enabled = tk.BooleanVar(value=self.settings.get("online_ai_enabled", False))
-        allow_online_data = tk.BooleanVar(value=self.settings.get("allow_online_data", False))
-        confirm_free_tier = tk.BooleanVar(value=self.settings.get("confirm_free_tier", False))
         ai_timeout = tk.StringVar(value=str(self.settings.get("ai_timeout", 30)))
         ollama_model = tk.StringVar(value=self.settings.get("ollama_model", "llama3.2:1b"))
         ollama_num_ctx = tk.StringVar(value=str(self.settings.get("ollama_num_ctx", 1024)))
         ollama_num_predict = tk.StringVar(value=str(self.settings.get("ollama_num_predict", 96)))
         ollama_num_threads = tk.StringVar(value=str(self.settings.get("ollama_num_threads", 1)))
-        gemini_model = tk.StringVar(value=self.settings.get("gemini_model", "gemini-3.8-flash"))
-        groq_model = tk.StringVar(value=self.settings.get("groq_model", "openai/gpt-oss-20b"))
-        mistral_model = tk.StringVar(value=self.settings.get("mistral_model", "mistral-small-latest"))
         spotify_client_id = tk.StringVar(value=self.settings.get("spotify_client_id", ""))
         profile_manager = getattr(self, "profile_manager", None)
         active_profile = profile_manager.active_profile if profile_manager else None
@@ -320,9 +318,27 @@ class PreferencesUIMixin(
                 select_tab(routine_tab)
                 messagebox.showerror("Valor inválido", "Confira as durações e use HH:MM no horário de encerramento.", parent=window)
                 return
+            try:
+                followup_days = int(project_followup_days.get())
+            except ValueError:
+                select_tab(routine_tab)
+                messagebox.showerror(
+                    "Intervalo inválido",
+                    "Informe um número de dias entre 1 e 30 para retomar projetos.",
+                    parent=window,
+                )
+                return
             if not 5 <= duration <= 180 or not 1 <= pause <= 60:
                 select_tab(routine_tab)
                 messagebox.showerror("Duração inválida", "Foco: 5–180 minutos. Pausa: 1–60 minutos.", parent=window)
+                return
+            if not 1 <= followup_days <= 30:
+                select_tab(routine_tab)
+                messagebox.showerror(
+                    "Intervalo inválido",
+                    "A retomada de projetos deve ocorrer entre 1 e 30 dias.",
+                    parent=window,
+                )
                 return
             try:
                 timeout_value = int(ai_timeout.get())
@@ -369,6 +385,8 @@ class PreferencesUIMixin(
                 focus_minutes=duration, break_minutes=pause,
                 routine_greeting=routine_greeting.get(),
                 routine_context=routine_context.get(),
+                project_followup_days=followup_days,
+                adaptive_learning_enabled=adaptive_learning.get(),
                 routine_idle_yawn=routine_idle_yawn.get(),
                 routine_focus_celebration=routine_focus_celebration.get(),
                 routine_note=routine_note.get(),
@@ -376,13 +394,9 @@ class PreferencesUIMixin(
                 routine_evening=routine_evening.get(), evening_time=evening_time.get(),
                 routine_dance=routine_dance.get(),
                 routine_break_tip=routine_break_tip.get(),
-                ai_provider=ai_provider.get(), online_ai_enabled=online_ai_enabled.get(),
-                allow_online_data=allow_online_data.get(),
-                confirm_free_tier=confirm_free_tier.get(), ai_timeout=timeout_value,
+                ai_provider="ollama", ai_timeout=timeout_value,
                 ollama_model=ollama_model.get().strip(),
                 **local_limits,
-                gemini_model=gemini_model.get().strip(), groq_model=groq_model.get().strip(),
-                mistral_model=mistral_model.get().strip(),
                 spotify_client_id=spotify_client_id.get().strip(),
             )
             if (not hasattr(self, "profile_manager")

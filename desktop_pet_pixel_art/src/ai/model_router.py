@@ -1,4 +1,4 @@
-"""Seleção explícita do provedor e contingência local."""
+"""Route inference through the stable provider contract using local Ollama only."""
 
 import logging
 import threading
@@ -7,7 +7,7 @@ from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 
 logger = logging.getLogger(__name__)
-SUPPORTED_PROVIDERS = {"ollama", "gemini", "groq", "mistral"}
+SUPPORTED_PROVIDERS = frozenset({"ollama"})
 
 
 class ModelRouter:
@@ -22,44 +22,21 @@ class ModelRouter:
         try:
             selected = self.settings.get("ai_provider", "ollama")
             if selected not in SUPPORTED_PROVIDERS:
-                raise ProviderError("O provedor selecionado não é reconhecido. Confira as preferências de IA.")
-            online_allowed = (
-                selected in ("gemini", "groq", "mistral")
-                and self.settings.get("online_ai_enabled", False)
-                and self.settings.get("allow_online_data", False)
-                and self.settings.get("confirm_free_tier", False)
-            )
-            if selected in ("gemini", "groq", "mistral") and not online_allowed:
-                selected = "ollama"
+                raise ProviderError("Somente o Ollama local está disponível como provedor de IA.")
             try:
                 provider = self.provider_factory(selected, self.settings)
             except Exception as exc:
                 raise ProviderError("A configuração do provedor selecionado é inválida.") from exc
-            if selected != "ollama" and not provider.is_available():
-                raise ProviderError(
-                    "A chave do provedor online selecionado não está configurada. "
-                    "Configure-a ou escolha outro provedor nas preferências."
-                )
             try:
-                timeout = min(12, self._timeout()) if selected != "ollama" else self._timeout()
-                return provider.generate(messages, system_prompt, timeout=timeout)
+                return provider.generate(messages, system_prompt, timeout=self._timeout())
             except Exception as exc:
                 logger.warning(
-                    "Provedor %s falhou (%s); verificando contingência local",
-                    selected, type(exc).__name__,
+                    "Inferência pelo Ollama falhou (%s)",
+                    type(exc).__name__,
                 )
-                if selected == "ollama":
-                    if isinstance(exc, ProviderError):
-                        raise
-                    raise ProviderError("Não foi possível consultar a IA local.") from exc
-                try:
-                    fallback = self.provider_factory("ollama", self.settings)
-                    return fallback.generate(messages, system_prompt, timeout=min(10, self._timeout()))
-                except Exception as fallback_error:
-                    raise ProviderError(
-                        "O provedor online falhou e a IA local também está indisponível. "
-                        "Confira a conexão, a chave e o Ollama."
-                    ) from fallback_error
+                if isinstance(exc, ProviderError):
+                    raise
+                raise ProviderError("Não foi possível consultar a IA local.") from exc
         finally:
             self._lock.release()
 

@@ -16,7 +16,7 @@ Tkinter / desktop_pet.py (composição e ciclo tick)
 ├── comportamento: animation/loader/controllers, routines, personality.py
 ├── tarefas locais: app_intents.py, assistant_actions.py, automations.py
 ├── IA: ai.request_handler → AICore → ContextManager + prompts → ModelRouter
-│   └── providers/* → Ollama local ou APIs Gemini/Groq/Mistral
+│   └── providers/* → Ollama local (único backend de geração)
 ├── estado e extensões: EventBus, StateManager, PluginManager, PermissionManager
 ├── integração local: X11, apps Linux, Spotify, manutenção, psutil
 └── dados: JSON em ~/.config/desktop_pet e ~/.desktop_pet_history.json
@@ -34,13 +34,13 @@ Tkinter / desktop_pet.py (composição e ciclo tick)
 | Plugins e permissões | `plugin_manager.py`, `permissions.py`, `permissions_ui.py` | Plugins internos registrados explicitamente e subprocessos externos por manifesto; permissões negadas por padrão, persistidas e verificadas por chamada. |
 | Persistência | `json_persistence.py`, `autonomy.py`, `ollama_client.py`, `notifications.py`, `permissions.py` | JSON local, gravação atômica, preservação de arquivo corrompido, preferências, histórico, notificações e grants. |
 | Concorrência e observabilidade | `event_bus.py`, `system_monitor.py`, `dashboard_ui.py`, `tools/nova_soak.py` | Eventos enfileirados para thread UI, amostragem de sistema e ferramenta de soak em processo separado. |
-| Dependências de plataforma | `x11_helper.py`, `keyring_secret.py`, `spotify_control.py`, `preferences_computer_ui.py` | X11 opcional, Secret Service/D-Bus, OAuth/API Spotify, subprocessos Linux e comandos do sistema. |
+| Dependências de plataforma | `x11_helper.py`, `spotify_control.py`, `preferences_computer_ui.py` | X11 opcional, OAuth/API Spotify, subprocessos Linux e comandos do sistema. |
 
 ## Fluxo da conversa e ações
 
 A interface em `desktop_pet.py` aplica primeiro respostas/intents locais (data, calendário, personalidade simples, automações e aplicativos). Essas rotas podem não chamar modelo. Pedidos para apps mostram comando e confirmação. Automações com mudanças de arquivos oferecem prévia e confirmação; há operações destrutivas específicas com confirmação. Outras mensagens seguem em worker para `ai.request_handler.answer_request`, voltam à UI por fila/callback e são persistidas no histórico curto via `ollama_client.py`.
 
-Na trilha moderna: `AICore.process_message()` chama `ContextManager.build()`, monta prompt através de `ai.prompts`/`ai.personality.Personality`, então delega a `ModelRouter.generate()`. O roteador escolhe provider e, em falha de provider online, tenta Ollama. `ContextManager` limita histórico a 12 mensagens e 16 mil caracteres; considera até 8 memórias explícitas (3 mil caracteres no total) por sobreposição lexical com a última pergunta.
+Na trilha moderna: `AICore.process_message()` chama `ContextManager.build()`, monta prompt através de `ai.prompts`/`ai.personality.Personality`, então delega a `ModelRouter.generate()`. O roteador permite somente Ollama local e não faz fallback remoto. `ContextManager` limita histórico a 12 mensagens e 16 mil caracteres; considera até 8 memórias explícitas (3 mil caracteres no total) por sobreposição lexical com a última pergunta.
 
 ## Memória, personalidade e aprendizado
 
@@ -49,15 +49,24 @@ Na trilha moderna: `AICore.process_message()` chama `ContextManager.build()`, mo
 - `ContextManager` faz seleção lexical simples; não há embeddings, índice vetorial, sumarização episódica ou ciclo automático de atualização da memória observado.
 - `ai/personality.py` constrói instruções estáveis e enumera estados conversacionais, mas o prompt padrão cria `Personality` em estado calmo; a integração do estado visual dinâmico ao prompt não é evidente na chamada atual.
 - `src/personality.py` é um sistema distinto de falas e comportamento espontâneo, não o mesmo módulo que `ai/personality.py`.
-- Não foi encontrada implementação de aprendizado de parâmetros, treinamento/finetuning, avaliação contínua ou mudança autônoma de política com base em experiências. O projeto atual é um cliente/orquestrador de modelos.
+- Na auditoria de 5 de novembro de 2026, não foi encontrada implementação de aprendizado de parâmetros, treinamento/finetuning, avaliação contínua ou mudança autônoma de política com base em experiências. O projeto observado era um cliente/orquestrador de modelos.
+
+## Atualização posterior à auditoria
+
+- O `MemoryManager` existente usa SQLite com categorias tipadas, consentimento e proveniência; as memórias continuam sendo cadastradas ou geridas explicitamente pela pessoa usuária.
+- `nova_ai.desktop_integration` conecta o fluxo de IA existente à identidade permanente, às regras, às preferências do perfil e aos estados visuais, sem criar um roteador paralelo.
+- `PreferenceLearner` é opcional e vem desligado; quando habilitado, armazena apenas contagens de sinais explícitos de estilo por perfil, sem texto bruto. Adaptações só entram no prompt após evidências repetidas em pelo menos três dias. `EmotionDetector` usa pistas explícitas apenas durante a resposta atual e não persiste emoção nem produz diagnósticos.
+- Estados temporários incluem CALM, CURIOUS, CARING, PLAYFUL, FOCUSED e RESTING, além dos estados visuais legados. Memórias de projeto explicitamente salvas podem ser retomadas nas saudações, com cooldown configurável, silêncio e limites existentes.
+- Não há treinamento/finetuning de modelos; a adaptação é local, determinística e limitada ao estilo conversacional.
+- Ollama é o único backend de geração ativo. Os adaptadores de IA remota, o acesso a credenciais do sistema e seus controles de configuração foram removidos; configurações antigas são normalizadas para o backend local.
 
 ## Dados locais referenciados
 
-`settings.json`, `permissions.json`, `notifications.json`, `downloads_undo.json` e histórico ficam nos caminhos descritos no README. A persistência de configurações, permissões, notificações e histórico usa escrita atômica e rotinas para preservação de JSON inválido. Essa auditoria não abriu nem leu os arquivos do perfil do usuário. Chaves de serviços são obtidas de variáveis de ambiente ou Secret Service, não do JSON de preferências.
+`settings.json`, `permissions.json`, `notifications.json`, `downloads_undo.json` e histórico ficam nos caminhos descritos no README. A persistência de configurações, permissões, notificações e histórico usa escrita atômica e rotinas para preservação de JSON inválido. Essa auditoria não abriu nem leu os arquivos do perfil do usuário.
 
 ## Dependências externas e recursos
 
-Dependências Python obrigatórias declaradas: Pillow, opencv-python-headless, NumPy e psutil. Tkinter e componentes Python do sistema são requisito Linux, não estão no `requirements.txt`. `python-xlib`, D-Bus/Secret Service, Ollama, bubblewrap e prlimit são opcionais conforme os recursos. Conversas online usam HTTP da biblioteca padrão; Spotify usa HTTP/OAuth e app local. Detalhamento em [dependency_map.md](dependency_map.md) e [offline_capabilities.md](offline_capabilities.md).
+Dependências Python obrigatórias declaradas: Pillow, opencv-python-headless, NumPy e psutil. Tkinter e componentes Python do sistema são requisito Linux, não estão no `requirements.txt`. `python-xlib`, Ollama, bubblewrap e prlimit são opcionais conforme os recursos. A conversa usa HTTP local para Ollama; Spotify usa HTTP/OAuth e app local. Detalhamento em [dependency_map.md](dependency_map.md) e [offline_capabilities.md](offline_capabilities.md).
 
 ## Testes observados
 

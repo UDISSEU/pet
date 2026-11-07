@@ -27,12 +27,15 @@ class DesktopStartupTests(unittest.TestCase):
         namespace["__name__"] = "__main__"
         pet_class = mock.Mock()
         namespace["DesktopPet"] = pet_class
+        first_access = mock.Mock(return_value=True)
+        namespace["run_first_access_if_needed"] = first_access
         with tempfile.TemporaryDirectory() as tmpdir, \
              mock.patch.object(Path, "home", return_value=Path(tmpdir)), \
              mock.patch.object(desktop_pet.logging, "basicConfig"), \
              mock.patch.object(desktop_pet.logging, "FileHandler"):
             exec(compile(ast.Module(body=[main_block], type_ignores=[]), str(SRC / "desktop_pet.py"), "exec"), namespace)
         pet_class.return_value.run.assert_called_once()
+        first_access.assert_called_once()
     def test_maintenance_subprocesses_use_the_filtered_environment(self):
         tree = ast.parse((SRC / "preferences_computer_ui.py").read_text(encoding="utf-8"))
         functions = {
@@ -87,8 +90,8 @@ except SystemExit as exc:
             desktop_pet.os.environ,
             {
                 "PATH": "/usr/bin",
-                "GEMINI_API_KEY": "secret",
-                "GROQ_TOKEN": "token-value",
+                "SERVICE_API_KEY": "secret",
+                "SERVICE_TOKEN": "token-value",
                 "HOME": "/tmp",
                 "DISPLAY": ":0",
             },
@@ -98,5 +101,5 @@ except SystemExit as exc:
             self.assertEqual(env["PATH"], "/usr/bin")
             self.assertEqual(env["HOME"], "/tmp")
             self.assertEqual(env["DISPLAY"], ":0")
-            self.assertNotIn("GEMINI_API_KEY", env)
-            self.assertNotIn("GROQ_TOKEN", env)
+            self.assertNotIn("SERVICE_API_KEY", env)
+            self.assertNotIn("SERVICE_TOKEN", env)

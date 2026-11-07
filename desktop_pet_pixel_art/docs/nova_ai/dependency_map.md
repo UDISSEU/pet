@@ -12,7 +12,7 @@ src/desktop_pet.py
 │     ├─ ai.context_manager.py
 │     ├─ ai.prompts.py ─ ai.personality.py + assistant_actions.py
 │     └─ ai.model_router.py ─ providers.provider_factory.py
-│        └─ providers.{ollama,gemini,groq,mistral}_provider.py ─ base_provider.py
+│        └─ providers.ollama_provider.py ─ base_provider.py
 ├─ ollama_client.py (histórico legado + função direta Ollama)
 ├─ controllers / UI (Tkinter e módulos de domínio)
 ├─ event_bus.py ─ state_manager.py / notifications.py / system_monitor.py
@@ -39,9 +39,9 @@ src/desktop_pet.py
 
 ## Provedores e caminhos de execução
 
-A interface de provedor comum é `BaseProvider.is_available/generate/test_connection`. `ModelRouter` seleciona `ollama`, `gemini`, `groq` ou `mistral`; exige três flags para uma chamada online (`online_ai_enabled`, `allow_online_data`, `confirm_free_tier`); serializa uma chamada por vez com lock e tenta Ollama após falha online. Requisições usam `urllib` e JSON sem SDKs específicos.
+A interface comum é `BaseProvider.is_available/generate/test_connection`. `ModelRouter` e `provider_factory` permitem somente Ollama local e serializam uma chamada por vez com lock. Requisições usam `urllib` e JSON sem SDKs específicos; erros locais não recorrem a provedores remotos.
 
-O acoplamento não está isolado a `providers/`: nomes, defaults e validação repetem-se em `autonomy.py`, `preferences_ai_ui.py`, `dashboard_ui.py`, `ai/model_router.py` e `provider_factory.py`. `config.py` conserva defaults Ollama. Isso aumenta risco de divergência ao adicionar backends ou retirar provedores.
+As preferências e o painel apresentam Ollama como backend único. `autonomy.py` migra configurações antigas para Ollama e remove opções de provedores remotos ao salvar.
 
 ### Trilha Ollama duplicada
 

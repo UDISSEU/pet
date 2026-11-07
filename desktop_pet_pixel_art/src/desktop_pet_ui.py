@@ -176,6 +176,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
         check_option("Sumir atrás das janelas", self.peekaboo_var, self.toggle_peekaboo)
         check_option("Sentar em janelas", self.auto_sit_var, self.toggle_auto_sit)
         section_label(more, "Manutenção")
+        more_action("Diagnóstico do sistema", self.show_diagnostics)
         more_action("Esquecer conversa", self.forget_history)
         more_action("Apagar memórias salvas", self.forget_memories)
         more_action("Fechar Nova", self.close_app)
@@ -206,6 +207,17 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
             # Alguns gerenciadores de janelas não oferecem transparência gradual.
             pass
         return "break"
+
+    def show_diagnostics(self):
+        from diagnostics_ui import open_diagnostics_window
+
+        return open_diagnostics_window(
+            self.root,
+            on_open_ai=lambda: self.open_autonomy_settings("ai"),
+            on_back=lambda window: self._panel_back(window),
+            on_open=self._activate_panel,
+        )
+
     def show_calendar(self):
         return open_calendar_window(
             self.root, on_back=lambda window: self._panel_back(window),

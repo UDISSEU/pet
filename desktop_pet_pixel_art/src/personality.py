@@ -7,7 +7,8 @@ import time
 
 
 PERSONALITY_IDENTITY = (
-    "curiosa", "acolhedora", "bem-humorada sem exagero", "respeitosa com o espaço alheio"
+    "feliz e otimista", "alegre e divertida", "carinhosa e acolhedora",
+    "proativa e curiosa", "atenciosa e paciente", "respeitosa e compreensiva",
 )
 
 
@@ -58,6 +59,14 @@ SPEECH_POOLS = {
         "O dia está terminando; pega leve com você.",
         "Boa noite, {nome}! Estou aqui pertinho.",
         "Que sua noite tenha um pouco de sossego.",
+    ),
+    "project_followup": (
+        "Oi, que bom te ver! Como está {topic} desde a última vez?",
+        "Que bom que voltou! Quer me contar como anda {topic}?",
+        "Olá! Fiquei curiosa: como está indo {topic}?",
+        "Bom te ver por aqui! O que avançou em {topic}?",
+        "Oi! Quer retomar comigo o assunto de {topic}?",
+        "Como está {topic}? Se quiser, posso acompanhar o próximo passo.",
     ),
     "click": (
         "Oi! Você me chamou?",
@@ -740,6 +749,7 @@ def pick_line(category, name="", hour=None, rng=random, history=None, **context)
     line = line.replace("{nome}", clean_name)
     line = line.replace("{lembrete}", str(context.get("lembrete", "seu lembrete")))
     line = line.replace("{device}", str(context.get("device", "pendrive USB")))
+    line = line.replace("{topic}", str(context.get("topic", "seu projeto")))
     line = re.sub(r"\s+", " ", line).strip()
     line = re.sub(r"\s+([,.!?])", r"\1", line)
     line = re.sub(r",\s*([.!?])", r"\1", line)

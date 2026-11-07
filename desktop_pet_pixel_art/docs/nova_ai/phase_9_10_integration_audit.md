@@ -2,6 +2,8 @@
 
 Data: 5 de novembro de 2026
 
+> Registro histórico anterior à migração para Ollama-only. As referências a provedores externos e fallback descrevem a integração naquele momento; consulte [a arquitetura atual](current_architecture.md) para o estado vigente.
+
 ## Integração entregue
 
 - `DesktopPet` inicializa o núcleo local, a memória SQLite e a personalidade em modo tolerante a falhas. Erros nessa composição são registrados e não impedem a inicialização do app legado.
