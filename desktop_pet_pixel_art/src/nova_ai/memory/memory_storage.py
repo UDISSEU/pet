@@ -39,9 +39,13 @@ class MemoryStorage:
             Path.home() / ".config" / "desktop_pet" / "nova_memory.sqlite3"
         )
         self.corrupt_backup_path = None
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.path.is_symlink():
             raise MemoryStorageError("O banco de memória não pode ser um link simbólico")
+        if self.path.parent.exists() and self.path.parent.is_symlink():
+            raise MemoryStorageError("O diretório do banco de memória não pode ser um link simbólico")
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if self.path.parent.is_symlink():
+            raise MemoryStorageError("O diretório do banco de memória não pode ser um link simbólico")
         self._create_secure_file()
         self._prepare_database()
 

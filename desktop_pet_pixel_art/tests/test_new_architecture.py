@@ -158,6 +158,29 @@ class ArchitectureTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 manager.revoke("skill", "unknown.action")
 
+    def test_permission_and_notification_storage_reject_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "real_store"
+            target.mkdir()
+
+            linked_dir = root / "linked_dir"
+            linked_dir.symlink_to(target, target_is_directory=True)
+
+            with self.assertRaises(OSError):
+                PermissionManager(linked_dir / "permissions.json")
+            with self.assertRaises(OSError):
+                NotificationManager(linked_dir / "notifications.json")
+
+            file_target = root / "target.json"
+            file_target.write_text("{}", encoding="utf-8")
+            linked_file = root / "linked.json"
+            linked_file.symlink_to(file_target)
+            with self.assertRaises(OSError):
+                PermissionManager(linked_file)
+            with self.assertRaises(OSError):
+                NotificationManager(linked_file)
+
     def test_permission_read_failure_blocks_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "permissions.json"

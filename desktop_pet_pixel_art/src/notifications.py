@@ -53,7 +53,14 @@ class NotificationManager:
         self._last_created = {}
         self._lock = threading.RLock()
         self.items = []
+        self._ensure_safe_path()
         self._load()
+
+    def _ensure_safe_path(self):
+        if self.path.is_symlink():
+            raise OSError("O arquivo de notificações não pode ser um link simbólico")
+        if self.path.parent.exists() and self.path.parent.is_symlink():
+            raise OSError("O diretório de notificações não pode ser um link simbólico")
 
     def _load(self):
         try:
@@ -180,7 +187,12 @@ class NotificationManager:
         return sum(not item.read and not item.dismissed for item in self.items)
 
     def _save(self):
+        self._ensure_safe_path()
+        if self.path.parent.exists() and self.path.parent.is_symlink():
+            raise OSError("O diretório de notificações não pode ser um link simbólico")
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.parent.is_symlink():
+            raise OSError("O diretório de notificações não pode ser um link simbólico")
         fd, name = tempfile.mkstemp(prefix=".notifications-", dir=self.path.parent)
         try:
             os.fchmod(fd, 0o600)

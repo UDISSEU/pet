@@ -61,7 +61,14 @@ class PermissionManager:
         self._lock = threading.RLock()
         self._grants = {}
         self._history = []
+        self._ensure_safe_path()
         self._load()
+
+    def _ensure_safe_path(self):
+        if self.path.is_symlink():
+            raise OSError("O arquivo de permissões não pode ser um link simbólico")
+        if self.path.parent.exists() and self.path.parent.is_symlink():
+            raise OSError("O diretório de permissões não pode ser um link simbólico")
 
     def _load(self):
         try:
@@ -158,9 +165,14 @@ class PermissionManager:
         return True
 
     def _save(self):
+        self._ensure_safe_path()
         if not may_replace(self.path):
             raise OSError(f"Gravação bloqueada para preservar {self.path.name}.")
+        if self.path.parent.exists() and self.path.parent.is_symlink():
+            raise OSError("O diretório de permissões não pode ser um link simbólico")
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.parent.is_symlink():
+            raise OSError("O diretório de permissões não pode ser um link simbólico")
         fd, name = tempfile.mkstemp(prefix=".permissions-", dir=self.path.parent)
         try:
             os.fchmod(fd, 0o600)
