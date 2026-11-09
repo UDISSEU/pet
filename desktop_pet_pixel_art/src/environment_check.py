@@ -211,7 +211,7 @@ def _check_existing_database(home):
             if integrity is None or integrity[0] != "ok":
                 return "corrupt"
             if application_id != APPLICATION_ID or schema_version not in (
-                0, 1, SCHEMA_VERSION,
+                0, 1, 2, 3, SCHEMA_VERSION,
             ):
                 return "unrecognized"
             return "ready"

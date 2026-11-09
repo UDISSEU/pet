@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 if str(SRC) not in sys.path:
@@ -27,6 +28,7 @@ from nova_ai.memory.errors import (
     ConsentRequiredError,
     DuplicateMemoryError,
     MemoryNotFoundError,
+    MemoryStorageError,
     SensitiveInformationError,
 )
 
@@ -45,13 +47,15 @@ class MemorySystemTests(unittest.TestCase):
         storage = self.manager.storage
         user = storage.ensure_user("profile-alpha", name="Alice")
         project_id = storage.create_project(
-            user["profile_id"], "Nova IA", "Ajustes e memória local.", status="active"
+            user["profile_id"], "Nova IA", "Ajustes e memória local.", status="active",
+            consent_granted=True,
         )
         conversation_id = storage.create_conversation(
-            user["profile_id"], "Sessão 1", summary="Resumo inicial"
+            user["profile_id"], "Sessão 1", summary="Resumo inicial", consent_granted=True
         )
         message_id = storage.add_message(
-            conversation_id, user["profile_id"], "user", "Quero preferências discretas."
+            conversation_id, user["profile_id"], "user", "Quero preferências discretas.",
+            consent_granted=True,
         )
         memory_id = storage.create_memory(
             user["profile_id"], kind="preference", category="communication",
@@ -61,12 +65,132 @@ class MemorySystemTests(unittest.TestCase):
             conversation_id=conversation_id,
         )
         self.assertEqual(storage.get_user(user["profile_id"])["name"], "Alice")
-        self.assertEqual(storage.get_message(message_id)["role"], "user")
-        self.assertEqual(storage.get_memory(memory_id)["category"], "communication")
+        self.assertEqual(
+            storage.get_message(message_id, user_id=user["profile_id"])["role"], "user"
+        )
+        self.assertEqual(
+            storage.get_memory(memory_id, user_id=user["profile_id"])["category"],
+            "communication",
+        )
         self.assertEqual(storage.list_conversations(user["profile_id"])[0]["title"], "Sessão 1")
         self.assertEqual(storage.list_projects(user["profile_id"])[0]["name"], "Nova IA")
-        storage.set_preference(user["profile_id"], "communication.style", "discreet")
+        storage.set_preference(
+            user["profile_id"], "communication.style", "discreet", consent_granted=True
+        )
         self.assertTrue(storage.list_preferences(user["profile_id"]))
+
+    def test_existing_database_permissions_are_restricted_and_chmod_failure_aborts(self):
+        self.database.touch()
+        self.database.chmod(0o644)
+        MemoryStorage(self.database)
+        self.assertEqual(self.database.stat().st_mode & 0o777, 0o600)
+
+        other_database = self.root / "unsecurable.sqlite3"
+        with mock.patch("nova_ai.memory.memory_storage.os.fchmod", side_effect=PermissionError):
+            with self.assertRaises(MemoryStorageError):
+                MemoryStorage(other_database)
+        self.assertFalse(other_database.exists())
+
+    def test_sqlite_storage_rejects_file_symlink(self):
+        target = self.root / "target.sqlite3"
+        MemoryStorage(target)
+        link = self.root / "linked.sqlite3"
+        link.symlink_to(target)
+
+        with self.assertRaises(OSError):
+            MemoryStorage(link)
+
+    def test_memory_managers_are_scoped_by_user_and_allow_same_content(self):
+        storage = MemoryStorage(self.root / "shared.sqlite3")
+        ada = MemoryManager(storage, user_id="profile-ada")
+        bia = MemoryManager(storage, user_id="profile-bia")
+
+        ada_record = ada.add("profile", "Prefere respostas concisas.", consent=True)
+        bia_record = bia.add("profile", "Prefere respostas concisas.", consent=True)
+
+        self.assertNotEqual(ada_record.memory_id, bia_record.memory_id)
+        self.assertEqual([item.memory_id for item in ada.search("respostas")], [ada_record.memory_id])
+        self.assertEqual([item.memory_id for item in bia.search("respostas")], [bia_record.memory_id])
+        with self.assertRaises(MemoryNotFoundError):
+            ada.get(bia_record.memory_id)
+        scoped_backup = self.root / "ada.sqlite3"
+        ada.backup(scoped_backup)
+        with self.assertRaises(MemoryStorageError):
+            ada.restore_from(scoped_backup)
+        self.assertEqual(bia.get(bia_record.memory_id).content, bia_record.content)
+
+        exported = self.root / "ada.json"
+        ada.export_json(exported)
+        document = json.loads(exported.read_text(encoding="utf-8"))
+        self.assertEqual([row["id"] for row in document["memories"]], [ada_record.memory_id])
+
+        backed_up_users = {row["id"] for row in MemoryStorage(scoped_backup).list_users()}
+        self.assertIn("profile-ada", backed_up_users)
+        self.assertNotIn("profile-bia", backed_up_users)
+
+    def test_conversation_messages_cannot_cross_user_boundaries(self):
+        storage = self.manager.storage
+        storage.ensure_user("profile-owner")
+        storage.ensure_user("profile-other")
+        conversation_id = storage.create_conversation(
+            "profile-owner", "Privada", consent_granted=True
+        )
+
+        with self.assertRaises(MemoryNotFoundError):
+            storage.add_message(
+                conversation_id, "profile-other", "user", "invasão", consent_granted=True
+            )
+        self.assertEqual(storage.list_messages(conversation_id, user_id="profile-owner"), [])
+        with self.assertRaises(MemoryNotFoundError):
+            storage.list_messages(conversation_id, user_id="profile-other")
+        with self.assertRaises(MemoryStorageError):
+            with storage._write_connection() as connection:
+                connection.execute(
+                    "INSERT INTO messages (id, conversation_id, user_id, role, content, created_at) "
+                    "VALUES ('raw-cross-profile', ?, 'profile-other', 'user', 'blocked', '2026-01-01')",
+                    (conversation_id,),
+                )
+
+    def test_user_data_tables_require_consent_for_new_records_and_updates(self):
+        storage = self.manager.storage
+        storage.ensure_user("profile-consent")
+        for operation in (
+            lambda: storage.create_conversation("profile-consent", "sem aceite"),
+            lambda: storage.create_project("profile-consent", "sem aceite"),
+            lambda: storage.create_event("profile-consent", "test", "sem aceite"),
+            lambda: storage.record_personality_history(
+                "profile-consent", "IDLE", "sem aceite"
+            ),
+            lambda: storage.set_preference("profile-consent", "tone", "quiet"),
+        ):
+            with self.subTest(operation=operation), self.assertRaises(ConsentRequiredError):
+                operation()
+
+        saved = self.manager.add(
+            "profile", "Registro com consentimento explícito.", consent=True
+        )
+        with self.assertRaises(ConsentRequiredError):
+            storage.update_memory(saved.memory_id, content="Alteração sem aceite")
+
+    def test_structured_memory_requires_explicit_true_consent_by_default(self):
+        with self.assertRaises(ConsentRequiredError):
+            self.manager.storage.create_memory(
+                "legacy", kind="semantic", content="Sem consentimento."
+            )
+        with self.assertRaises(ConsentRequiredError):
+            self.manager.storage.create_memory(
+                "legacy", kind="semantic", content="Consentimento truthy.",
+                consent_granted="yes",
+            )
+        with self.assertRaises(MemoryStorageError):
+            with self.manager.storage._write_connection() as connection:
+                connection.execute(
+                    "INSERT INTO memories (id, kind, content, normalized_content, source, "
+                    "created_at, updated_at, confidence, relevance, consent_granted, "
+                    "provenance, user_id) VALUES ('raw-no-consent', 'semantic', 'blocked', "
+                    "'blocked', 'test', '2026-01-01', '2026-01-01', 1, 1, 0, "
+                    "'user_provided', 'legacy')"
+                )
 
     def test_consent_is_required_and_preference_is_not_saved_without_it(self):
         preferences = PreferenceMemory(self.manager)
@@ -180,6 +304,20 @@ class MemorySystemTests(unittest.TestCase):
         self.assertEqual(record.provenance, "user_provided")
         self.assertIsNone(record.expires_at)
         self.assertEqual(migrated.add("project", "Projeto X", consent=True).kind.value, "project")
+
+    def test_schema_v3_is_migrated_to_user_scoped_constraints(self):
+        database = self.root / "legacy-v3.sqlite3"
+        manager = MemoryManager(MemoryStorage(database))
+        record = manager.add("semantic", "Registro legado da Nova.", consent=True)
+        with sqlite3.connect(database) as connection:
+            connection.execute("PRAGMA user_version = 3")
+
+        migrated = MemoryStorage(database)
+        self.assertEqual(migrated.health_snapshot()["user_version"], 4)
+        self.assertEqual(
+            migrated.get_memory(record.memory_id, user_id="legacy")["content"],
+            record.content,
+        )
 
     def test_all_memory_categories_are_supported_without_executing_procedures(self):
         episodic = EpisodicMemory(self.manager).record_event(
@@ -357,7 +495,7 @@ assert not any(name == 'providers' or name.startswith('providers.') for name in 
         self.assertEqual(reopened.get(record.memory_id).kind.value, "semantic")
 
         snapshot = reopened.health_snapshot()
-        self.assertEqual(snapshot["schema_version"], 3)
+        self.assertEqual(snapshot["schema_version"], 4)
         self.assertGreaterEqual(snapshot["database_size_bytes"], 1)
         self.assertIn("memories", snapshot["tables"])
 

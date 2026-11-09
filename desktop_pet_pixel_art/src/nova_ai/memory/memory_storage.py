@@ -20,7 +20,7 @@ from .errors import (
     MemoryStorageError,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 APPLICATION_ID = 0x4E4F5641  # ASCII "NOVA"
 _MEMORY_KINDS = "'episodic', 'semantic', 'procedural', 'preference', 'profile', 'project', 'conversation', 'learning'"
 
@@ -49,32 +49,44 @@ class MemoryStorage:
         self._prepare_database()
 
     def _create_secure_file(self):
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        created = False
+        descriptor = None
         try:
-            descriptor = os.open(self.path, flags, 0o600)
-        except FileExistsError:
-            return
-        except OSError as exc:
-            raise MemoryStorageError(
-                "Não foi possível criar o arquivo privado de memória", cause=exc
-            ) from exc
-        else:
-            os.close(descriptor)
             try:
-                os.chmod(self.path, 0o600)
-            except OSError:
-                pass
+                descriptor = os.open(
+                    self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR | nofollow, 0o600
+                )
+                created = True
+            except FileExistsError:
+                descriptor = os.open(self.path, os.O_RDWR | nofollow)
+            file_stat = os.fstat(descriptor)
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise OSError("O banco de memória precisa ser um arquivo regular")
+            os.fchmod(descriptor, 0o600)
+            if stat.S_IMODE(os.fstat(descriptor).st_mode) != 0o600:
+                raise OSError("Não foi possível restringir as permissões do banco")
+        except FileExistsError:
+            raise MemoryStorageError("Não foi possível abrir o arquivo privado de memória")
+        except OSError as exc:
+            if created:
+                try:
+                    self.path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise MemoryStorageError(
+                "Não foi possível proteger o arquivo privado de memória", cause=exc
+            ) from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
 
     def _connect(self, *, read_only=False):
-        if read_only:
-            path = validate_storage_path(self.path, label="banco de memória")
-            connection = sqlite3.connect(
-                f"{path.as_uri()}?mode=ro", uri=True, timeout=2.0
-            )
-        else:
-            connection = sqlite3.connect(str(self.path), timeout=2.0)
+        path = validate_storage_path(self.path, label="banco de memória")
+        mode = "ro" if read_only else "rw"
+        connection = sqlite3.connect(
+            f"{path.as_uri()}?mode={mode}&nofollow=1", uri=True, timeout=2.0
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 2000")
@@ -95,7 +107,7 @@ class MemoryStorage:
                     if check != "ok":
                         raise sqlite3.DatabaseError("integrity check failed")
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in (0, 1, 2, SCHEMA_VERSION):
+                    if version not in (0, 1, 2, 3, SCHEMA_VERSION):
                         raise MemoryStorageError("Versão do banco de memória não suportada")
                     application_id = connection.execute(
                         "PRAGMA application_id"
@@ -114,10 +126,13 @@ class MemoryStorage:
                     if version in (1, 2):
                         try:
                             self._migrate_v1_v3(connection, version)
+                            version = 3
                         except sqlite3.DatabaseError as exc:
                             raise MemoryStorageError(
                                 "Não foi possível migrar o banco de memória", cause=exc
                             ) from exc
+                    if version == 3:
+                        self._migrate_v3_v4(connection)
             except MemoryStorageError:
                 raise
             except sqlite3.DatabaseError as exc:
@@ -134,10 +149,6 @@ class MemoryStorage:
                 connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 connection.commit()
-            try:
-                os.chmod(self.path, 0o600)
-            except OSError:
-                pass
         except (sqlite3.DatabaseError, OSError) as exc:
             raise MemoryStorageError("Não foi possível inicializar o banco de memória", cause=exc) from exc
 
@@ -161,18 +172,21 @@ class MemoryStorage:
                 summary TEXT,
                 status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived','deleted')),
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                UNIQUE(id, user_id)
             )"""
         )
         connection.execute(
             """CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL,
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
                 content TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                metadata TEXT
+                metadata TEXT,
+                FOREIGN KEY(conversation_id, user_id)
+                    REFERENCES conversations(id, user_id) ON DELETE CASCADE
             )"""
         )
         connection.execute(
@@ -197,7 +211,8 @@ class MemoryStorage:
                 priority INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                due_at TEXT
+                due_at TEXT,
+                UNIQUE(id, user_id)
             )"""
         )
         connection.execute(
@@ -247,18 +262,22 @@ class MemoryStorage:
                 updated_at TEXT NOT NULL,
                 confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
                 relevance REAL NOT NULL CHECK(relevance BETWEEN 0 AND 1),
-                consent_granted INTEGER NOT NULL CHECK(consent_granted IN (0, 1)),
+                consent_granted INTEGER NOT NULL CHECK(consent_granted = 1),
                 provenance TEXT NOT NULL CHECK(provenance IN (
                     'user_provided', 'inference', 'uncertain', 'system_observation'
                 )),
                 expires_at TEXT,
-                user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-                conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                conversation_id TEXT,
+                project_id TEXT,
                 category TEXT NOT NULL DEFAULT 'general',
                 priority INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
-                UNIQUE(kind, normalized_content)
+                UNIQUE(user_id, kind, normalized_content),
+                FOREIGN KEY(conversation_id, user_id)
+                    REFERENCES conversations(id, user_id) ON DELETE CASCADE,
+                FOREIGN KEY(project_id, user_id)
+                    REFERENCES projects(id, user_id) ON DELETE CASCADE
             )"""
         )
         for column_name, definition in (
@@ -376,6 +395,112 @@ class MemoryStorage:
             if column_name not in columns:
                 connection.execute(f"ALTER TABLE memories ADD COLUMN {column_name} {definition}")
         connection.execute("UPDATE memories SET user_id = 'legacy', category = 'general', priority = 0, is_active = 1 WHERE user_id IS NULL")
+        connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+
+    def _migrate_v3_v4(self, connection):
+        connection.execute("BEGIN IMMEDIATE")
+        now = _utc_now()
+        connection.execute(
+            "INSERT OR IGNORE INTO users (id, profile_id, name, created_at, updated_at, access_level) "
+            "VALUES ('legacy', 'legacy', 'Perfil principal', ?, ?, 'admin')",
+            (now, now),
+        )
+        connection.execute(
+            "UPDATE memories SET user_id = 'legacy' WHERE user_id IS NULL"
+        )
+        connection.execute(
+            "UPDATE messages SET user_id = (SELECT user_id FROM conversations "
+            "WHERE conversations.id = messages.conversation_id) "
+            "WHERE EXISTS (SELECT 1 FROM conversations "
+            "WHERE conversations.id = messages.conversation_id) "
+            "AND user_id != (SELECT user_id FROM conversations "
+            "WHERE conversations.id = messages.conversation_id)"
+        )
+        connection.execute(
+            "UPDATE memories SET conversation_id = NULL WHERE conversation_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM conversations WHERE conversations.id = memories.conversation_id "
+            "AND conversations.user_id = memories.user_id)"
+        )
+        connection.execute(
+            "UPDATE memories SET project_id = NULL WHERE project_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM projects WHERE projects.id = memories.project_id "
+            "AND projects.user_id = memories.user_id)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS conversations_id_user "
+            "ON conversations(id, user_id)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS projects_id_user ON projects(id, user_id)"
+        )
+        if connection.execute(
+            "SELECT 1 FROM memories WHERE consent_granted != 1 LIMIT 1"
+        ).fetchone():
+            raise MemoryStorageError(
+                "A migração encontrou memórias sem consentimento explícito; "
+                "o banco original foi preservado sem alterações"
+            )
+
+        connection.execute("ALTER TABLE messages RENAME TO messages_v3")
+        connection.execute(
+            """CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata TEXT,
+                FOREIGN KEY(conversation_id, user_id)
+                    REFERENCES conversations(id, user_id) ON DELETE CASCADE
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO messages SELECT * FROM messages_v3"
+        )
+        connection.execute("DROP TABLE messages_v3")
+
+        connection.execute("ALTER TABLE memories RENAME TO memories_v3")
+        connection.execute(
+            f"""CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK(kind IN ({_MEMORY_KINDS})),
+                content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 8000),
+                normalized_content TEXT NOT NULL,
+                source TEXT NOT NULL CHECK(length(source) BETWEEN 1 AND 128),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+                relevance REAL NOT NULL CHECK(relevance BETWEEN 0 AND 1),
+                consent_granted INTEGER NOT NULL CHECK(consent_granted = 1),
+                provenance TEXT NOT NULL CHECK(provenance IN (
+                    'user_provided', 'inference', 'uncertain', 'system_observation'
+                )),
+                expires_at TEXT,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                conversation_id TEXT,
+                project_id TEXT,
+                category TEXT NOT NULL DEFAULT 'general',
+                priority INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+                UNIQUE(user_id, kind, normalized_content),
+                FOREIGN KEY(conversation_id, user_id)
+                    REFERENCES conversations(id, user_id) ON DELETE CASCADE,
+                FOREIGN KEY(project_id, user_id)
+                    REFERENCES projects(id, user_id) ON DELETE CASCADE
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO memories (
+                id, kind, content, normalized_content, source, created_at, updated_at,
+                confidence, relevance, consent_granted, provenance, expires_at, user_id,
+                conversation_id, project_id, category, priority, is_active
+            ) SELECT id, kind, content, normalized_content, source, created_at, updated_at,
+                confidence, relevance, consent_granted, provenance, expires_at, user_id,
+                conversation_id, project_id, category, priority, is_active FROM memories_v3"""
+        )
+        connection.execute("DROP TABLE memories_v3")
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         connection.commit()
 
@@ -452,8 +577,7 @@ class MemoryStorage:
                 (user_id, user_id),
             ).fetchone()
         if row is None:
-            self.ensure_user(user_id, name=user_id)
-            return user_id
+            raise MemoryNotFoundError("Perfil não encontrado")
         return row[0]
 
     def ensure_user(self, profile_id, *, name="Perfil", metadata=None):
@@ -497,7 +621,69 @@ class MemoryStorage:
             ).fetchall()
         return [self._record(row) for row in rows]
 
-    def create_conversation(self, user_id, title, *, summary=None, status="active"):
+    def adopt_legacy_profile(self, profile_id, *, name):
+        if not isinstance(profile_id, str) or not profile_id or profile_id == "legacy":
+            raise ValueError("profile_id inválido para adoção")
+        with self._read_connection() as connection:
+            other_users = connection.execute(
+                "SELECT id FROM users WHERE id NOT IN ('legacy', ?) LIMIT 1",
+                (profile_id,),
+            ).fetchone()
+        if other_users is not None:
+            return False
+        profile = self.ensure_user(profile_id, name=name)
+        tables = (
+            "conversations", "messages", "memories", "projects", "preferences",
+            "events", "personality_history", "permissions",
+        )
+        with self._write_connection() as connection:
+            other_users = connection.execute(
+                "SELECT id FROM users WHERE id NOT IN ('legacy', ?) LIMIT 1",
+                (profile["id"],),
+            ).fetchone()
+            if other_users is not None:
+                return False
+            profile_has_data = any(
+                connection.execute(
+                    f"SELECT 1 FROM {table} WHERE user_id = ? LIMIT 1", (profile["id"],)
+                ).fetchone()
+                for table in tables
+            )
+            if profile_has_data:
+                return False
+            legacy_exists = connection.execute(
+                "SELECT 1 FROM users WHERE id = 'legacy'"
+            ).fetchone()
+            if legacy_exists is None:
+                return True
+            connection.execute("PRAGMA defer_foreign_keys = ON")
+            for table in tables:
+                connection.execute(
+                    f"UPDATE {table} SET user_id = ? WHERE user_id = 'legacy'",
+                    (profile["id"],),
+                )
+            connection.execute("DELETE FROM users WHERE id = 'legacy'")
+        return True
+
+    def has_other_user_data(self, user_id):
+        user_key = self._resolve_user_id(user_id)
+        tables = (
+            "conversations", "messages", "memories", "projects", "preferences",
+            "events", "personality_history", "permissions",
+        )
+        with self._read_connection() as connection:
+            for table in tables:
+                if connection.execute(
+                    f"SELECT 1 FROM {table} WHERE user_id != ? LIMIT 1", (user_key,)
+                ).fetchone():
+                    return True
+        return False
+
+    def create_conversation(
+        self, user_id, title, *, summary=None, status="active", consent_granted=False
+    ):
+        if consent_granted is not True:
+            raise ConsentRequiredError("A gravação de conversas exige consentimento explícito")
         user_key = self._resolve_user_id(user_id)
         conversation_id = uuid.uuid4().hex
         now = _utc_now()
@@ -508,30 +694,41 @@ class MemoryStorage:
             )
         return conversation_id
 
-    def get_conversation(self, conversation_id):
+    def get_conversation(self, conversation_id, *, user_id="legacy"):
+        user_key = self._resolve_user_id(user_id)
         with self._read_connection() as connection:
-            row = connection.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_key),
+            ).fetchone()
         if row is None:
             raise MemoryNotFoundError("Conversa não encontrada")
         return self._record(row)
 
-    def list_conversations(self, user_id=None):
-        query = "SELECT * FROM conversations"
-        params = []
-        if user_id is not None:
-            query += " WHERE user_id = ?"
-            params.append(self._resolve_user_id(user_id))
+    def list_conversations(self, user_id="legacy"):
+        query = "SELECT * FROM conversations WHERE user_id = ?"
+        params = [self._resolve_user_id(user_id)]
         query += " ORDER BY updated_at DESC"
         with self._read_connection() as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._record(row) for row in rows]
 
-    def add_message(self, conversation_id, user_id, role, content, *, metadata=None):
-        self.get_conversation(conversation_id)
+    def add_message(
+        self, conversation_id, user_id, role, content, *, metadata=None,
+        consent_granted=False,
+    ):
+        if consent_granted is not True:
+            raise ConsentRequiredError("A gravação de mensagens exige consentimento explícito")
         user_key = self._resolve_user_id(user_id)
         message_id = uuid.uuid4().hex
         now = _utc_now()
         with self._write_connection() as connection:
+            conversation = connection.execute(
+                "SELECT id FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, user_key),
+            ).fetchone()
+            if conversation is None:
+                raise MemoryNotFoundError("Conversa não encontrada para este perfil")
             connection.execute(
                 "INSERT INTO messages (id, conversation_id, user_id, role, content, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (message_id, conversation_id, user_key, role, content, now, json.dumps(metadata) if metadata is not None else None),
@@ -542,27 +739,35 @@ class MemoryStorage:
             )
         return message_id
 
-    def get_message(self, message_id):
+    def get_message(self, message_id, *, user_id="legacy"):
+        user_key = self._resolve_user_id(user_id)
         with self._read_connection() as connection:
-            row = connection.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM messages WHERE id = ? AND user_id = ?",
+                (message_id, user_key),
+            ).fetchone()
         if row is None:
             raise MemoryNotFoundError("Mensagem não encontrada")
         return self._record(row)
 
-    def list_messages(self, conversation_id, *, limit=100):
-        self.get_conversation(conversation_id)
+    def list_messages(self, conversation_id, *, user_id="legacy", limit=100):
+        user_key = self._resolve_user_id(user_id)
+        self.get_conversation(conversation_id, user_id=user_key)
         with self._read_connection() as connection:
             rows = connection.execute(
-                "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?",
-                (conversation_id, limit),
+                "SELECT * FROM messages WHERE conversation_id = ? AND user_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (conversation_id, user_key, limit),
             ).fetchall()
         return [self._record(row) for row in rows]
 
     def create_memory(
         self, user_id, *, kind, category="general", content, source="user",
-        confidence=0.8, relevance=0.8, consent_granted=True, provenance="user_provided",
+        confidence=0.8, relevance=0.8, consent_granted=False, provenance="user_provided",
         project_id=None, conversation_id=None, expires_at=None, memory_id=None,
     ):
+        if consent_granted is not True:
+            raise ConsentRequiredError("A gravação exige consentimento explícito")
         user_key = self._resolve_user_id(user_id)
         normalized_kind = self._coerce_kind(kind)
         record = {
@@ -572,7 +777,7 @@ class MemoryStorage:
             "source": str(source),
             "confidence": float(confidence),
             "relevance": float(relevance),
-            "consent_granted": bool(consent_granted),
+            "consent_granted": True,
             "provenance": provenance,
             "expires_at": expires_at,
             "user_id": user_key,
@@ -582,8 +787,6 @@ class MemoryStorage:
             "priority": 0,
             "is_active": 1,
         }
-        if record["consent_granted"] is not True:
-            raise ConsentRequiredError("A gravação exige consentimento explícito")
         now = _utc_now()
         with self._write_connection() as connection:
             connection.execute(
@@ -602,16 +805,24 @@ class MemoryStorage:
             )
         return record["id"]
 
-    def get_memory(self, memory_id):
+    def get_memory(self, memory_id, *, user_id="legacy"):
+        user_key = self._resolve_user_id(user_id)
         with self._read_connection() as connection:
-            row = connection.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM memories WHERE id = ? AND user_id = ?",
+                (memory_id, user_key),
+            ).fetchone()
         if row is None:
             raise MemoryNotFoundError("Memória não encontrada")
         return self._record(row)
 
-    def update_memory(self, memory_id, *, content=None, category=None, project_id=None, conversation_id=None,
-                      relevance=None, confidence=None, expires_at=None, is_active=None, source=None):
-        current = self.get_memory(memory_id)
+    def update_memory(self, memory_id, *, user_id="legacy", content=None, category=None, project_id=None, conversation_id=None,
+                      relevance=None, confidence=None, expires_at=None, is_active=None, source=None,
+                      consent_granted=False):
+        if consent_granted is not True:
+            raise ConsentRequiredError("A atualização exige consentimento explícito")
+        user_key = self._resolve_user_id(user_id)
+        current = self.get_memory(memory_id, user_id=user_key)
         now = _utc_now()
         next_content = current["content"] if content is None else str(content)
         next_source = current["source"] if source is None else str(source)
@@ -626,23 +837,20 @@ class MemoryStorage:
             cursor = connection.execute(
                 """UPDATE memories SET content = ?, normalized_content = ?, source = ?, updated_at = ?,
                 confidence = ?, relevance = ?, expires_at = ?, project_id = ?, conversation_id = ?,
-                category = ?, is_active = ? WHERE id = ?""",
+                category = ?, is_active = ? WHERE id = ? AND user_id = ?""",
                 (
                     next_content, _normalize(next_content), next_source, now, next_confidence,
                     next_relevance, next_expires, next_project, next_conversation, next_category,
-                    next_active, memory_id,
+                    next_active, memory_id, user_key,
                 ),
             )
             if cursor.rowcount == 0:
                 raise MemoryNotFoundError("Memória não encontrada")
-        return self.get_memory(memory_id)
+        return self.get_memory(memory_id, user_id=user_key)
 
-    def list_memories(self, user_id=None, *, kind=None, category=None, limit=50, include_expired=False):
-        query = "SELECT * FROM memories WHERE 1 = 1"
-        params = []
-        if user_id is not None:
-            query += " AND user_id = ?"
-            params.append(self._resolve_user_id(user_id))
+    def list_memories(self, user_id="legacy", *, kind=None, category=None, limit=50, include_expired=False):
+        query = "SELECT * FROM memories WHERE user_id = ?"
+        params = [self._resolve_user_id(user_id)]
         if kind is not None:
             query += " AND kind = ?"
             params.append(self._coerce_kind(kind))
@@ -658,14 +866,20 @@ class MemoryStorage:
             rows = connection.execute(query, params).fetchall()
         return [self._record(row) for row in rows]
 
-    def delete_memory(self, memory_id):
+    def delete_memory(self, memory_id, *, user_id="legacy"):
+        user_key = self._resolve_user_id(user_id)
         with self._write_connection() as connection:
-            cursor = connection.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            cursor = connection.execute(
+                "DELETE FROM memories WHERE id = ? AND user_id = ?", (memory_id, user_key)
+            )
             if cursor.rowcount == 0:
                 raise MemoryNotFoundError("Memória não encontrada")
         return True
 
-    def create_project(self, user_id, name, description="", *, status="active", priority=0, due_at=None):
+    def create_project(self, user_id, name, description="", *, status="active", priority=0,
+                       due_at=None, consent_granted=False):
+        if consent_granted is not True:
+            raise ConsentRequiredError("A gravação de projetos exige consentimento explícito")
         user_key = self._resolve_user_id(user_id)
         project_id = uuid.uuid4().hex
         now = _utc_now()
@@ -676,18 +890,17 @@ class MemoryStorage:
             )
         return project_id
 
-    def list_projects(self, user_id=None):
-        query = "SELECT * FROM projects"
-        params = []
-        if user_id is not None:
-            query += " WHERE user_id = ?"
-            params.append(self._resolve_user_id(user_id))
+    def list_projects(self, user_id="legacy"):
+        query = "SELECT * FROM projects WHERE user_id = ?"
+        params = [self._resolve_user_id(user_id)]
         query += " ORDER BY updated_at DESC"
         with self._read_connection() as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._record(row) for row in rows]
 
-    def set_preference(self, user_id, key, value, *, category="general"):
+    def set_preference(self, user_id, key, value, *, category="general", consent_granted=False):
+        if consent_granted is not True:
+            raise ConsentRequiredError("A gravação de preferências exige consentimento explícito")
         user_key = self._resolve_user_id(user_id)
         now = _utc_now()
         with self._write_connection() as connection:
@@ -708,18 +921,18 @@ class MemoryStorage:
                 )
         return self.list_preferences(user_key)
 
-    def list_preferences(self, user_id=None):
-        query = "SELECT * FROM preferences"
-        params = []
-        if user_id is not None:
-            query += " WHERE user_id = ?"
-            params.append(self._resolve_user_id(user_id))
+    def list_preferences(self, user_id="legacy"):
+        query = "SELECT * FROM preferences WHERE user_id = ?"
+        params = [self._resolve_user_id(user_id)]
         query += " ORDER BY updated_at DESC"
         with self._read_connection() as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._record(row) for row in rows]
 
-    def create_event(self, user_id, event_type, title, description="", *, occurred_at=None, relevant=True, metadata=None):
+    def create_event(self, user_id, event_type, title, description="", *, occurred_at=None,
+                     relevant=True, metadata=None, consent_granted=False):
+        if consent_granted is not True:
+            raise ConsentRequiredError("A gravação de eventos exige consentimento explícito")
         user_key = self._resolve_user_id(user_id)
         event_id = uuid.uuid4().hex
         now = _utc_now()
@@ -730,19 +943,19 @@ class MemoryStorage:
             )
         return event_id
 
-    def list_events(self, user_id=None, *, limit=50):
-        query = "SELECT * FROM events"
-        params = []
-        if user_id is not None:
-            query += " WHERE user_id = ?"
-            params.append(self._resolve_user_id(user_id))
+    def list_events(self, user_id="legacy", *, limit=50):
+        query = "SELECT * FROM events WHERE user_id = ?"
+        params = [self._resolve_user_id(user_id)]
         query += " ORDER BY occurred_at DESC LIMIT ?"
         params.append(limit)
         with self._read_connection() as connection:
             rows = connection.execute(query, params).fetchall()
         return [self._record(row) for row in rows]
 
-    def record_personality_history(self, user_id, behavior, summary, *, source="system"):
+    def record_personality_history(self, user_id, behavior, summary, *, source="system",
+                                   consent_granted=False):
+        if consent_granted is not True:
+            raise ConsentRequiredError("A gravação do histórico exige consentimento explícito")
         user_key = self._resolve_user_id(user_id)
         history_id = uuid.uuid4().hex
         now = _utc_now()
@@ -753,12 +966,9 @@ class MemoryStorage:
             )
         return history_id
 
-    def list_personality_history(self, user_id=None, *, limit=20):
-        query = "SELECT * FROM personality_history"
-        params = []
-        if user_id is not None:
-            query += " WHERE user_id = ?"
-            params.append(self._resolve_user_id(user_id))
+    def list_personality_history(self, user_id="legacy", *, limit=20):
+        query = "SELECT * FROM personality_history WHERE user_id = ?"
+        params = [self._resolve_user_id(user_id)]
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
         with self._read_connection() as connection:
@@ -786,12 +996,9 @@ class MemoryStorage:
                 )
         return self.list_permissions(user_key)
 
-    def list_permissions(self, user_id=None):
-        query = "SELECT * FROM permissions"
-        params = []
-        if user_id is not None:
-            query += " WHERE user_id = ?"
-            params.append(self._resolve_user_id(user_id))
+    def list_permissions(self, user_id="legacy"):
+        query = "SELECT * FROM permissions WHERE user_id = ?"
+        params = [self._resolve_user_id(user_id)]
         query += " ORDER BY updated_at DESC"
         with self._read_connection() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -800,6 +1007,7 @@ class MemoryStorage:
     def insert(self, record):
         if record.get("consent_granted") is not True:
             raise ConsentRequiredError("A gravação exige consentimento explícito")
+        user_key = self._resolve_user_id(record.get("user_id", "legacy"))
         now = _utc_now()
         with self._write_connection() as connection:
             connection.execute(
@@ -812,27 +1020,29 @@ class MemoryStorage:
                     record["id"], record["kind"], record["content"],
                     _normalize(record["content"]), record["source"], now, now,
                     record["confidence"], record["relevance"],
-                    1 if record.get("consent_granted") else 0, record["provenance"],
-                    record.get("expires_at"), record.get("user_id", "legacy"),
+                    1, record["provenance"], record.get("expires_at"), user_key,
                     record.get("conversation_id"), record.get("project_id"),
                     record.get("category", "general"), record.get("priority", 0),
                     1 if record.get("is_active", 1) else 0,
                 ),
             )
-        return self.get(record["id"])
+        return self.get(record["id"], user_id=user_key)
 
-    def get(self, memory_id):
+    def get(self, memory_id, *, user_id="legacy"):
+        user_key = self._resolve_user_id(user_id)
         with self._read_connection() as connection:
             row = connection.execute(
-                "SELECT * FROM memories WHERE id = ?", (memory_id,)
+                "SELECT * FROM memories WHERE id = ? AND user_id = ?",
+                (memory_id, user_key),
             ).fetchone()
         if row is None:
             raise MemoryNotFoundError("Memória não encontrada")
         return self._record(row)
 
-    def find_duplicate(self, kind, content, *, exclude_id=None):
-        sql = "SELECT * FROM memories WHERE kind = ? AND normalized_content = ?"
-        values = [kind, _normalize(content)]
+    def find_duplicate(self, kind, content, *, user_id="legacy", exclude_id=None):
+        user_key = self._resolve_user_id(user_id)
+        sql = "SELECT * FROM memories WHERE user_id = ? AND kind = ? AND normalized_content = ?"
+        values = [user_key, kind, _normalize(content)]
         if exclude_id is not None:
             sql += " AND id != ?"
             values.append(exclude_id)
@@ -840,10 +1050,11 @@ class MemoryStorage:
             row = connection.execute(sql, values).fetchone()
         return self._record(row)
 
-    def search(self, *, kind=None, terms=(), limit=100):
-        sql = "SELECT * FROM memories WHERE (expires_at IS NULL OR expires_at > ?)"
+    def search(self, *, user_id="legacy", kind=None, terms=(), limit=100):
+        user_key = self._resolve_user_id(user_id)
+        sql = "SELECT * FROM memories WHERE user_id = ? AND (expires_at IS NULL OR expires_at > ?)"
         clauses = []
-        values = [_utc_now()]
+        values = [user_key, _utc_now()]
         if kind is not None:
             clauses.append("kind = ?")
             values.append(kind)
@@ -859,38 +1070,53 @@ class MemoryStorage:
             rows = connection.execute(sql, values).fetchall()
         return [self._record(row) for row in rows]
 
-    def update(self, memory_id, *, content, source, confidence, relevance, consent=False,
-               provenance=None, expires_at=None):
+    def update(self, memory_id, *, user_id="legacy", content, source, confidence,
+               relevance, consent=False, provenance=None, expires_at=None):
         if consent is not True:
             raise ConsentRequiredError("A atualização exige consentimento explícito")
+        user_key = self._resolve_user_id(user_id)
         with self._write_connection() as connection:
             cursor = connection.execute(
                 """UPDATE memories SET content = ?, normalized_content = ?, source = ?,
                     updated_at = ?, confidence = ?, relevance = ?, provenance = ?, expires_at = ?
-                    WHERE id = ?""",
+                          WHERE id = ? AND user_id = ?""",
                 (content, _normalize(content), source, _utc_now(), confidence, relevance,
-                 provenance, expires_at, memory_id),
+                      provenance, expires_at, memory_id, user_key),
             )
             if cursor.rowcount == 0:
                 raise MemoryNotFoundError("Memória não encontrada")
-        return self.get(memory_id)
+        return self.get(memory_id, user_id=user_key)
 
-    def purge_expired(self):
+    def purge_expired(self, *, user_id=None):
         now = _utc_now()
+        user_key = self._resolve_user_id(user_id) if user_id is not None else None
         with self._write_connection() as connection:
-            cursor = connection.execute(
-                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
-            )
+            if user_key is None:
+                cursor = connection.execute(
+                    "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                    (now,),
+                )
+            else:
+                cursor = connection.execute(
+                    "DELETE FROM memories WHERE user_id = ? AND expires_at IS NOT NULL "
+                    "AND expires_at <= ?",
+                    (user_key, now),
+                )
         return cursor.rowcount
 
-    def delete(self, memory_id):
+    def delete(self, memory_id, *, user_id="legacy"):
+        user_key = self._resolve_user_id(user_id)
         with self._write_connection() as connection:
-            cursor = connection.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            cursor = connection.execute(
+                "DELETE FROM memories WHERE id = ? AND user_id = ?",
+                (memory_id, user_key),
+            )
             if cursor.rowcount == 0:
                 raise MemoryNotFoundError("Memória não encontrada")
         return True
 
-    def backup_to(self, destination):
+    def backup_to(self, destination, *, user_id=None):
+        user_key = self._resolve_user_id(user_id) if user_id is not None else None
         destination = validate_storage_path(destination, label="backup de memória")
         if destination == self.path:
             raise MemoryStorageError("O destino do backup deve ser outro arquivo")
@@ -903,7 +1129,11 @@ class MemoryStorage:
             os.close(fd)
             temporary = Path(temporary_name)
             with self._read_connection() as source, closing(sqlite3.connect(str(temporary))) as target:
+                target.execute("PRAGMA foreign_keys = ON")
                 source.backup(target)
+                if user_key is not None:
+                    target.execute("BEGIN IMMEDIATE")
+                    target.execute("DELETE FROM users WHERE id != ?", (user_key,))
                 target.commit()
             os.chmod(temporary, 0o600)
             os.replace(temporary, destination)
@@ -913,7 +1143,12 @@ class MemoryStorage:
                 temporary.unlink(missing_ok=True)
             raise MemoryStorageError("Não foi possível criar o backup da memória", cause=exc) from exc
 
-    def restore_from(self, source, *, keep_backup=True):
+    def restore_from(self, source, *, user_id=None, keep_backup=True):
+        user_key = self._resolve_user_id(user_id) if user_id is not None else None
+        if user_key is not None and self.has_other_user_data(user_key):
+            raise MemoryStorageError(
+                "Restauração recusada: o arquivo atual contém dados de outro perfil"
+            )
         source = validate_storage_path(source, label="restauração do banco de memória")
         if source == self.path:
             raise MemoryStorageError("A origem da restauração deve ser outro arquivo")
@@ -929,7 +1164,7 @@ class MemoryStorage:
                 version = source_db.execute("PRAGMA user_version").fetchone()[0]
                 if integrity != "ok" or foreign_key_errors or application_id != APPLICATION_ID:
                     raise MemoryStorageError("O arquivo de restauração não é um backup válido da Nova")
-                if version not in (1, 2, SCHEMA_VERSION):
+                if version not in (1, 2, 3, SCHEMA_VERSION):
                     raise MemoryStorageError("Versão do backup não suportada")
 
             with tempfile.NamedTemporaryFile(
@@ -946,6 +1181,14 @@ class MemoryStorage:
                 candidate_db.commit()
             os.chmod(temporary, 0o600)
             candidate_storage = MemoryStorage(temporary)
+            if user_key is not None:
+                try:
+                    candidate_storage._resolve_user_id(user_key)
+                except MemoryNotFoundError:
+                    if not candidate_storage.adopt_legacy_profile(user_key, name=user_key):
+                        raise MemoryStorageError("O backup não pertence a este perfil")
+                with candidate_storage._write_connection() as connection:
+                    connection.execute("DELETE FROM users WHERE id != ?", (user_key,))
             if candidate_storage.health_snapshot()["status"] != "healthy":
                 raise MemoryStorageError("O backup não passou na verificação de integridade")
 
@@ -956,7 +1199,7 @@ class MemoryStorage:
                 backup_target = backup_dir / (
                     f"{self.path.stem}-pre-restore-{stamp}-{uuid.uuid4().hex[:8]}.sqlite3"
                 )
-                self.backup_to(backup_target)
+                self.backup_to(backup_target, user_id=user_key)
 
             os.replace(temporary, self.path)
             temporary = None
@@ -967,13 +1210,14 @@ class MemoryStorage:
                 temporary.unlink(missing_ok=True)
             raise MemoryStorageError("Não foi possível restaurar o backup da memória", cause=exc) from exc
 
-    def create_managed_backup(self, backup_dir=None, *, retain=10, max_age_days=90):
+    def create_managed_backup(self, backup_dir=None, *, retain=10, max_age_days=90,
+                              user_id=None):
         backup_dir = Path(backup_dir) if backup_dir is not None else self.path.parent / "backups"
         backup_dir = validate_storage_path(backup_dir, label="diretório de backups")
         ensure_private_directory(backup_dir, label="diretório de backups")
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         destination = backup_dir / f"{self.path.stem}-{stamp}-{uuid.uuid4().hex[:8]}.sqlite3"
-        created = self.backup_to(destination)
+        created = self.backup_to(destination, user_id=user_id)
         self.rotate_backups(backup_dir, retain=retain, max_age_days=max_age_days)
         return created
 
@@ -1025,12 +1269,14 @@ class MemoryStorage:
         candidates.sort(key=lambda item: item[1], reverse=True)
         return [path for path, _modified_at in candidates[:limit]]
 
-    def count_expired(self):
+    def count_expired(self, *, user_id=None):
         with self._read_connection() as connection:
-            return connection.execute(
-                "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?",
-                (_utc_now(),),
-            ).fetchone()[0]
+            query = "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?"
+            params = [_utc_now()]
+            if user_id is not None:
+                query += " AND user_id = ?"
+                params.append(self._resolve_user_id(user_id))
+            return connection.execute(query, params).fetchone()[0]
 
     def health_snapshot(self):
         path = self.path
@@ -1077,7 +1323,8 @@ class MemoryStorage:
         ) else "degraded"
         return data
 
-    def export_json(self, destination, *, kind=None):
+    def export_json(self, destination, *, kind=None, user_id="legacy"):
+        user_key = self._resolve_user_id(user_id)
         destination = validate_storage_path(destination, label="exportação de memória")
         ensure_private_directory(destination.parent, label="diretório da exportação de memória")
         temporary = None
@@ -1090,11 +1337,12 @@ class MemoryStorage:
                 handle.write('{\n  "format_version": 1,\n  "exported_at": ')
                 json.dump(_utc_now(), handle, ensure_ascii=False)
                 handle.write(',\n  "memories": [')
-                sql = "SELECT * FROM memories WHERE (expires_at IS NULL OR expires_at > ?)"
-                values = (_utc_now(),)
+                sql = "SELECT * FROM memories WHERE user_id = ? AND " \
+                    "(expires_at IS NULL OR expires_at > ?)"
+                values = (user_key, _utc_now())
                 if kind is not None:
                     sql += " AND kind = ?"
-                    values = (_utc_now(), kind)
+                    values = (user_key, _utc_now(), kind)
                 sql += " ORDER BY created_at, id"
                 with self._read_connection() as connection:
                     cursor = connection.execute(sql, values)

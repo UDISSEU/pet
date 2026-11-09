@@ -138,6 +138,28 @@ class UserProfileTests(unittest.TestCase):
         self.assertEqual(integration.memory.search("", limit=100), [])
         self.assertEqual(profiles.active_profile, profile)
 
+    def test_existing_profile_database_legacy_rows_are_adopted_without_crossing_profiles(self):
+        profiles = UserProfileManager(self.base_dir)
+        profile = profiles.create("Ada")
+        profile_path = profiles.memory_path(profile.profile_id)
+        old_manager = MemoryManager(MemoryStorage(profile_path))
+        old_record = old_manager.add(
+            MemoryKind.PROFILE, "A pessoa gosta de trilhas.", consent=True
+        )
+
+        integration = DesktopNovaIntegration(
+            profile_manager=profiles, profile_id=profile.profile_id
+        )
+
+        records = integration.memory.search("trilhas")
+        self.assertEqual([record.memory_id for record in records], [old_record.memory_id])
+        stored = integration.memory.storage.get_memory(
+            old_record.memory_id, user_id=profile.profile_id
+        )
+        self.assertEqual(stored["user_id"], profile.profile_id)
+        legacy_view = MemoryManager(MemoryStorage(profile_path), user_id="legacy")
+        self.assertEqual(legacy_view.search("trilhas"), [])
+
     def test_invalid_profile_ids_and_names_are_rejected(self):
         profiles = UserProfileManager(self.base_dir)
         with self.assertRaises(ValueError):

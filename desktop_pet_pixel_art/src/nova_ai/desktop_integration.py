@@ -49,9 +49,13 @@ class DesktopNovaIntegration:
 
     def _new_memory_manager(self, profile=None):
         profile = profile or self.profile
-        return MemoryManager(MemoryStorage(self.profile_manager.memory_path(
-            profile.profile_id
-        )))
+        storage = MemoryStorage(self.profile_manager.memory_path(profile.profile_id))
+        if profile.profile_id != "legacy":
+            storage.adopt_legacy_profile(profile.profile_id, name=profile.name)
+        return MemoryManager(
+            storage,
+            user_id=profile.profile_id,
+        )
 
     def _diagnose_memory(self):
         try:

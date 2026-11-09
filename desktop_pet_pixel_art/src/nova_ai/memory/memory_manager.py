@@ -54,15 +54,17 @@ def _kind(value):
 
 
 class MemoryManager:
-    def __init__(self, storage=None):
+    def __init__(self, storage=None, *, user_id="legacy"):
         self.storage = storage if storage is not None else MemoryStorage()
-        self.retrieval = MemoryRetrieval(self.storage)
+        display_name = "Perfil principal" if user_id == "legacy" else user_id
+        self.user_id = self.storage.ensure_user(user_id, name=display_name)["id"]
+        self.retrieval = MemoryRetrieval(self.storage, user_id=self.user_id)
         self._last_expiry_cleanup = 0.0
 
     def _purge_expired_if_due(self):
         now = time.monotonic()
         if now - self._last_expiry_cleanup >= 60:
-            self.storage.purge_expired()
+            self.storage.purge_expired(user_id=self.user_id)
             self._last_expiry_cleanup = now
 
     @staticmethod
@@ -108,6 +110,7 @@ class MemoryManager:
                 "consent_granted": True,
                 "provenance": provenance,
                 "expires_at": expires_at,
+                "user_id": self.user_id,
             })
         except DuplicateMemoryError:
             # Another process may have inserted the same record after our lookup.
@@ -119,12 +122,12 @@ class MemoryManager:
 
     def get(self, memory_id):
         self._purge_expired_if_due()
-        return record_from_row(self.storage.get(memory_id))
+        return record_from_row(self.storage.get(memory_id, user_id=self.user_id))
 
     def find_duplicate(self, kind, content):
         kind = _kind(kind)
         content = _clean_text(content, "content", _MAX_CONTENT_CHARS)
-        row = self.storage.find_duplicate(kind.value, content)
+        row = self.storage.find_duplicate(kind.value, content, user_id=self.user_id)
         return record_from_row(row) if row else None
 
     def search(self, query="", *, kind=None, limit=20):
@@ -172,7 +175,7 @@ class MemoryManager:
         clear_expiry=False,
     ):
         self._require_consent(consent)
-        existing = self.storage.get(memory_id)
+        existing = self.storage.get(memory_id, user_id=self.user_id)
         new_content = existing["content"] if content is None else _clean_text(
             content, "content", _MAX_CONTENT_CHARS
         )
@@ -199,13 +202,13 @@ class MemoryManager:
         else:
             new_expiry = existing["expires_at"]
         duplicate = self.storage.find_duplicate(
-            existing["kind"], new_content, exclude_id=memory_id
+            existing["kind"], new_content, user_id=self.user_id, exclude_id=memory_id
         )
         if duplicate is not None:
             from .errors import DuplicateMemoryError
             raise DuplicateMemoryError("A atualização duplicaria outra memória")
         row = self.storage.update(
-            memory_id, content=new_content, source=new_source,
+            memory_id, user_id=self.user_id, content=new_content, source=new_source,
             confidence=new_confidence, relevance=new_relevance, consent=True,
             provenance=new_provenance, expires_at=new_expiry,
         )
@@ -213,13 +216,15 @@ class MemoryManager:
 
     def delete(self, memory_id):
         # Invoking delete is itself the user's explicit request to remove data.
-        return self.storage.delete(memory_id)
+        return self.storage.delete(memory_id, user_id=self.user_id)
 
     def backup(self, destination):
-        return self.storage.backup_to(destination)
+        return self.storage.backup_to(destination, user_id=self.user_id)
 
     def restore_from(self, source, *, keep_backup=True):
-        self.storage.restore_from(source, keep_backup=keep_backup)
+        self.storage.restore_from(
+            source, user_id=self.user_id, keep_backup=keep_backup
+        )
         return self.storage.health_snapshot()
 
     def health_snapshot(self):
@@ -233,18 +238,18 @@ class MemoryManager:
             "recent_backups": [
                 str(path) for path in self.storage.list_managed_backups(backup_dir)
             ],
-            "expired_records_pending": self.storage.count_expired(),
+            "expired_records_pending": self.storage.count_expired(user_id=self.user_id),
             "backup_retention": {"count": 10, "max_age_days": 90},
         }
 
     def run_maintenance(self, *, create_backup=True, retain=10, max_age_days=90):
         if create_backup:
             backup = self.storage.create_managed_backup(
-                retain=retain, max_age_days=max_age_days
+                retain=retain, max_age_days=max_age_days, user_id=self.user_id
             )
         else:
             backup = None
-        purged = self.storage.purge_expired()
+        purged = self.storage.purge_expired(user_id=self.user_id)
         removed_backups = self.storage.rotate_backups(
             retain=retain, max_age_days=max_age_days
         )
@@ -259,4 +264,6 @@ class MemoryManager:
         if kind is not None:
             kind = _kind(kind)
             kind = kind.value
-        return self.storage.export_json(destination, kind=kind)
+        return self.storage.export_json(
+            destination, kind=kind, user_id=self.user_id
+        )

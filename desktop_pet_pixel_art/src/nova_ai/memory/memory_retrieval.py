@@ -34,8 +34,9 @@ class MemorySearchResult:
 
 
 class MemoryRetrieval:
-    def __init__(self, storage):
+    def __init__(self, storage, *, user_id="legacy"):
         self._storage = storage
+        self._user_id = user_id
 
     def search(self, query="", *, kind=None, limit=20):
         if isinstance(kind, str):
@@ -54,12 +55,14 @@ class MemoryRetrieval:
             candidates = {}
             for term in sorted(query_terms)[:8]:
                 for row in self._storage.search(
-                    kind=storage_kind, terms=[term], limit=100
+                    user_id=self._user_id, kind=storage_kind, terms=[term], limit=100
                 ):
                     candidates[row["id"]] = row
             rows = list(candidates.values())
         else:
-            rows = self._storage.search(kind=storage_kind, limit=100)
+            rows = self._storage.search(
+                user_id=self._user_id, kind=storage_kind, limit=100
+            )
         results = []
         now = datetime.now(timezone.utc)
         for row in rows:

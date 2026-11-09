@@ -44,7 +44,12 @@ class InstallationStateStore:
         self.path = Path(path) if path is not None else (
             Path.home() / ".config" / "desktop_pet" / "installation_state.json"
         )
-        validate_storage_path(self.path, label="estado da instalação")
+        try:
+            validate_storage_path(self.path, label="estado da instalação")
+        except OSError as exc:
+            raise InstallationStateError(
+                "O estado da instalação não pode usar link simbólico ou caminho inseguro"
+            ) from exc
 
     def load(self):
         if self.path.is_symlink():
