@@ -199,6 +199,35 @@ class ArchitectureTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 NotificationManager(attack_path)
 
+    def test_storage_validation_rejects_broken_links_and_nested_symlinks(self):
+        from json_persistence import validate_storage_path
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid_dir = root / "safe"
+            valid_dir.mkdir()
+            target = valid_dir / "real.json"
+            target.write_text("{}", encoding="utf-8")
+
+            broken = valid_dir / "broken-link.json"
+            broken.symlink_to(valid_dir / "missing-target.json")
+            with self.assertRaises(OSError):
+                validate_storage_path(broken)
+
+            file_link = valid_dir / "linked.json"
+            file_link.symlink_to(target)
+            with self.assertRaises(OSError):
+                validate_storage_path(file_link)
+
+            real_parent = root / "real-parent"
+            real_parent.mkdir()
+            nested_dir = real_parent / "nested"
+            nested_dir.mkdir()
+            alias = valid_dir / "alias"
+            alias.symlink_to(real_parent, target_is_directory=True)
+            with self.assertRaises(OSError):
+                validate_storage_path(alias / "nested" / "guard.json")
+
     def test_permission_read_failure_blocks_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "permissions.json"

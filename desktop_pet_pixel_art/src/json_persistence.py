@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -17,18 +18,20 @@ def _path_key(path):
 
 
 def validate_storage_path(path, *, label="arquivo"):
-    """Reject symlinks anywhere in the target path, including ancestor directories."""
+    """Reject symlinks anywhere in the target path, including broken ancestors."""
     candidate = Path(os.path.abspath(os.path.expanduser(str(path))))
-    if not candidate.name and candidate != candidate.parent:
-        raise OSError(f"O caminho de {label} está vazio")
-    seen = set()
+    if ".." in candidate.parts:
+        raise OSError(f"O caminho de {label} contém componentes inválidos")
     current = candidate
     while True:
-        key = str(current)
-        if key in seen:
-            break
-        seen.add(key)
-        if current.exists() and current.is_symlink():
+        try:
+            st = os.lstat(current)
+        except FileNotFoundError:
+            if current == current.parent:
+                break
+            current = current.parent
+            continue
+        if stat.S_ISLNK(st.st_mode):
             raise OSError(f"O {label} não pode ser um link simbólico")
         if current == current.parent:
             break
@@ -46,8 +49,8 @@ def ensure_private_directory(path, *, label="diretório"):
         raise OSError(f"O diretório de {label} não pode ser um link simbólico")
     try:
         os.chmod(directory, 0o700)
-    except OSError:
-        pass
+    except OSError as exc:
+        raise OSError(f"Não foi possível aplicar permissões de segurança ao diretório de {label}") from exc
     return directory
 
 
@@ -57,19 +60,32 @@ def atomic_json_write(path, payload, *, label="arquivo", mode=0o600):
     parent = ensure_private_directory(target.parent, label=label)
     temporary = None
     try:
+        try:
+            rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(f"Não foi possível serializar {label}") from exc
         fd, temporary_name = tempfile.mkstemp(
             prefix=f".{target.name}.", suffix=".tmp", dir=str(parent)
         )
         temporary = Path(temporary_name)
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
-        os.chmod(target, mode)
-        return target
-    except OSError:
+        try:
+            os.fchmod(fd, mode)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(rendered)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target)
+            os.chmod(target, mode)
+            temporary = None
+            return target
+        except OSError as exc:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise OSError(f"Não foi possível gravar {label} de forma segura") from exc
+    except (OSError, TypeError, ValueError) as exc:
         if temporary is not None:
             try:
                 temporary.unlink(missing_ok=True)
