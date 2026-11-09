@@ -216,6 +216,10 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
             on_open_ai=lambda: self.open_autonomy_settings("ai"),
             on_back=lambda window: self._panel_back(window),
             on_open=self._activate_panel,
+            memory_checker=(
+                self.nova_integration.memory_health
+                if self.nova_integration is not None else None
+            ),
         )
 
     def show_calendar(self):

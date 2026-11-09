@@ -62,6 +62,12 @@ class DiagnosticsGuidanceTests(unittest.TestCase):
         self.assertTrue(any("não tentará recriar nem apagar" in item for item in guidance))
         self.assertFalse(any("apague" in item.lower() or "redefina" in item.lower() for item in guidance))
 
+    def test_degraded_memory_health_recommends_preserving_backups(self):
+        guidance = diagnostic_recommendations(
+            report(), memory_health={"status": "degraded", "integrity_check": "failed"}
+        )
+        self.assertTrue(any("Preserve os backups" in item for item in guidance))
+
 
 class DiagnosticsWindowTests(unittest.TestCase):
     def test_back_button_is_visible_and_calls_navigation_callback(self):

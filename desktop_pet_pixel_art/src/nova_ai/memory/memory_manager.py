@@ -218,6 +218,43 @@ class MemoryManager:
     def backup(self, destination):
         return self.storage.backup_to(destination)
 
+    def restore_from(self, source, *, keep_backup=True):
+        self.storage.restore_from(source, keep_backup=keep_backup)
+        return self.storage.health_snapshot()
+
+    def health_snapshot(self):
+        return self.storage.health_snapshot()
+
+    def maintenance_report(self):
+        backup_dir = self.storage.path.parent / "backups"
+        return {
+            "database": self.storage.health_snapshot(),
+            "backup_dir": str(backup_dir),
+            "recent_backups": [
+                str(path) for path in self.storage.list_managed_backups(backup_dir)
+            ],
+            "expired_records_pending": self.storage.count_expired(),
+            "backup_retention": {"count": 10, "max_age_days": 90},
+        }
+
+    def run_maintenance(self, *, create_backup=True, retain=10, max_age_days=90):
+        if create_backup:
+            backup = self.storage.create_managed_backup(
+                retain=retain, max_age_days=max_age_days
+            )
+        else:
+            backup = None
+        purged = self.storage.purge_expired()
+        removed_backups = self.storage.rotate_backups(
+            retain=retain, max_age_days=max_age_days
+        )
+        return {
+            "database": self.storage.health_snapshot(),
+            "backup_created": str(backup) if backup is not None else None,
+            "backups_removed": [str(path) for path in removed_backups],
+            "expired_records_purged": purged,
+        }
+
     def export_json(self, destination, *, kind=None):
         if kind is not None:
             kind = _kind(kind)

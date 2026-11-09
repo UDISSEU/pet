@@ -109,6 +109,16 @@ class DesktopIntegrationTests(unittest.TestCase):
         self.assertFalse(self.integration.core.config.load_model_on_start)
         self.assertFalse(self.integration.core.config.start_training_on_start)
 
+    def test_memory_health_and_maintenance_are_available_to_desktop_services(self):
+        health = self.integration.memory_health()
+        self.assertEqual(health["status"], "healthy")
+        self.assertEqual(health["integrity_check"], "ok")
+
+        maintenance = self.integration.run_memory_maintenance(create_backup=True)
+        self.assertTrue(Path(maintenance["backup_created"]).is_file())
+        self.assertEqual(maintenance["expired_records_purged"], 0)
+        self.assertEqual(self.integration.memory_health()["status"], "healthy")
+
     def test_normal_conversation_is_not_classified_as_a_tool_task(self):
         self.assertFalse(self.integration.classify_task("Me conte uma curiosidade sobre o mar."))
 

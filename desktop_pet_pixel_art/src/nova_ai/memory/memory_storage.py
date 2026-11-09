@@ -3,11 +3,13 @@
 from contextlib import closing, contextmanager
 import json
 import os
-from pathlib import Path
 import sqlite3
+import stat
 import tempfile
-from datetime import datetime, timezone
 import unicodedata
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
 from json_persistence import ensure_private_directory, validate_storage_path
 
@@ -18,7 +20,7 @@ from .errors import (
     MemoryStorageError,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 APPLICATION_ID = 0x4E4F5641  # ASCII "NOVA"
 _MEMORY_KINDS = "'episodic', 'semantic', 'procedural', 'preference', 'profile', 'project', 'conversation', 'learning'"
 
@@ -34,7 +36,7 @@ def _normalize(content):
 
 
 class MemoryStorage:
-    """Banco próprio da Nova; não abre nem migra os JSON/bancos do app legado."""
+    """Banco próprio da Nova; mantém memória local, perfis e contexto de conversas."""
 
     def __init__(self, path=None):
         self.path = Path(path) if path is not None else (
@@ -65,13 +67,24 @@ class MemoryStorage:
             except OSError:
                 pass
 
-    def _connect(self):
-        connection = sqlite3.connect(str(self.path), timeout=2.0)
+    def _connect(self, *, read_only=False):
+        if read_only:
+            path = validate_storage_path(self.path, label="banco de memória")
+            connection = sqlite3.connect(
+                f"{path.as_uri()}?mode=ro", uri=True, timeout=2.0
+            )
+        else:
+            connection = sqlite3.connect(str(self.path), timeout=2.0)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 2000")
         connection.execute("PRAGMA synchronous = FULL")
         connection.execute("PRAGMA secure_delete = ON")
         return connection
+
+    def _table_columns(self, connection, table_name):
+        rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {row[1] for row in rows}
 
     def _prepare_database(self):
         validate_storage_path(self.path, label="banco de memória")
@@ -82,7 +95,7 @@ class MemoryStorage:
                     if check != "ok":
                         raise sqlite3.DatabaseError("integrity check failed")
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in (0, 1, SCHEMA_VERSION):
+                    if version not in (0, 1, 2, SCHEMA_VERSION):
                         raise MemoryStorageError("Versão do banco de memória não suportada")
                     application_id = connection.execute(
                         "PRAGMA application_id"
@@ -98,9 +111,9 @@ class MemoryStorage:
                             raise MemoryStorageError(
                                 "Recusando inicializar sobre um banco SQLite existente"
                             )
-                    if version == 1:
+                    if version in (1, 2):
                         try:
-                            self._migrate_v1(connection)
+                            self._migrate_v1_v3(connection, version)
                         except sqlite3.DatabaseError as exc:
                             raise MemoryStorageError(
                                 "Não foi possível migrar o banco de memória", cause=exc
@@ -117,29 +130,7 @@ class MemoryStorage:
         try:
             with closing(self._connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                connection.execute(
-                    f"""CREATE TABLE IF NOT EXISTS memories (
-                        id TEXT PRIMARY KEY,
-                        kind TEXT NOT NULL CHECK(kind IN ({_MEMORY_KINDS})),
-                        content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 8000),
-                        normalized_content TEXT NOT NULL,
-                        source TEXT NOT NULL CHECK(length(source) BETWEEN 1 AND 128),
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL,
-                        confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
-                        relevance REAL NOT NULL CHECK(relevance BETWEEN 0 AND 1),
-                        consent_granted INTEGER NOT NULL CHECK(consent_granted = 1),
-                        provenance TEXT NOT NULL CHECK(provenance IN (
-                            'user_provided', 'inference', 'uncertain', 'system_observation'
-                        )),
-                        expires_at TEXT,
-                        UNIQUE(kind, normalized_content)
-                    )"""
-                )
-                connection.execute(
-                    "CREATE INDEX IF NOT EXISTS memories_kind_updated "
-                    "ON memories(kind, updated_at DESC)"
-                )
+                self._create_schema(connection)
                 connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 connection.commit()
@@ -150,13 +141,103 @@ class MemoryStorage:
         except (sqlite3.DatabaseError, OSError) as exc:
             raise MemoryStorageError("Não foi possível inicializar o banco de memória", cause=exc) from exc
 
-    @staticmethod
-    def _migrate_v1(connection):
-        """Expand categories and metadata transactionally while preserving records."""
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute("ALTER TABLE memories RENAME TO memories_v1")
+    def _create_schema(self, connection):
         connection.execute(
-            f"""CREATE TABLE memories (
+            """CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata TEXT,
+                access_level TEXT NOT NULL DEFAULT 'user'
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                summary TEXT,
+                status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived','deleted')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata TEXT
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS preferences (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'general',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(user_id, key)
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed','archived')),
+                priority INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                due_at TEXT
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS events (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                occurred_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                relevant INTEGER NOT NULL DEFAULT 1 CHECK(relevant IN (0, 1)),
+                metadata TEXT
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS personality_history (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                behavior TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'system'
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS permissions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                permission TEXT NOT NULL,
+                granted INTEGER NOT NULL DEFAULT 1 CHECK(granted IN (0, 1)),
+                scope TEXT NOT NULL DEFAULT 'global',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata TEXT,
+                UNIQUE(user_id, permission, scope)
+            )"""
+        )
+        connection.execute(
+            f"""CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL CHECK(kind IN ({_MEMORY_KINDS})),
                 content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 8000),
@@ -166,27 +247,135 @@ class MemoryStorage:
                 updated_at TEXT NOT NULL,
                 confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
                 relevance REAL NOT NULL CHECK(relevance BETWEEN 0 AND 1),
-                consent_granted INTEGER NOT NULL CHECK(consent_granted = 1),
+                consent_granted INTEGER NOT NULL CHECK(consent_granted IN (0, 1)),
                 provenance TEXT NOT NULL CHECK(provenance IN (
                     'user_provided', 'inference', 'uncertain', 'system_observation'
                 )),
                 expires_at TEXT,
+                user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+                conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                category TEXT NOT NULL DEFAULT 'general',
+                priority INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
                 UNIQUE(kind, normalized_content)
             )"""
         )
+        for column_name, definition in (
+            ("user_id", "TEXT REFERENCES users(id) ON DELETE SET NULL"),
+            ("conversation_id", "TEXT REFERENCES conversations(id) ON DELETE SET NULL"),
+            ("project_id", "TEXT REFERENCES projects(id) ON DELETE SET NULL"),
+            ("category", "TEXT NOT NULL DEFAULT 'general'"),
+            ("priority", "INTEGER NOT NULL DEFAULT 0"),
+            ("is_active", "INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1))"),
+        ):
+            columns = self._table_columns(connection, "memories")
+            if column_name not in columns:
+                connection.execute(f"ALTER TABLE memories ADD COLUMN {column_name} {definition}")
         connection.execute(
-            """INSERT INTO memories (
-                id, kind, content, normalized_content, source, created_at, updated_at,
-                confidence, relevance, consent_granted, provenance, expires_at
-            ) SELECT id, kind, content, normalized_content, source, created_at, updated_at,
-                confidence, relevance, consent_granted,
-                CASE WHEN source IN ('user', 'user-confirmed') THEN 'user_provided'
-                     ELSE 'system_observation' END, NULL FROM memories_v1"""
+            "CREATE INDEX IF NOT EXISTS memories_kind_updated "
+            "ON memories(kind, updated_at DESC)"
         )
-        connection.execute("DROP TABLE memories_v1")
         connection.execute(
-            "CREATE INDEX IF NOT EXISTS memories_kind_updated ON memories(kind, updated_at DESC)"
+            "CREATE INDEX IF NOT EXISTS memories_user_category "
+            "ON memories(user_id, category, updated_at DESC)"
         )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS conversations_user_updated "
+            "ON conversations(user_id, updated_at DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS messages_conversation_created "
+            "ON messages(conversation_id, created_at DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS projects_user_status "
+            "ON projects(user_id, status, updated_at DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS events_user_occurred "
+            "ON events(user_id, occurred_at DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS permissions_user_scope "
+            "ON permissions(user_id, permission, scope)"
+        )
+        if not self._table_columns(connection, "users"):
+            return
+        default_user = connection.execute(
+            "SELECT id FROM users WHERE profile_id = 'legacy'"
+        ).fetchone()
+        if default_user is None:
+            connection.execute(
+                "INSERT OR IGNORE INTO users (id, profile_id, name, created_at, updated_at, access_level) VALUES (?, ?, ?, ?, ?, ?)",
+                ("legacy", "legacy", "Perfil principal", _utc_now(), _utc_now(), "admin"),
+            )
+        connection.execute(
+            "UPDATE memories SET user_id = 'legacy' WHERE user_id IS NULL AND NOT EXISTS (SELECT 1 FROM users WHERE users.id = 'legacy')"
+        )
+        connection.execute(
+            "UPDATE memories SET user_id = 'legacy' WHERE user_id IS NULL"
+        )
+
+    def _migrate_v1_v3(self, connection, version):
+        """Migrates from v1/v2 to the expanded SQLite schema while keeping the legacy memory table."""
+        connection.execute("BEGIN IMMEDIATE")
+        if version == 1:
+            connection.execute("ALTER TABLE memories RENAME TO memories_v1")
+            connection.execute(
+                """CREATE TABLE memories (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL CHECK(kind IN ('episodic','semantic','procedural','preference','profile','project','conversation','learning')),
+                    content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 8000),
+                    normalized_content TEXT NOT NULL,
+                    source TEXT NOT NULL CHECK(length(source) BETWEEN 1 AND 128),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+                    relevance REAL NOT NULL CHECK(relevance BETWEEN 0 AND 1),
+                    consent_granted INTEGER NOT NULL CHECK(consent_granted = 1),
+                    provenance TEXT NOT NULL CHECK(provenance IN ('user_provided','inference','uncertain','system_observation')),
+                    expires_at TEXT,
+                    UNIQUE(kind, normalized_content)
+                )"""
+            )
+            connection.execute(
+                """INSERT INTO memories (
+                    id, kind, content, normalized_content, source, created_at, updated_at,
+                    confidence, relevance, consent_granted, provenance, expires_at
+                ) SELECT id, kind, content, normalized_content, source, created_at, updated_at,
+                    confidence, relevance, consent_granted,
+                    CASE WHEN source IN ('user', 'user-confirmed') THEN 'user_provided'
+                         ELSE 'system_observation' END, NULL FROM memories_v1"""
+            )
+            connection.execute("DROP TABLE memories_v1")
+        for table_name, query in (
+            ("users", """CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, profile_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, metadata TEXT, access_level TEXT NOT NULL DEFAULT 'user')"""),
+            ("conversations", """CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, summary TEXT, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived','deleted')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"""),
+            ("messages", """CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('user','assistant','system')), content TEXT NOT NULL, created_at TEXT NOT NULL, metadata TEXT)"""),
+            ("preferences", """CREATE TABLE IF NOT EXISTS preferences (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, key TEXT NOT NULL, value TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'general', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(user_id, key))"""),
+            ("projects", """CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, description TEXT, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed','archived')), priority INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, due_at TEXT)"""),
+            ("events", """CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, type TEXT NOT NULL, title TEXT NOT NULL, description TEXT, occurred_at TEXT NOT NULL, created_at TEXT NOT NULL, relevant INTEGER NOT NULL DEFAULT 1 CHECK(relevant IN (0, 1)), metadata TEXT)"""),
+            ("personality_history", """CREATE TABLE IF NOT EXISTS personality_history (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, behavior TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'system')"""),
+            ("permissions", """CREATE TABLE IF NOT EXISTS permissions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, permission TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 1 CHECK(granted IN (0, 1)), scope TEXT NOT NULL DEFAULT 'global', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, metadata TEXT, UNIQUE(user_id, permission, scope))"""),
+        ):
+            connection.execute(query)
+        connection.execute(
+            "INSERT OR IGNORE INTO users (id, profile_id, name, created_at, updated_at, access_level) VALUES (?, ?, ?, ?, ?, ?)",
+            ("legacy", "legacy", "Perfil principal", _utc_now(), _utc_now(), "admin"),
+        )
+        columns = self._table_columns(connection, "memories")
+        for column_name, definition in (
+            ("user_id", "TEXT REFERENCES users(id) ON DELETE SET NULL"),
+            ("conversation_id", "TEXT REFERENCES conversations(id) ON DELETE SET NULL"),
+            ("project_id", "TEXT REFERENCES projects(id) ON DELETE SET NULL"),
+            ("category", "TEXT NOT NULL DEFAULT 'general'"),
+            ("priority", "INTEGER NOT NULL DEFAULT 0"),
+            ("is_active", "INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1))"),
+        ):
+            if column_name not in columns:
+                connection.execute(f"ALTER TABLE memories ADD COLUMN {column_name} {definition}")
+        connection.execute("UPDATE memories SET user_id = 'legacy', category = 'general', priority = 0, is_active = 1 WHERE user_id IS NULL")
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         connection.commit()
 
@@ -205,13 +394,15 @@ class MemoryStorage:
 
     @contextmanager
     def _read_connection(self):
-        connection = self._connect()
+        connection = None
         try:
+            connection = self._connect(read_only=True)
             yield connection
         except sqlite3.DatabaseError as exc:
             raise MemoryStorageError("Falha ao consultar o banco de memória", cause=exc) from exc
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     @contextmanager
     def _write_connection(self):
@@ -237,6 +428,375 @@ class MemoryStorage:
             return None
         return dict(row)
 
+    @staticmethod
+    def _coerce_kind(kind):
+        if hasattr(kind, "value"):
+            return str(kind.value)
+        return str(kind)
+
+    def list_tables(self):
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def _resolve_user_id(self, user_id):
+        if user_id is None:
+            user_id = "legacy"
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("user_id deve ser informado")
+        with self._read_connection() as connection:
+            row = connection.execute(
+                "SELECT id FROM users WHERE id = ? OR profile_id = ?",
+                (user_id, user_id),
+            ).fetchone()
+        if row is None:
+            self.ensure_user(user_id, name=user_id)
+            return user_id
+        return row[0]
+
+    def ensure_user(self, profile_id, *, name="Perfil", metadata=None):
+        value = str(profile_id)
+        if not value.strip():
+            raise ValueError("profile_id não pode ficar vazio")
+        now = _utc_now()
+        with self._write_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE id = ? OR profile_id = ?",
+                (value, value),
+            ).fetchone()
+            if row is None:
+                user_id = value
+                connection.execute(
+                    "INSERT INTO users (id, profile_id, name, created_at, updated_at, metadata, access_level) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, value, str(name).strip() or "Perfil", now, now, json.dumps(metadata) if metadata is not None else None, "user"),
+                )
+                return self._record(connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+            updated_name = str(name).strip() or row["name"]
+            connection.execute(
+                "UPDATE users SET name = ?, updated_at = ?, metadata = ? WHERE id = ?",
+                (updated_name, now, json.dumps(metadata) if metadata is not None else row["metadata"], row["id"]),
+            )
+            return self._record(connection.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone())
+
+    def get_user(self, profile_id):
+        with self._read_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE id = ? OR profile_id = ?",
+                (profile_id, profile_id),
+            ).fetchone()
+        if row is None:
+            raise MemoryNotFoundError("Perfil não encontrado")
+        return self._record(row)
+
+    def list_users(self):
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM users ORDER BY created_at DESC"
+            ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def create_conversation(self, user_id, title, *, summary=None, status="active"):
+        user_key = self._resolve_user_id(user_id)
+        conversation_id = uuid.uuid4().hex
+        now = _utc_now()
+        with self._write_connection() as connection:
+            connection.execute(
+                "INSERT INTO conversations (id, user_id, title, summary, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, user_key, str(title).strip(), summary, status, now, now),
+            )
+        return conversation_id
+
+    def get_conversation(self, conversation_id):
+        with self._read_connection() as connection:
+            row = connection.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        if row is None:
+            raise MemoryNotFoundError("Conversa não encontrada")
+        return self._record(row)
+
+    def list_conversations(self, user_id=None):
+        query = "SELECT * FROM conversations"
+        params = []
+        if user_id is not None:
+            query += " WHERE user_id = ?"
+            params.append(self._resolve_user_id(user_id))
+        query += " ORDER BY updated_at DESC"
+        with self._read_connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._record(row) for row in rows]
+
+    def add_message(self, conversation_id, user_id, role, content, *, metadata=None):
+        self.get_conversation(conversation_id)
+        user_key = self._resolve_user_id(user_id)
+        message_id = uuid.uuid4().hex
+        now = _utc_now()
+        with self._write_connection() as connection:
+            connection.execute(
+                "INSERT INTO messages (id, conversation_id, user_id, role, content, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (message_id, conversation_id, user_key, role, content, now, json.dumps(metadata) if metadata is not None else None),
+            )
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, conversation_id),
+            )
+        return message_id
+
+    def get_message(self, message_id):
+        with self._read_connection() as connection:
+            row = connection.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+        if row is None:
+            raise MemoryNotFoundError("Mensagem não encontrada")
+        return self._record(row)
+
+    def list_messages(self, conversation_id, *, limit=100):
+        self.get_conversation(conversation_id)
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?",
+                (conversation_id, limit),
+            ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def create_memory(
+        self, user_id, *, kind, category="general", content, source="user",
+        confidence=0.8, relevance=0.8, consent_granted=True, provenance="user_provided",
+        project_id=None, conversation_id=None, expires_at=None, memory_id=None,
+    ):
+        user_key = self._resolve_user_id(user_id)
+        normalized_kind = self._coerce_kind(kind)
+        record = {
+            "id": memory_id or uuid.uuid4().hex,
+            "kind": normalized_kind,
+            "content": str(content),
+            "source": str(source),
+            "confidence": float(confidence),
+            "relevance": float(relevance),
+            "consent_granted": bool(consent_granted),
+            "provenance": provenance,
+            "expires_at": expires_at,
+            "user_id": user_key,
+            "project_id": project_id,
+            "conversation_id": conversation_id,
+            "category": category,
+            "priority": 0,
+            "is_active": 1,
+        }
+        if record["consent_granted"] is not True:
+            raise ConsentRequiredError("A gravação exige consentimento explícito")
+        now = _utc_now()
+        with self._write_connection() as connection:
+            connection.execute(
+                """INSERT INTO memories (
+                    id, kind, content, normalized_content, source, created_at, updated_at,
+                    confidence, relevance, consent_granted, provenance, expires_at,
+                    user_id, conversation_id, project_id, category, priority, is_active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record["id"], record["kind"], record["content"], _normalize(record["content"]),
+                    record["source"], now, now, record["confidence"], record["relevance"],
+                    1 if record["consent_granted"] else 0, record["provenance"], record["expires_at"],
+                    record["user_id"], record["conversation_id"], record["project_id"],
+                    record["category"], record["priority"], record["is_active"],
+                ),
+            )
+        return record["id"]
+
+    def get_memory(self, memory_id):
+        with self._read_connection() as connection:
+            row = connection.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        if row is None:
+            raise MemoryNotFoundError("Memória não encontrada")
+        return self._record(row)
+
+    def update_memory(self, memory_id, *, content=None, category=None, project_id=None, conversation_id=None,
+                      relevance=None, confidence=None, expires_at=None, is_active=None, source=None):
+        current = self.get_memory(memory_id)
+        now = _utc_now()
+        next_content = current["content"] if content is None else str(content)
+        next_source = current["source"] if source is None else str(source)
+        next_category = current["category"] if category is None else str(category)
+        next_project = current["project_id"] if project_id is None else project_id
+        next_conversation = current["conversation_id"] if conversation_id is None else conversation_id
+        next_relevance = current["relevance"] if relevance is None else float(relevance)
+        next_confidence = current["confidence"] if confidence is None else float(confidence)
+        next_expires = current["expires_at"] if expires_at is None else expires_at
+        next_active = current["is_active"] if is_active is None else int(bool(is_active))
+        with self._write_connection() as connection:
+            cursor = connection.execute(
+                """UPDATE memories SET content = ?, normalized_content = ?, source = ?, updated_at = ?,
+                confidence = ?, relevance = ?, expires_at = ?, project_id = ?, conversation_id = ?,
+                category = ?, is_active = ? WHERE id = ?""",
+                (
+                    next_content, _normalize(next_content), next_source, now, next_confidence,
+                    next_relevance, next_expires, next_project, next_conversation, next_category,
+                    next_active, memory_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise MemoryNotFoundError("Memória não encontrada")
+        return self.get_memory(memory_id)
+
+    def list_memories(self, user_id=None, *, kind=None, category=None, limit=50, include_expired=False):
+        query = "SELECT * FROM memories WHERE 1 = 1"
+        params = []
+        if user_id is not None:
+            query += " AND user_id = ?"
+            params.append(self._resolve_user_id(user_id))
+        if kind is not None:
+            query += " AND kind = ?"
+            params.append(self._coerce_kind(kind))
+        if category is not None:
+            query += " AND category = ?"
+            params.append(str(category))
+        if not include_expired:
+            query += " AND (expires_at IS NULL OR expires_at > ?)"
+            params.append(_utc_now())
+        query += " ORDER BY relevance DESC, confidence DESC, updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self._read_connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._record(row) for row in rows]
+
+    def delete_memory(self, memory_id):
+        with self._write_connection() as connection:
+            cursor = connection.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            if cursor.rowcount == 0:
+                raise MemoryNotFoundError("Memória não encontrada")
+        return True
+
+    def create_project(self, user_id, name, description="", *, status="active", priority=0, due_at=None):
+        user_key = self._resolve_user_id(user_id)
+        project_id = uuid.uuid4().hex
+        now = _utc_now()
+        with self._write_connection() as connection:
+            connection.execute(
+                "INSERT INTO projects (id, user_id, name, description, status, priority, created_at, updated_at, due_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, user_key, str(name), description, status, int(priority), now, now, due_at),
+            )
+        return project_id
+
+    def list_projects(self, user_id=None):
+        query = "SELECT * FROM projects"
+        params = []
+        if user_id is not None:
+            query += " WHERE user_id = ?"
+            params.append(self._resolve_user_id(user_id))
+        query += " ORDER BY updated_at DESC"
+        with self._read_connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._record(row) for row in rows]
+
+    def set_preference(self, user_id, key, value, *, category="general"):
+        user_key = self._resolve_user_id(user_id)
+        now = _utc_now()
+        with self._write_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM preferences WHERE user_id = ? AND key = ?",
+                (user_key, str(key)),
+            ).fetchone()
+            if row is None:
+                preference_id = uuid.uuid4().hex
+                connection.execute(
+                    "INSERT INTO preferences (id, user_id, key, value, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (preference_id, user_key, str(key), str(value), category, now, now),
+                )
+            else:
+                connection.execute(
+                    "UPDATE preferences SET value = ?, category = ?, updated_at = ? WHERE id = ?",
+                    (str(value), category, now, row["id"]),
+                )
+        return self.list_preferences(user_key)
+
+    def list_preferences(self, user_id=None):
+        query = "SELECT * FROM preferences"
+        params = []
+        if user_id is not None:
+            query += " WHERE user_id = ?"
+            params.append(self._resolve_user_id(user_id))
+        query += " ORDER BY updated_at DESC"
+        with self._read_connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._record(row) for row in rows]
+
+    def create_event(self, user_id, event_type, title, description="", *, occurred_at=None, relevant=True, metadata=None):
+        user_key = self._resolve_user_id(user_id)
+        event_id = uuid.uuid4().hex
+        now = _utc_now()
+        with self._write_connection() as connection:
+            connection.execute(
+                "INSERT INTO events (id, user_id, type, title, description, occurred_at, created_at, relevant, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (event_id, user_key, str(event_type), str(title), description, occurred_at or now, now, 1 if relevant else 0, json.dumps(metadata) if metadata is not None else None),
+            )
+        return event_id
+
+    def list_events(self, user_id=None, *, limit=50):
+        query = "SELECT * FROM events"
+        params = []
+        if user_id is not None:
+            query += " WHERE user_id = ?"
+            params.append(self._resolve_user_id(user_id))
+        query += " ORDER BY occurred_at DESC LIMIT ?"
+        params.append(limit)
+        with self._read_connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._record(row) for row in rows]
+
+    def record_personality_history(self, user_id, behavior, summary, *, source="system"):
+        user_key = self._resolve_user_id(user_id)
+        history_id = uuid.uuid4().hex
+        now = _utc_now()
+        with self._write_connection() as connection:
+            connection.execute(
+                "INSERT INTO personality_history (id, user_id, behavior, summary, created_at, source) VALUES (?, ?, ?, ?, ?, ?)",
+                (history_id, user_key, str(behavior), str(summary), now, str(source)),
+            )
+        return history_id
+
+    def list_personality_history(self, user_id=None, *, limit=20):
+        query = "SELECT * FROM personality_history"
+        params = []
+        if user_id is not None:
+            query += " WHERE user_id = ?"
+            params.append(self._resolve_user_id(user_id))
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._read_connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._record(row) for row in rows]
+
+    def set_permission(self, user_id, permission, granted=True, *, scope="global", metadata=None):
+        user_key = self._resolve_user_id(user_id)
+        now = _utc_now()
+        with self._write_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM permissions WHERE user_id = ? AND permission = ? AND scope = ?",
+                (user_key, str(permission), str(scope)),
+            ).fetchone()
+            if row is None:
+                permission_id = uuid.uuid4().hex
+                connection.execute(
+                    "INSERT INTO permissions (id, user_id, permission, granted, scope, created_at, updated_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (permission_id, user_key, str(permission), 1 if granted else 0, str(scope), now, now, json.dumps(metadata) if metadata is not None else None),
+                )
+            else:
+                connection.execute(
+                    "UPDATE permissions SET granted = ?, updated_at = ?, metadata = ? WHERE id = ?",
+                    (1 if granted else 0, now, json.dumps(metadata) if metadata is not None else row["metadata"], row["id"]),
+                )
+        return self.list_permissions(user_key)
+
+    def list_permissions(self, user_id=None):
+        query = "SELECT * FROM permissions"
+        params = []
+        if user_id is not None:
+            query += " WHERE user_id = ?"
+            params.append(self._resolve_user_id(user_id))
+        query += " ORDER BY updated_at DESC"
+        with self._read_connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._record(row) for row in rows]
+
     def insert(self, record):
         if record.get("consent_granted") is not True:
             raise ConsentRequiredError("A gravação exige consentimento explícito")
@@ -245,13 +805,18 @@ class MemoryStorage:
             connection.execute(
                 """INSERT INTO memories (
                     id, kind, content, normalized_content, source, created_at, updated_at,
-                    confidence, relevance, consent_granted, provenance, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                    confidence, relevance, consent_granted, provenance, expires_at,
+                    user_id, conversation_id, project_id, category, priority, is_active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     record["id"], record["kind"], record["content"],
                     _normalize(record["content"]), record["source"], now, now,
-                    record["confidence"], record["relevance"], record["provenance"],
-                    record.get("expires_at"),
+                    record["confidence"], record["relevance"],
+                    1 if record.get("consent_granted") else 0, record["provenance"],
+                    record.get("expires_at"), record.get("user_id", "legacy"),
+                    record.get("conversation_id"), record.get("project_id"),
+                    record.get("category", "general"), record.get("priority", 0),
+                    1 if record.get("is_active", 1) else 0,
                 ),
             )
         return self.get(record["id"])
@@ -347,6 +912,170 @@ class MemoryStorage:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
             raise MemoryStorageError("Não foi possível criar o backup da memória", cause=exc) from exc
+
+    def restore_from(self, source, *, keep_backup=True):
+        source = validate_storage_path(source, label="restauração do banco de memória")
+        if source == self.path:
+            raise MemoryStorageError("A origem da restauração deve ser outro arquivo")
+        temporary = None
+        try:
+            source_uri = f"{source.resolve().as_uri()}?mode=ro"
+            with closing(sqlite3.connect(source_uri, uri=True, timeout=2.0)) as source_db:
+                integrity = source_db.execute("PRAGMA quick_check").fetchone()[0]
+                foreign_key_errors = source_db.execute(
+                    "PRAGMA foreign_key_check"
+                ).fetchall()
+                application_id = source_db.execute("PRAGMA application_id").fetchone()[0]
+                version = source_db.execute("PRAGMA user_version").fetchone()[0]
+                if integrity != "ok" or foreign_key_errors or application_id != APPLICATION_ID:
+                    raise MemoryStorageError("O arquivo de restauração não é um backup válido da Nova")
+                if version not in (1, 2, SCHEMA_VERSION):
+                    raise MemoryStorageError("Versão do backup não suportada")
+
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+            with closing(sqlite3.connect(source_uri, uri=True, timeout=2.0)) as source_db, \
+                    closing(sqlite3.connect(str(temporary), timeout=2.0)) as candidate_db:
+                source_db.backup(candidate_db)
+                candidate_db.commit()
+            os.chmod(temporary, 0o600)
+            candidate_storage = MemoryStorage(temporary)
+            if candidate_storage.health_snapshot()["status"] != "healthy":
+                raise MemoryStorageError("O backup não passou na verificação de integridade")
+
+            if keep_backup and self.path.exists():
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+                backup_dir = self.path.parent / "backups"
+                ensure_private_directory(backup_dir, label="diretório de backups")
+                backup_target = backup_dir / (
+                    f"{self.path.stem}-pre-restore-{stamp}-{uuid.uuid4().hex[:8]}.sqlite3"
+                )
+                self.backup_to(backup_target)
+
+            os.replace(temporary, self.path)
+            temporary = None
+            self.corrupt_backup_path = None
+            return self.path
+        except (OSError, sqlite3.DatabaseError, MemoryStorageError, ValueError) as exc:
+            if temporary is not None and temporary.exists():
+                temporary.unlink(missing_ok=True)
+            raise MemoryStorageError("Não foi possível restaurar o backup da memória", cause=exc) from exc
+
+    def create_managed_backup(self, backup_dir=None, *, retain=10, max_age_days=90):
+        backup_dir = Path(backup_dir) if backup_dir is not None else self.path.parent / "backups"
+        backup_dir = validate_storage_path(backup_dir, label="diretório de backups")
+        ensure_private_directory(backup_dir, label="diretório de backups")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        destination = backup_dir / f"{self.path.stem}-{stamp}-{uuid.uuid4().hex[:8]}.sqlite3"
+        created = self.backup_to(destination)
+        self.rotate_backups(backup_dir, retain=retain, max_age_days=max_age_days)
+        return created
+
+    def rotate_backups(self, backup_dir=None, *, retain=10, max_age_days=90, now=None):
+        if type(retain) is not int or not 1 <= retain <= 100:
+            raise ValueError("retain deve estar entre 1 e 100")
+        if type(max_age_days) is not int or not 1 <= max_age_days <= 3650:
+            raise ValueError("max_age_days deve estar entre 1 e 3650")
+        backup_dir = Path(backup_dir) if backup_dir is not None else self.path.parent / "backups"
+        backup_dir = validate_storage_path(backup_dir, label="diretório de backups")
+        if not backup_dir.exists():
+            return []
+        now = now or datetime.now(timezone.utc).timestamp()
+        candidates = []
+        pattern = f"{self.path.stem}-*.sqlite3"
+        for path in backup_dir.glob(pattern):
+            try:
+                validate_storage_path(path, label="backup de memória")
+                mode = path.lstat().st_mode
+            except OSError:
+                continue
+            if not stat.S_ISREG(mode):
+                continue
+            candidates.append((path, path.stat().st_mtime))
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        cutoff = now - max_age_days * 86400
+        removed = []
+        for index, (path, modified_at) in enumerate(candidates):
+            if modified_at < cutoff or index >= retain:
+                path.unlink()
+                removed.append(path)
+        return removed
+
+    def list_managed_backups(self, backup_dir=None, *, limit=10):
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit deve estar entre 1 e 100")
+        backup_dir = Path(backup_dir) if backup_dir is not None else self.path.parent / "backups"
+        backup_dir = validate_storage_path(backup_dir, label="diretório de backups")
+        if not backup_dir.exists():
+            return []
+        candidates = []
+        for path in backup_dir.glob(f"{self.path.stem}-*.sqlite3"):
+            try:
+                validate_storage_path(path, label="backup de memória")
+                if stat.S_ISREG(path.lstat().st_mode):
+                    candidates.append((path, path.stat().st_mtime))
+            except OSError:
+                continue
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        return [path for path, _modified_at in candidates[:limit]]
+
+    def count_expired(self):
+        with self._read_connection() as connection:
+            return connection.execute(
+                "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                (_utc_now(),),
+            ).fetchone()[0]
+
+    def health_snapshot(self):
+        path = self.path
+        try:
+            file_stat = path.stat() if path.exists() else None
+        except OSError:
+            file_stat = None
+        tables = []
+        data = {
+            "database_path": str(path),
+            "schema_version": SCHEMA_VERSION,
+            "database_size_bytes": file_stat.st_size if file_stat is not None else 0,
+            "modified_at": file_stat.st_mtime if file_stat is not None else None,
+            "is_writable": bool(
+                path.exists() and os.access(path, os.W_OK)
+                or path.parent.exists() and os.access(path.parent, os.W_OK)
+            ),
+            "tables": tables,
+            "corrupt_backup_preserved": self.corrupt_backup_path is not None,
+            "integrity_check": "unknown",
+            "user_version": 0,
+            "application_id": 0,
+            "status": "unknown",
+        }
+        try:
+            with self._read_connection() as connection:
+                tables = [
+                    row[0] for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                    ).fetchall()
+                ]
+                data["tables"] = tables
+                data["integrity_check"] = connection.execute("PRAGMA quick_check").fetchone()[0]
+                data["user_version"] = connection.execute("PRAGMA user_version").fetchone()[0]
+                data["application_id"] = connection.execute("PRAGMA application_id").fetchone()[0]
+        except (sqlite3.DatabaseError, OSError, MemoryStorageError):
+            data["status"] = "degraded"
+            return data
+
+        data["status"] = "healthy" if (
+            data["integrity_check"] == "ok"
+            and data["application_id"] == APPLICATION_ID
+            and data["user_version"] == SCHEMA_VERSION
+        ) else "degraded"
+        return data
 
     def export_json(self, destination, *, kind=None):
         destination = validate_storage_path(destination, label="exportação de memória")

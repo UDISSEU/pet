@@ -31,6 +31,7 @@ class DesktopNovaIntegration:
         self._managed_memory = memory_manager is None
         self._managed_personality = personality is None
         self.memory = memory_manager or self._new_memory_manager()
+        self._diagnose_memory()
         self.personality = personality or self._new_personality()
         self.preference_learner = PreferenceLearner()
         self.emotion_detector = EmotionDetector()
@@ -51,6 +52,24 @@ class DesktopNovaIntegration:
         return MemoryManager(MemoryStorage(self.profile_manager.memory_path(
             profile.profile_id
         )))
+
+    def _diagnose_memory(self):
+        try:
+            snapshot = self.memory.health_snapshot()
+        except MemoryStorageError:
+            logger.exception("Não foi possível diagnosticar o banco local da Nova.")
+            return
+        if snapshot.get("status") != "healthy":
+            logger.warning(
+                "Diagnóstico do banco local da Nova: estado=%s, integridade=%s, versão=%s",
+                snapshot.get("status"), snapshot.get("integrity_check"),
+                snapshot.get("user_version"),
+            )
+        else:
+            logger.info(
+                "Banco local da Nova verificado: schema=%s, tamanho=%s bytes",
+                snapshot.get("user_version"), snapshot.get("database_size_bytes"),
+            )
 
     def _new_personality(self, profile=None, memory=None):
         profile = profile or self.profile
@@ -74,6 +93,7 @@ class DesktopNovaIntegration:
         self.profile_manager.select(profile_id)
         self.profile = profile
         self.memory = memory
+        self._diagnose_memory()
         self.personality = personality
         self.personality.transition_behavior("IDLE")
         self._visual_behavior = None
@@ -152,6 +172,27 @@ class DesktopNovaIntegration:
                 memories.append(context_item)
                 seen.add(record.content.casefold())
         return memories
+
+    def memory_health(self):
+        """Retorna snapshot de saúde do SQLite para observabilidade da UI e automação."""
+        return self.memory.health_snapshot()
+
+    def memory_maintenance_report(self):
+        """Emite um relatório de manutenção do banco para painel e diagnósticos."""
+        return self.memory.maintenance_report()
+
+    def run_memory_maintenance(self, *, create_backup=True, retain=10, max_age_days=90):
+        """Executa limpeza de expirados e rotação de backups locais sob demanda."""
+        return self.memory.run_maintenance(
+            create_backup=create_backup, retain=retain, max_age_days=max_age_days
+        )
+
+    def restore_memory_backup(self, backup_path, *, keep_backup=True):
+        """Restaura um backup local do SQLite e reabre o contexto de memória."""
+        self.memory.restore_from(backup_path, keep_backup=keep_backup)
+        self.memory = self._new_memory_manager(self.profile)
+        self.personality = self._new_personality(self.profile, self.memory)
+        return self.memory_health()
 
     def project_memories(self, *, limit=20):
         """Return explicitly saved project memories for a contextual greeting."""

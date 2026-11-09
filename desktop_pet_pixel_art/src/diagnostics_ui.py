@@ -12,7 +12,7 @@ from ui_theme import fit_window_to_screen, make_header
 logger = logging.getLogger(__name__)
 
 
-def diagnostic_recommendations(report):
+def diagnostic_recommendations(report, memory_health=None):
     guidance = []
     missing_dependencies = [
         name for name, available in report.dependencies.items() if not available
@@ -51,6 +51,11 @@ def diagnostic_recommendations(report):
             "A memória existente precisa de atenção. A Nova preservou os dados e não "
             "tentará recriar nem apagar o banco automaticamente."
         )
+    if memory_health is not None and memory_health.get("status") != "healthy":
+        guidance.append(
+            "A verificação do SQLite encontrou um estado degradado. Preserve os backups "
+            "e investigue o banco antes de restaurar ou remover arquivos."
+        )
     if report.graphics_status != "ready":
         guidance.append(
             "Alguns assets de animação estão ausentes. Verifique os arquivos da instalação "
@@ -69,6 +74,7 @@ def diagnostic_recommendations(report):
 def open_diagnostics_window(
     parent, *, on_open_ai=None, on_back=None, on_open=None,
     checker=check_environment,
+    memory_checker=None,
 ):
     window = tk.Toplevel(parent)
     window.title("Diagnóstico da Nova")
@@ -129,7 +135,7 @@ def open_diagnostics_window(
         ai_button.pack(side="left", padx=(8, 0))
     ttk.Button(actions, text="Fechar", command=window.destroy).pack(side="right")
 
-    def render(report):
+    def render(report, memory_health=None):
         dependency_line = ", ".join(
             f"{name}: {'OK' if available else 'ausente'}"
             for name, available in report.dependencies.items()
@@ -146,11 +152,20 @@ def open_diagnostics_window(
             f"{report.cpu_count or 'CPU desconhecida'} CPUs lógicas, "
             f"{format_disk_space(report.free_disk_bytes)}"
         )
+        if memory_health is not None:
+            status_text.set(
+                status_text.get() + "\nSQLite local: "
+                f"{memory_health.get('status', 'indisponível')}; "
+                f"integridade: {memory_health.get('integrity_check', 'desconhecida')}; "
+                f"{memory_health.get('database_size_bytes', 0)} bytes"
+            )
         guidance_text_widget.configure(state="normal")
         guidance_text_widget.delete("1.0", "end")
         guidance_text_widget.insert(
             "1.0",
-            "\n\n".join(f"• {item}" for item in diagnostic_recommendations(report)),
+            "\n\n".join(
+                f"• {item}" for item in diagnostic_recommendations(report, memory_health)
+            ),
         )
         guidance_text_widget.configure(state="disabled")
         has_ollama_issue = report.ollama_status == "model_missing"
@@ -162,7 +177,7 @@ def open_diagnostics_window(
         if not window.winfo_exists():
             return
         try:
-            report, error = result_queue.get_nowait()
+            report, memory_health, error = result_queue.get_nowait()
         except queue.Empty:
             if checking["active"]:
                 pending_poll["after_id"] = window.after(100, poll_results)
@@ -176,7 +191,7 @@ def open_diagnostics_window(
             guidance_text_widget.insert("1.0", "Tente novamente. Nenhuma alteração foi feita.")
             guidance_text_widget.configure(state="disabled")
         else:
-            render(report)
+            render(report, memory_health)
 
     def cancel_pending_poll(event):
         if event.widget is not window or pending_poll["after_id"] is None:
@@ -199,10 +214,19 @@ def open_diagnostics_window(
 
         def worker():
             try:
-                result_queue.put((checker(), None))
+                report = checker()
             except Exception:
                 logger.exception("Falha ao verificar o ambiente da Nova")
-                result_queue.put((None, True))
+                result_queue.put((None, None, True))
+                return
+            memory_health = None
+            if memory_checker is not None:
+                try:
+                    memory_health = memory_checker()
+                except Exception:
+                    logger.exception("Falha ao verificar a saúde do SQLite da Nova")
+                    memory_health = {"status": "unavailable"}
+            result_queue.put((report, memory_health, None))
 
         threading.Thread(
             target=worker, daemon=True, name="nova-environment-diagnostic",

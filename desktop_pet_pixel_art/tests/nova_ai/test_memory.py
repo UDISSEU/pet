@@ -7,6 +7,7 @@ import subprocess
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -39,6 +40,33 @@ class MemorySystemTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_sqlite_schema_supports_full_local_memory_model(self):
+        storage = self.manager.storage
+        user = storage.ensure_user("profile-alpha", name="Alice")
+        project_id = storage.create_project(
+            user["profile_id"], "Nova IA", "Ajustes e memória local.", status="active"
+        )
+        conversation_id = storage.create_conversation(
+            user["profile_id"], "Sessão 1", summary="Resumo inicial"
+        )
+        message_id = storage.add_message(
+            conversation_id, user["profile_id"], "user", "Quero preferências discretas."
+        )
+        memory_id = storage.create_memory(
+            user["profile_id"], kind="preference", category="communication",
+            content="Preferência: notificações discretas.", source="user",
+            confidence=0.96, relevance=0.9, consent_granted=True,
+            provenance="user_provided", project_id=project_id,
+            conversation_id=conversation_id,
+        )
+        self.assertEqual(storage.get_user(user["profile_id"])["name"], "Alice")
+        self.assertEqual(storage.get_message(message_id)["role"], "user")
+        self.assertEqual(storage.get_memory(memory_id)["category"], "communication")
+        self.assertEqual(storage.list_conversations(user["profile_id"])[0]["title"], "Sessão 1")
+        self.assertEqual(storage.list_projects(user["profile_id"])[0]["name"], "Nova IA")
+        storage.set_preference(user["profile_id"], "communication.style", "discreet")
+        self.assertTrue(storage.list_preferences(user["profile_id"]))
 
     def test_consent_is_required_and_preference_is_not_saved_without_it(self):
         preferences = PreferenceMemory(self.manager)
@@ -293,6 +321,120 @@ assert not any(name == 'providers' or name.startswith('providers.') for name in 
             [sys.executable, "-c", script, str(self.root / "offline.sqlite3")],
             cwd=SRC.parent, env=env, check=True, capture_output=True, text=True,
         )
+
+    def test_concurrent_writes_coalesce_duplicate_memory_records(self):
+        manager = MemoryManager(MemoryStorage(self.root / "concurrent.sqlite3"))
+        errors = []
+
+        def worker():
+            try:
+                manager.add("profile", "Preferência de foco: silêncio.", consent=True)
+            except Exception as exc:  # pragma: no cover - aggregate failure diagnostics
+                errors.append(repr(exc))
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertFalse(errors)
+        self.assertEqual(len(manager.search("silêncio", kind="profile")), 1)
+
+    def test_backup_restore_round_trip_and_health_snapshot(self):
+        primary = MemoryManager(MemoryStorage(self.root / "primary.sqlite3"))
+        record = primary.add("semantic", "A Nova preserva o histórico local.", consent=True)
+
+        backup = self.root / "backups" / "memory-backup.sqlite3"
+        primary.backup(backup)
+
+        restored_path = self.root / "restored.sqlite3"
+        restored = MemoryStorage(restored_path)
+        restored.restore_from(backup)
+
+        reopened = MemoryManager(restored)
+        self.assertEqual(reopened.get(record.memory_id).content, record.content)
+        self.assertEqual(reopened.get(record.memory_id).kind.value, "semantic")
+
+        snapshot = reopened.health_snapshot()
+        self.assertEqual(snapshot["schema_version"], 3)
+        self.assertGreaterEqual(snapshot["database_size_bytes"], 1)
+        self.assertIn("memories", snapshot["tables"])
+
+    def test_restore_rejects_unrelated_database_without_changing_live_data(self):
+        storage = MemoryStorage(self.root / "active.sqlite3")
+        manager = MemoryManager(storage)
+        record = manager.add("semantic", "Banco ativo permanece protegido.", consent=True)
+        invalid_backup = self.root / "unrelated.sqlite3"
+        with sqlite3.connect(invalid_backup) as connection:
+            connection.execute("CREATE TABLE unrelated (value TEXT)")
+            connection.execute("INSERT INTO unrelated VALUES ('not Nova')")
+
+        from nova_ai.memory.errors import MemoryStorageError
+        with self.assertRaises(MemoryStorageError):
+            storage.restore_from(invalid_backup)
+
+        self.assertEqual(manager.get(record.memory_id).content, record.content)
+
+    def test_managed_backup_rotation_retains_count_and_ignores_other_files(self):
+        storage = MemoryStorage(self.root / "retention.sqlite3")
+        backup_dir = self.root / "backups"
+        other_file = backup_dir / "unrelated.sqlite3"
+        backup_dir.mkdir()
+        other_file.write_text("keep", encoding="utf-8")
+
+        created = [
+            storage.create_managed_backup(backup_dir, retain=10, max_age_days=90)
+            for _ in range(3)
+        ]
+        aged_backup = backup_dir / "retention-aged.sqlite3"
+        storage.backup_to(aged_backup)
+        os.utime(aged_backup, (0, 0))
+        linked_backup = backup_dir / "retention-linked.sqlite3"
+        linked_backup.symlink_to(other_file)
+        removed = storage.rotate_backups(backup_dir, retain=2, max_age_days=90)
+
+        retained = storage.list_managed_backups(backup_dir, limit=10)
+        self.assertEqual(len(retained), 2)
+        self.assertEqual(len(removed), 2)
+        self.assertIn(aged_backup, removed)
+        self.assertTrue(all(path.exists() for path in created if path not in removed))
+        self.assertEqual(other_file.read_text(encoding="utf-8"), "keep")
+        self.assertTrue(linked_backup.is_symlink())
+
+    def test_maintenance_report_is_read_only_until_maintenance_runs(self):
+        manager = MemoryManager(MemoryStorage(self.root / "maintenance.sqlite3"))
+        record = manager.add(
+            "learning", "A Nova deve observar as preferências do usuário.",
+            consent=True, expires_in_days=1,
+        )
+        manager.storage.update(
+            record.memory_id, content=record.content, source=record.source,
+            confidence=record.confidence, relevance=record.relevance, consent=True,
+            provenance=record.provenance, expires_at="2000-01-01T00:00:00+00:00",
+        )
+
+        report = manager.maintenance_report()
+        self.assertIn("database", report)
+        self.assertIn("tables", report["database"])
+        self.assertIn("backup_dir", report)
+        self.assertTrue(report["database"]["is_writable"])
+        self.assertEqual(report["expired_records_pending"], 1)
+        self.assertEqual(manager.storage.count_expired(), 1)
+
+        result = manager.run_maintenance(create_backup=True, retain=2, max_age_days=90)
+        self.assertEqual(result["expired_records_purged"], 1)
+        self.assertTrue(Path(result["backup_created"]).is_file())
+        self.assertEqual(manager.storage.count_expired(), 0)
+
+    def test_health_diagnostic_does_not_recreate_a_missing_database(self):
+        storage = MemoryStorage(self.root / "removed.sqlite3")
+        storage.path.unlink()
+
+        snapshot = storage.health_snapshot()
+
+        self.assertEqual(snapshot["status"], "degraded")
+        self.assertFalse(storage.path.exists())
 
 
 if __name__ == "__main__":
