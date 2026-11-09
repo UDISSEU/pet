@@ -1,5 +1,6 @@
 """Small safeguards shared by the user's JSON stores."""
 
+import json
 import logging
 import os
 import shutil
@@ -12,12 +13,74 @@ _unsafe_to_replace = set()
 
 
 def _path_key(path):
-    return str(Path(path).expanduser().resolve())
+    return str(Path(os.path.abspath(os.path.expanduser(str(path)))))
+
+
+def validate_storage_path(path, *, label="arquivo"):
+    """Reject symlinks anywhere in the target path, including ancestor directories."""
+    candidate = Path(os.path.abspath(os.path.expanduser(str(path))))
+    if not candidate.name and candidate != candidate.parent:
+        raise OSError(f"O caminho de {label} está vazio")
+    seen = set()
+    current = candidate
+    while True:
+        key = str(current)
+        if key in seen:
+            break
+        seen.add(key)
+        if current.exists() and current.is_symlink():
+            raise OSError(f"O {label} não pode ser um link simbólico")
+        if current == current.parent:
+            break
+        current = current.parent
+    return candidate
+
+
+def ensure_private_directory(path, *, label="diretório"):
+    directory = validate_storage_path(path, label=label)
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise OSError(f"Não foi possível preparar o diretório de {label}") from exc
+    if not directory.is_dir() or directory.is_symlink():
+        raise OSError(f"O diretório de {label} não pode ser um link simbólico")
+    try:
+        os.chmod(directory, 0o700)
+    except OSError:
+        pass
+    return directory
+
+
+def atomic_json_write(path, payload, *, label="arquivo", mode=0o600):
+    """Write JSON atomically while keeping the original file intact on failure."""
+    target = validate_storage_path(path, label=label)
+    parent = ensure_private_directory(target.parent, label=label)
+    temporary = None
+    try:
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=str(parent)
+        )
+        temporary = Path(temporary_name)
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        os.chmod(target, mode)
+        return target
+    except OSError:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
 
 
 def preserve_corrupt_file(path, reason):
     """Copy a file before recovering from invalid JSON; never overwrite a backup."""
-    path = Path(path)
+    path = validate_storage_path(path, label="arquivo")
     key = _path_key(path)
     try:
         if not path.exists():

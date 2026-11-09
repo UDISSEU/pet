@@ -11,6 +11,7 @@ import time
 import uuid
 
 from event_bus import Event, EventBus, EventType
+from json_persistence import atomic_json_write, ensure_private_directory, validate_storage_path
 
 DEFAULT_NOTIFICATION_PATH = Path.home() / ".config" / "desktop_pet" / "notifications.json"
 
@@ -57,10 +58,9 @@ class NotificationManager:
         self._load()
 
     def _ensure_safe_path(self):
-        if self.path.is_symlink():
-            raise OSError("O arquivo de notificações não pode ser um link simbólico")
-        if self.path.parent.exists() and self.path.parent.is_symlink():
-            raise OSError("O diretório de notificações não pode ser um link simbólico")
+        validate_storage_path(self.path, label="arquivo de notificações")
+        if self.path.parent.exists() and not self.path.parent.is_dir():
+            raise OSError("O diretório de notificações não é um diretório válido")
 
     def _load(self):
         try:
@@ -188,28 +188,19 @@ class NotificationManager:
 
     def _save(self):
         self._ensure_safe_path()
-        if self.path.parent.exists() and self.path.parent.is_symlink():
-            raise OSError("O diretório de notificações não pode ser um link simbólico")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.parent.is_symlink():
-            raise OSError("O diretório de notificações não pode ser um link simbólico")
-        fd, name = tempfile.mkstemp(prefix=".notifications-", dir=self.path.parent)
-        try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                rows = []
-                for item in self.items:
-                    row = asdict(item)
-                    row["category"] = item.category.value
-                    rows.append(row)
-                json.dump({"items": rows, "settings": {
-                    "silent": self.silent,
-                    "categories": self.categories,
-                    "cooldown_seconds": self.cooldown_seconds,
-                }}, stream, ensure_ascii=False)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(name, self.path)
-        finally:
-            if os.path.exists(name):
-                os.unlink(name)
+        ensure_private_directory(self.path.parent, label="diretório de notificações")
+        rows = []
+        for item in self.items:
+            row = asdict(item)
+            row["category"] = item.category.value
+            rows.append(row)
+        atomic_json_write(
+            self.path,
+            {"items": rows, "settings": {
+                "silent": self.silent,
+                "categories": self.categories,
+                "cooldown_seconds": self.cooldown_seconds,
+            }},
+            label="arquivo de notificações",
+            mode=0o600,
+        )

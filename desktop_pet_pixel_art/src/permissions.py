@@ -5,7 +5,15 @@ from pathlib import Path
 import tempfile
 import threading
 
-from json_persistence import block_replacement, mark_valid, may_replace, preserve_corrupt_file
+from json_persistence import (
+    atomic_json_write,
+    block_replacement,
+    ensure_private_directory,
+    mark_valid,
+    may_replace,
+    preserve_corrupt_file,
+    validate_storage_path,
+)
 
 DEFAULT_PERMISSION_PATH = Path.home() / ".config" / "desktop_pet" / "permissions.json"
 KNOWN_PERMISSIONS = {
@@ -65,10 +73,9 @@ class PermissionManager:
         self._load()
 
     def _ensure_safe_path(self):
-        if self.path.is_symlink():
-            raise OSError("O arquivo de permissões não pode ser um link simbólico")
-        if self.path.parent.exists() and self.path.parent.is_symlink():
-            raise OSError("O diretório de permissões não pode ser um link simbólico")
+        validate_storage_path(self.path, label="arquivo de permissões")
+        if self.path.parent.exists() and not self.path.parent.is_dir():
+            raise OSError("O diretório de permissões não é um diretório válido")
 
     def _load(self):
         try:
@@ -168,19 +175,10 @@ class PermissionManager:
         self._ensure_safe_path()
         if not may_replace(self.path):
             raise OSError(f"Gravação bloqueada para preservar {self.path.name}.")
-        if self.path.parent.exists() and self.path.parent.is_symlink():
-            raise OSError("O diretório de permissões não pode ser um link simbólico")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.parent.is_symlink():
-            raise OSError("O diretório de permissões não pode ser um link simbólico")
-        fd, name = tempfile.mkstemp(prefix=".permissions-", dir=self.path.parent)
-        try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump({"grants": self._grants, "history": self._history[-500:]}, stream)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(name, self.path)
-        finally:
-            if os.path.exists(name):
-                os.unlink(name)
+        ensure_private_directory(self.path.parent, label="diretório de permissões")
+        atomic_json_write(
+            self.path,
+            {"grants": self._grants, "history": self._history[-500:]},
+            label="arquivo de permissões",
+            mode=0o600,
+        )

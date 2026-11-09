@@ -9,6 +9,8 @@ import tempfile
 from datetime import datetime, timezone
 import unicodedata
 
+from json_persistence import ensure_private_directory, validate_storage_path
+
 from .errors import (
     ConsentRequiredError,
     DuplicateMemoryError,
@@ -39,19 +41,17 @@ class MemoryStorage:
             Path.home() / ".config" / "desktop_pet" / "nova_memory.sqlite3"
         )
         self.corrupt_backup_path = None
-        if self.path.is_symlink():
-            raise MemoryStorageError("O banco de memória não pode ser um link simbólico")
-        if self.path.parent.exists() and self.path.parent.is_symlink():
-            raise MemoryStorageError("O diretório do banco de memória não pode ser um link simbólico")
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if self.path.parent.is_symlink():
-            raise MemoryStorageError("O diretório do banco de memória não pode ser um link simbólico")
+        validate_storage_path(self.path, label="banco de memória")
+        ensure_private_directory(self.path.parent, label="diretório do banco de memória")
         self._create_secure_file()
         self._prepare_database()
 
     def _create_secure_file(self):
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
         try:
-            descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            descriptor = os.open(self.path, flags, 0o600)
         except FileExistsError:
             return
         except OSError as exc:
@@ -60,6 +60,10 @@ class MemoryStorage:
             ) from exc
         else:
             os.close(descriptor)
+            try:
+                os.chmod(self.path, 0o600)
+            except OSError:
+                pass
 
     def _connect(self):
         connection = sqlite3.connect(str(self.path), timeout=2.0)
@@ -70,6 +74,7 @@ class MemoryStorage:
         return connection
 
     def _prepare_database(self):
+        validate_storage_path(self.path, label="banco de memória")
         if self.path.exists():
             try:
                 with closing(self._connect()) as connection:
@@ -321,10 +326,10 @@ class MemoryStorage:
         return True
 
     def backup_to(self, destination):
-        destination = Path(destination)
-        if destination.resolve() == self.path.resolve():
+        destination = validate_storage_path(destination, label="backup de memória")
+        if destination == self.path:
             raise MemoryStorageError("O destino do backup deve ser outro arquivo")
-        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        ensure_private_directory(destination.parent, label="diretório do backup da memória")
         temporary = None
         try:
             fd, temporary_name = tempfile.mkstemp(
@@ -344,8 +349,8 @@ class MemoryStorage:
             raise MemoryStorageError("Não foi possível criar o backup da memória", cause=exc) from exc
 
     def export_json(self, destination, *, kind=None):
-        destination = Path(destination)
-        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        destination = validate_storage_path(destination, label="exportação de memória")
+        ensure_private_directory(destination.parent, label="diretório da exportação de memória")
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(

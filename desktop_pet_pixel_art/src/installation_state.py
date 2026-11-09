@@ -6,7 +6,12 @@ import os
 from pathlib import Path
 import tempfile
 
-from json_persistence import preserve_corrupt_file
+from json_persistence import (
+    atomic_json_write,
+    ensure_private_directory,
+    preserve_corrupt_file,
+    validate_storage_path,
+)
 
 
 STATE_VERSION = 1
@@ -39,6 +44,7 @@ class InstallationStateStore:
         self.path = Path(path) if path is not None else (
             Path.home() / ".config" / "desktop_pet" / "installation_state.json"
         )
+        validate_storage_path(self.path, label="estado da instalação")
 
     def load(self):
         if self.path.is_symlink():
@@ -111,39 +117,11 @@ class InstallationStateStore:
             raise ValueError("last_configured_at inválido")
 
     def _save(self, state):
-        if self.path.is_symlink():
-            raise InstallationStateError("O estado da instalação não pode ser um link simbólico")
-        temporary = None
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if self.path.parent.is_symlink():
-                raise InstallationStateError(
-                    "O diretório do estado não pode ser um link simbólico"
-                )
-            os.chmod(self.path.parent, 0o700)
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self.path.parent,
-                prefix=f".{self.path.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temporary = Path(handle.name)
-                os.chmod(temporary, 0o600)
-                json.dump(state, handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, self.path)
-            temporary = None
-            os.chmod(self.path, 0o600)
+            validate_storage_path(self.path, label="estado da instalação")
+            ensure_private_directory(self.path.parent, label="diretório do estado da instalação")
+            atomic_json_write(self.path, state, label="estado da instalação", mode=0o600)
         except (OSError, TypeError, ValueError) as exc:
             raise InstallationStateError(
                 "Não foi possível salvar o estado da instalação"
             ) from exc
-        finally:
-            if temporary is not None:
-                try:
-                    temporary.unlink()
-                except OSError:
-                    pass

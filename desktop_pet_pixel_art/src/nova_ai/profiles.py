@@ -9,7 +9,7 @@ import re
 import tempfile
 import uuid
 
-from json_persistence import preserve_corrupt_file
+from json_persistence import atomic_json_write, ensure_private_directory, preserve_corrupt_file, validate_storage_path
 from config import HISTORY_PATH
 
 
@@ -113,14 +113,10 @@ class UserProfileManager:
         profiles_dir = self.base_dir / "profiles"
         profile_dir = profiles_dir / profile.profile_id
         try:
-            profiles_dir.mkdir(mode=0o700, exist_ok=True)
-            if profiles_dir.is_symlink():
-                raise ProfileStorageError("O diretório de perfis não pode ser link simbólico")
-            os.chmod(profiles_dir, 0o700)
-            profile_dir.mkdir(mode=0o700, exist_ok=True)
-            if profile_dir.is_symlink():
-                raise ProfileStorageError("O diretório do perfil não pode ser link simbólico")
-            os.chmod(profile_dir, 0o700)
+            validate_storage_path(profiles_dir, label="diretório de perfis")
+            ensure_private_directory(profiles_dir, label="diretório de perfis")
+            validate_storage_path(profile_dir, label="diretório do perfil")
+            ensure_private_directory(profile_dir, label="diretório do perfil")
         except OSError as exc:
             raise ProfileStorageError("Não foi possível preparar o diretório do perfil") from exc
         return profile_dir
@@ -174,42 +170,21 @@ class UserProfileManager:
             ) from exc
 
     def _save(self, profiles, active_id):
-        self.base_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if self.registry_path.is_symlink():
-            raise ProfileStorageError("O registro de perfis não pode ser um link simbólico")
-        payload = {
-            "version": _REGISTRY_VERSION,
-            "active_profile_id": active_id,
-            "profiles": [
-                {
-                    "profile_id": profile.profile_id,
-                    "name": profile.name,
-                    "created_at": profile.created_at,
-                }
-                for profile in profiles
-            ],
-        }
-        temporary = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self.base_dir,
-                prefix=".user_profiles.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temporary = Path(handle.name)
-                os.chmod(temporary, 0o600)
-                json.dump(payload, handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, self.registry_path)
-            os.chmod(self.registry_path, 0o600)
+            validate_storage_path(self.registry_path, label="registro de perfis")
+            ensure_private_directory(self.base_dir, label="diretório de perfis")
+            payload = {
+                "version": _REGISTRY_VERSION,
+                "active_profile_id": active_id,
+                "profiles": [
+                    {
+                        "profile_id": profile.profile_id,
+                        "name": profile.name,
+                        "created_at": profile.created_at,
+                    }
+                    for profile in profiles
+                ],
+            }
+            atomic_json_write(self.registry_path, payload, label="registro de perfis", mode=0o600)
         except OSError as exc:
-            if temporary is not None:
-                try:
-                    temporary.unlink(missing_ok=True)
-                except OSError:
-                    pass
             raise ProfileStorageError("Não foi possível salvar os perfis locais") from exc

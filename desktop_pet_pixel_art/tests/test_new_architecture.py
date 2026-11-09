@@ -181,6 +181,24 @@ class ArchitectureTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 NotificationManager(linked_file)
 
+    def test_permission_and_notification_storage_reject_ancestor_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real_root = root / "real-home"
+            real_root.mkdir()
+            outer = root / "outer"
+            outer.mkdir()
+            outer_symlink = outer / "unsafe"
+            outer_symlink.symlink_to(real_root, target_is_directory=True)
+            safe_file = real_root / "permissions.json"
+            safe_file.write_text(json.dumps({"grants": {}, "history": []}), encoding="utf-8")
+
+            attack_path = outer_symlink / "nested" / "permissions.json"
+            with self.assertRaises(OSError):
+                PermissionManager(attack_path)
+            with self.assertRaises(OSError):
+                NotificationManager(attack_path)
+
     def test_permission_read_failure_blocks_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "permissions.json"
