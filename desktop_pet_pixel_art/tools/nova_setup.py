@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 from pathlib import Path
 import queue
 import re
@@ -23,6 +24,7 @@ INSTALLER = APP_DIR / "install.sh"
 APP_ENTRY = APP_DIR / "src" / "desktop_pet.py"
 STATE_PATH = Path.home() / ".config" / "desktop_pet" / "installation_state.json"
 DEFAULT_MODEL = "llama3.2:1b"
+OLLAMA_INSTALL_COMMAND = "curl -fsSL https://ollama.com/install.sh | sh"
 REQUIRED_IMPORTS = {
     "Pillow": "PIL",
     "OpenCV": "cv2",
@@ -32,6 +34,56 @@ REQUIRED_IMPORTS = {
 MODEL_NAME = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127})?\Z"
 )
+
+
+def linux_distribution():
+    """Return the host Linux distribution metadata when available."""
+    try:
+        return platform.freedesktop_os_release()
+    except OSError:
+        return {}
+
+
+def system_install_commands(checks, *, distribution=None):
+    """Suggest, but never execute, apt commands for missing system prerequisites."""
+    release = linux_distribution() if distribution is None else distribution
+    identifiers = {
+        release.get("ID", "").lower(),
+        *release.get("ID_LIKE", "").lower().split(),
+    }
+    if not identifiers.intersection({"linuxmint", "ubuntu", "debian"}):
+        return []
+
+    packages = []
+    if not checks.get("Python 3.10+", True):
+        packages.append("python3")
+    if not checks.get("módulo venv", True):
+        packages.append("python3-venv")
+    if not checks.get("Tkinter", True):
+        packages.append("python3-tk")
+    if not packages:
+        return []
+    return ["sudo apt update", f"sudo apt install {' '.join(packages)}"]
+
+
+def system_setup_guidance(checks, *, distribution=None):
+    """Describe manual system setup for both the GUI and terminal fallback."""
+    release = linux_distribution() if distribution is None else distribution
+    distro_name = release.get("PRETTY_NAME", "distribuição Linux não identificada")
+    commands = system_install_commands(checks, distribution=release)
+    if commands:
+        guidance = (
+            f"Distribuição detectada: {distro_name}.\n"
+            "Execute manualmente os comandos abaixo e autorize-os no sistema; "
+            "a Nova nunca os executa:"
+        )
+    else:
+        guidance = (
+            f"Distribuição detectada: {distro_name}.\n"
+            "Consulte a documentação da distribuição para instalar Python 3.10+, "
+            "venv e Tkinter. A Nova não executa comandos administrativos."
+        )
+    return guidance, commands
 
 
 def system_prerequisites():
@@ -197,21 +249,27 @@ class SetupWindow:
         system = ttk.LabelFrame(frame, text="Dependências do sistema", padding=10)
         system.pack(fill="x", pady=(0, 10))
         checks = system_prerequisites()
+        system_guidance, self.system_commands = system_setup_guidance(checks)
         for name, available in checks.items():
             value = "Encontrado" if available else "Ausente"
             ttk.Label(system, text=f"{name}: {value}").pack(anchor="w")
         self.system_help = ttk.Label(
             system,
-            text=(
-                "Instale manualmente, com autorização do sistema, os pacotes necessários. "
-                "Debian/Ubuntu: sudo apt install python3-venv python3-tk. "
-                "A Nova não executa sudo."
-            ),
+            text=system_guidance
+            + ("\n" + "\n".join(self.system_commands) if self.system_commands else ""),
             wraplength=600,
             justify="left",
         )
         if not all(checks.values()):
             self.system_help.pack(anchor="w", pady=(6, 0))
+            if self.system_commands:
+                ttk.Button(
+                    system,
+                    text="Copiar comandos do sistema",
+                    command=lambda: self.copy_text(
+                        "\n".join(self.system_commands), "Comandos do sistema"
+                    ),
+                ).pack(anchor="e", pady=(6, 0))
 
         dependencies = ttk.LabelFrame(
             frame, text="Dependências Python (ambiente .venv)", padding=10
@@ -231,13 +289,16 @@ class SetupWindow:
 
         ollama = ttk.LabelFrame(frame, text="Ollama opcional — IA local", padding=10)
         ollama.pack(fill="x", pady=(0, 10))
+        release = linux_distribution()
+        distro_name = release.get("PRETTY_NAME", "Linux")
         ttk.Label(
             ollama,
             text=(
-                "A mascote funciona sem Ollama. A instalação do serviço é manual: "
-                "abra ollama.com/download e siga as instruções oficiais. "
-                "Para iniciar um serviço instalado, use `ollama serve` se ele não estiver "
-                "sendo gerenciado pelo sistema."
+                f"Distribuição detectada: {distro_name}. A mascote funciona sem Ollama. "
+                "Para Linux, use o instalador oficial abaixo; ele pode solicitar "
+                "autorização administrativa. A Nova não executa esse comando. "
+                "Depois, teste o serviço novamente. Se o serviço systemd estiver parado, "
+                "inicie-o manualmente; sem systemd, execute `ollama serve` em um terminal."
             ),
             wraplength=600,
             justify="left",
@@ -249,9 +310,22 @@ class SetupWindow:
             command=self.open_ollama_guide,
         ).pack(side="left")
         ttk.Button(
-            ollama_buttons, text="Testar serviço/modelo",
+            ollama_buttons, text="Copiar instalador oficial",
+            command=lambda: self.copy_text(
+                OLLAMA_INSTALL_COMMAND, "Comando oficial do Ollama"
+            ),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            ollama_buttons, text="Verificar novamente",
             command=self.test_ollama,
         ).pack(side="left", padx=(8, 0))
+        if shutil.which("systemctl"):
+            ttk.Button(
+                ollama, text="Copiar comando para iniciar serviço",
+                command=lambda: self.copy_text(
+                    "sudo systemctl start ollama", "Comando para iniciar Ollama"
+                ),
+            ).pack(anchor="w", pady=(0, 6))
         model_row = ttk.Frame(ollama)
         model_row.pack(fill="x")
         ttk.Label(model_row, text="Modelo a baixar:").pack(side="left")
@@ -286,6 +360,16 @@ class SetupWindow:
         self.log.insert("end", text.rstrip() + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+
+    def copy_text(self, text, label):
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update()
+        except self.tk.TclError as exc:
+            self._append_log(f"Não consegui copiar {label}: {exc}")
+            return
+        self._append_log(f"{label} copiado para a área de transferência.")
 
     def _refresh_status(self):
         for name, available in self.dependency_results.items():
@@ -586,13 +670,21 @@ def main():
     checks = system_prerequisites()
     if not checks["Python 3.10+"]:
         print("Python 3.10 ou superior é necessário.", file=sys.stderr)
+        guidance, commands = system_setup_guidance(checks)
+        print(guidance, file=sys.stderr)
+        for command in commands:
+            print(f"  {command}", file=sys.stderr)
         return 1
     if not checks["Tkinter"]:
         print(
-            "A tela de preparação requer Tkinter. Instale-o manualmente "
-            "(Debian/Ubuntu: sudo apt install python3-tk); nenhum sudo será executado.",
+            "A tela de preparação requer Tkinter. Instale os componentes indicados "
+            "manualmente e execute este lançador novamente; nenhum sudo será executado.",
             file=sys.stderr,
         )
+        guidance, commands = system_setup_guidance(checks)
+        print(guidance, file=sys.stderr)
+        for command in commands:
+            print(f"  {command}", file=sys.stderr)
         return 1
     dependencies = probe_dependencies(VENV_PYTHON)
     if all(dependencies.values()) and _setup_completed():

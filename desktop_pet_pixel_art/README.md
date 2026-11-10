@@ -10,7 +10,7 @@ A Nova é uma mascote em pixel art para Linux. Ela anima na área de trabalho, c
 ./launchers/run-nova.sh
 ```
 
-O assistente verifica individualmente as dependências do ambiente virtual e pede confirmação antes de instalar ou reparar `.venv`. Não usa `sudo` nem modifica o Python global. Se componentes do sistema estiverem ausentes, ele explica como instalá-los manualmente; em Debian ou Ubuntu, por exemplo, `sudo apt install python3-venv python3-tk`. Essa etapa exige sua autorização e não é executada pela Nova.
+O assistente verifica individualmente as dependências do ambiente virtual e pede confirmação antes de instalar ou reparar `.venv`. Não usa `sudo` nem modifica o Python global. Se componentes do sistema estiverem ausentes, ele detecta a distribuição e mostra instruções manuais; no Linux Mint, por exemplo, use `sudo apt update` e `sudo apt install python3-venv python3-tk`. Se Tkinter estiver ausente, o lançador mostra essas instruções no terminal, pois a janela gráfica ainda não pode abrir. A Nova nunca executa comandos administrativos.
 
 Como alternativa, é possível usar o instalador de linha de comando. Uma instalação existente é detectada antes da atualização. Para automatizar a instalação sem confirmação, use `./install.sh --yes`. Para remover o ambiente virtual e o lançador, preservando preferências, histórico e demais dados pessoais:
 
@@ -18,7 +18,7 @@ Como alternativa, é possível usar o instalador de linha de comando. Uma instal
 ./install.sh --uninstall
 ```
 
-O instalador de linha de comando prepara somente o ambiente Python da aplicação e o lançador; não instala serviços do sistema, não inicia o Ollama e não baixa modelos. A preparação guiada também orienta a instalação do Ollama, testa o serviço local e oferece baixar um modelo somente após confirmação. Instalar o Ollama e dependências do sistema continua sendo uma ação manual.
+O instalador de linha de comando prepara somente o ambiente Python da aplicação e o lançador; não instala serviços do sistema, não inicia o Ollama e não baixa modelos. A preparação guiada mostra o instalador oficial do Ollama (`curl -fsSL https://ollama.com/install.sh | sh`), permite copiá-lo e orienta a iniciar o serviço manualmente quando necessário. Depois da instalação, use **Verificar novamente** para testar o serviço local; o download do modelo só começa após confirmação. Instalar o Ollama e dependências do sistema continua sendo uma ação manual.
 
 Depois da preparação, a tela de boas-vindas verifica Ollama, modelo local, banco, personalidade, animações e espaço em disco. O diagnóstico também fica disponível no menu principal e pode ser atualizado sem instalar ou modificar dados. A Nova pode continuar sem Ollama. O estado da instalação fica separado dos perfis em `~/.config/desktop_pet/installation_state.json`.
 

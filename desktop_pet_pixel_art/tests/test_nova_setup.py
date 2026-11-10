@@ -1,4 +1,6 @@
+import io
 import json
+from contextlib import redirect_stderr
 from pathlib import Path
 import queue
 import sys
@@ -62,6 +64,59 @@ class NovaSetupTests(unittest.TestCase):
         self.assertIn("inválido", status)
         open_url.assert_not_called()
 
+    def test_ollama_status_reports_service_connection_failure(self):
+        with mock.patch.object(
+            nova_setup.urllib.request,
+            "urlopen",
+            side_effect=nova_setup.urllib.error.URLError("connection refused"),
+        ):
+            status = nova_setup.ollama_status("llama3.2:1b")
+
+        self.assertIn("não está respondendo", status)
+
+    def test_mint_system_commands_are_manual_and_include_missing_packages(self):
+        commands = nova_setup.system_install_commands(
+            {"Python 3.10+": True, "módulo venv": False, "Tkinter": False},
+            distribution={"ID": "linuxmint", "ID_LIKE": "ubuntu debian"},
+        )
+
+        self.assertEqual(
+            commands,
+            ["sudo apt update", "sudo apt install python3-venv python3-tk"],
+        )
+
+    def test_launcher_prints_linux_mint_commands_when_tkinter_is_missing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = io.StringIO()
+            with (
+                mock.patch.object(nova_setup, "VENV_DIR", Path(temporary)),
+                mock.patch.object(
+                    nova_setup,
+                    "system_prerequisites",
+                    return_value={
+                        "Python 3.10+": True,
+                        "módulo venv": True,
+                        "Tkinter": False,
+                    },
+                ),
+                mock.patch.object(
+                    nova_setup,
+                    "linux_distribution",
+                    return_value={
+                        "ID": "linuxmint",
+                        "ID_LIKE": "ubuntu debian",
+                        "PRETTY_NAME": "Linux Mint 22",
+                    },
+                ),
+                redirect_stderr(output),
+            ):
+                result = nova_setup.main()
+
+        self.assertEqual(result, 1)
+        self.assertIn("Linux Mint 22", output.getvalue())
+        self.assertIn("sudo apt install python3-tk", output.getvalue())
+        self.assertIn("nenhum sudo será executado", output.getvalue())
+
     def test_refresh_status_checks_ollama_off_the_ui_thread(self):
         window = nova_setup.SetupWindow.__new__(nova_setup.SetupWindow)
         window.dependency_results = {name: True for name in nova_setup.REQUIRED_IMPORTS}
@@ -113,6 +168,38 @@ class NovaSetupTests(unittest.TestCase):
         command = window._start_process.call_args.args[1]
         self.assertEqual(command, [str(nova_setup.INSTALLER), "--yes"])
         self.assertNotIn("sudo", command)
+
+    def test_gui_refuses_virtualenv_symlink_before_starting_install(self):
+        window = nova_setup.SetupWindow.__new__(nova_setup.SetupWindow)
+        window.root = mock.Mock()
+        window.messagebox = mock.Mock()
+        window.messagebox.askyesno.return_value = True
+        window._start_process = mock.Mock()
+
+        with (
+            mock.patch.object(nova_setup, "system_prerequisites", return_value={"ready": True}),
+            mock.patch.object(nova_setup, "VENV_DIR") as venv_dir,
+        ):
+            venv_dir.is_symlink.return_value = True
+            window.install_dependencies()
+
+        window.messagebox.showerror.assert_called_once()
+        window._start_process.assert_not_called()
+
+    def test_copying_setup_commands_uses_clipboard_without_running_them(self):
+        window = nova_setup.SetupWindow.__new__(nova_setup.SetupWindow)
+        window.root = mock.Mock()
+        window.tk = mock.Mock()
+        window.tk.TclError = RuntimeError
+        window._append_log = mock.Mock()
+
+        with mock.patch.object(nova_setup.subprocess, "run") as run:
+            window.copy_text("sudo apt install python3-tk", "Comandos do sistema")
+
+        window.root.clipboard_clear.assert_called_once()
+        window.root.clipboard_append.assert_called_once_with("sudo apt install python3-tk")
+        window.root.update.assert_called_once()
+        run.assert_not_called()
 
     def test_setup_completion_requires_an_explicit_true_state(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -182,6 +269,63 @@ class NovaSetupTests(unittest.TestCase):
         process.terminate.assert_called_once()
         window.root.destroy.assert_called_once()
 
+    def test_closing_during_dependency_install_does_not_interrupt_it(self):
+        window = nova_setup.SetupWindow.__new__(nova_setup.SetupWindow)
+        window.operation = "install"
+        window.messagebox = mock.Mock()
+        window.root = mock.Mock()
+
+        window.close()
+
+        window.messagebox.showinfo.assert_called_once()
+        window.root.destroy.assert_not_called()
+
+    def test_no_space_download_failure_is_kept_in_the_process_log(self):
+        window = nova_setup.SetupWindow.__new__(nova_setup.SetupWindow)
+        window.operation = None
+        window._refresh_status = mock.Mock()
+        window.progress = mock.Mock()
+        window._append_log = mock.Mock()
+        window._app_environment = mock.Mock(return_value={})
+        process = mock.Mock()
+        process.stdout = ["OSError: [Errno 28] No space left on device\n"]
+        process.wait.return_value = 1
+
+        with (
+            mock.patch.object(nova_setup.threading, "Thread") as thread,
+            mock.patch.object(nova_setup.subprocess, "Popen", return_value=process),
+        ):
+            window._start_process("pull", ["ollama", "pull", "model"], "downloading")
+            thread.call_args.kwargs["target"]()
+
+        self.assertEqual(
+            window.results.get_nowait(),
+            ("line", "OSError: [Errno 28] No space left on device\n"),
+        )
+        self.assertEqual(window.results.get_nowait(), ("finished", 1))
+
+    def test_permission_error_starting_a_setup_process_is_reported(self):
+        window = nova_setup.SetupWindow.__new__(nova_setup.SetupWindow)
+        window.operation = None
+        window._refresh_status = mock.Mock()
+        window.progress = mock.Mock()
+        window._append_log = mock.Mock()
+        window._app_environment = mock.Mock(return_value={})
+
+        with (
+            mock.patch.object(nova_setup.threading, "Thread") as thread,
+            mock.patch.object(
+                nova_setup.subprocess,
+                "Popen",
+                side_effect=PermissionError("permission denied"),
+            ),
+        ):
+            window._start_process("pull", ["ollama", "pull", "model"], "downloading")
+            thread.call_args.kwargs["target"]()
+
+        kind, message = window.results.get_nowait()
+        self.assertEqual(kind, "error")
+        self.assertIn("permission denied", message)
 
 if __name__ == "__main__":
     unittest.main()

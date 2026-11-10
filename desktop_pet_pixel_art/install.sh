@@ -5,6 +5,10 @@ APP_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP_FILE="$APPLICATIONS_DIR/nova.desktop"
 VENV_DIR="$APP_DIR/.venv"
+if [ -L "$VENV_DIR" ]; then
+    printf 'O caminho .venv é um link simbólico; não vou acessá-lo: %s\n' "$VENV_DIR" >&2
+    exit 1
+fi
 INSTALL_MARKER="$VENV_DIR/.nova-desktop-file-path"
 SAVED_DESKTOP_FILE=
 if [ -f "$INSTALL_MARKER" ]; then
@@ -12,6 +16,15 @@ if [ -f "$INSTALL_MARKER" ]; then
 fi
 YES=0
 ACTION=install
+
+print_apt_install_hint() {
+    packages=$1
+    if [ -r /etc/os-release ] &&
+        grep -E '^(ID|ID_LIKE)=' /etc/os-release | grep -Eiq 'linuxmint|ubuntu|debian'; then
+        printf 'No Linux Mint/Debian/Ubuntu, instale manualmente:\n  sudo apt update\n  sudo apt install %s\n' \
+            "$packages" >&2
+    fi
+}
 
 usage() {
     cat <<'EOF'
@@ -86,19 +99,23 @@ fi
 
 if ! command -v python3 >/dev/null 2>&1; then
     printf '%s\n' "Python 3 não foi encontrado. Instale Python 3.10 ou superior." >&2
+    print_apt_install_hint "python3 python3-venv python3-tk"
     exit 1
 fi
 if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
     printf 'Python 3.10 ou superior é necessário (encontrado: %s).\n' \
         "$(python3 --version 2>&1)" >&2
+    print_apt_install_hint "python3"
     exit 1
 fi
 if ! python3 -m venv --help >/dev/null 2>&1; then
     printf '%s\n' "O módulo venv não está disponível. Em Debian/Ubuntu, instale python3-venv." >&2
+    print_apt_install_hint "python3-venv"
     exit 1
 fi
 if ! python3 -c 'import tkinter' >/dev/null 2>&1; then
     printf '%s\n' "Tkinter não está disponível. Em Debian/Ubuntu, instale python3-tk." >&2
+    print_apt_install_hint "python3-tk"
     exit 1
 fi
 
