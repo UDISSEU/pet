@@ -219,12 +219,12 @@ SPEECH_POOLS = {
         "Essa dança vai no seu ritmo!",
     ),
     "miss_you": (
-        "Que saudade! Fico feliz que você voltou.",
+        "Que bom que você voltou! Como posso ajudar?",
         "Fazia um tempinho, {nome}. Que bom te ver!",
-        "Senti falta da sua companhia por aqui.",
-        "Olha quem voltou! Meu dia ficou mais alegre.",
+        "Oi, {nome}! Quer retomar de onde parou?",
+        "A Nova está pronta para acompanhar você de novo.",
         "Que bom ter você de volta, {nome}!",
-        "A casa ficou mais feliz com sua visita.",
+        "Bem-vinda de volta! O que gostaria de fazer hoje?",
     ),
     "sit_down": (
         "Ufa... só um descansinho.",

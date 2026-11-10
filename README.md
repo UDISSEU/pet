@@ -7,20 +7,20 @@ Uma companheira virtual em pixel art que vive na área de trabalho, anima-se, co
 ## O que a Nova oferece
 
 - **Mascote animada:** caminha, descansa, acena, dança, boceja e reage às interações.
-- **Conversa com IA:** usa Ollama local por padrão e permite configurar Gemini, Groq ou Mistral.
+- **Conversa com IA:** usa exclusivamente o Ollama local; a mascote e os recursos locais funcionam sem ele.
 - **Foco e rotina:** sessões de concentração e pausa, horário silencioso, lembretes e mensagens de rotina.
 - **Automações locais:** consulta de indicadores do notebook, análise de arquivos e organização de Downloads e capturas.
 - **Integrações:** abertura de aplicativos Linux e controle de reprodução do Spotify.
 - **Controles de segurança:** permissões para ações sensíveis, prévias e confirmações antes de operações destrutivas.
 
-A Nova pode ser usada sem configurar provedores online. Recursos que dependem de X11, como observar janelas e posicionar a mascote sobre elas, são opcionais.
+Recursos que dependem de X11, como observar janelas e posicionar a mascote sobre elas, são opcionais.
 
 ### Tecnologias
 
 - **Linguagem:** Python
 - **Interface e runtime:** Tkinter, em ambiente desktop Linux
 - **Bibliotecas principais:** Pillow, OpenCV, NumPy e psutil
-- **Integrações opcionais:** Ollama, APIs Gemini/Groq/Mistral, Spotify, Secret Service e `python-xlib`
+- **Integrações opcionais:** Ollama, Spotify e `python-xlib`
 
 ## Estrutura do repositório
 
@@ -38,14 +38,14 @@ A Nova pode ser usada sem configurar provedores online. Recursos que dependem de
 │   ├── launchers/            # Lançador, ícone e atalhos da aplicação
 │   ├── src/
 │   │   ├── ai/               # Contexto, personalidade, roteamento e pedidos de IA
-│   │   ├── providers/        # Adaptadores para Ollama, Gemini, Groq e Mistral
+│   │   ├── providers/        # Adaptador para Ollama local
 │   │   ├── desktop_pet.py    # Janela principal, ciclo e estado da mascote
 │   │   ├── desktop_pet_ui.py # Menu, preferências e janelas da interface
 │   │   ├── automations.py    # Automações locais e organização de arquivos
 │   │   ├── plugin_manager.py # Registro e ciclo de vida de plugins
 │   │   └── ...               # Persistência, permissões, animações e integrações
 │   ├── tests/                # Testes unitários e de integração com mocks
-│   ├── tools/                # Ferramentas de teste gráfico e soak tests
+│   ├── tools/                # Preparação guiada, ferramentas gráficas e soak tests
 │   ├── install.sh            # Cria o ambiente virtual e instala dependências
 │   └── requirements.txt      # Dependências Python
 ├── movimentação Nova/       # Vídeos e imagens de referência da personagem
@@ -84,61 +84,62 @@ O histórico começa em **8 de outubro de 2026**, com a primeira versão da masc
 
 - **Início do projeto:** primeira implementação da mascote, com assets e animações de pixel art.
 - **Organização do repositório:** remoção posterior de ambientes virtuais e arquivos redundantes do rastreamento, além da adoção de `.gitignore`.
-- **Expansão da aplicação:** inclusão de lançador Linux, provedores de IA, módulos separados para interface e animação e testes automatizados.
+- **Expansão da aplicação:** inclusão de lançador Linux, integração com Ollama local, módulos separados para interface e animação e testes automatizados.
 - **Automações e integrações:** ferramentas locais para organização e análise de arquivos, integração com Spotify e controles de permissão.
 
-O projeto é uma aplicação desktop em Python/Tkinter, com animações, provedores de IA, automações locais, testes e documentação de arquitetura. O estado das branches e dos commits muda ao longo do desenvolvimento; consulte o Git para obter essas referências atualizadas.
+O projeto é uma aplicação desktop em Python/Tkinter, com animações, integração com IA local, automações, testes e documentação de arquitetura. O estado das branches e dos commits muda ao longo do desenvolvimento; consulte o Git para obter essas referências atualizadas.
 
 ## Instalação
 
 ### Requisitos
 
-- Linux com Python 3 e suporte a `venv`
+- Linux com Python 3.10 ou superior e suporte a `venv`
 - Tkinter disponível para a instalação Python do sistema
-- `python3-dbus` para recursos que dependem de D-Bus/Secret Service
 
-Em Debian ou Ubuntu, instale os requisitos do sistema:
+Na primeira execução, use o lançador para abrir a preparação guiada. Ela cria o ambiente
+virtual e instala dependências Python somente após sua confirmação; não usa `sudo` e não
+altera o Python global:
+
+```bash
+cd desktop_pet_pixel_art
+./launchers/run-nova.sh
+```
+
+Se Python, `venv` ou Tkinter estiverem ausentes, instale os pacotes de sistema manualmente,
+com sua autorização. Em Debian ou Ubuntu:
 
 ```bash
 sudo apt update
-sudo apt install python3-venv python3-tk python3-dbus
+sudo apt install python3-venv python3-tk
 ```
 
-### Instalar a Nova
-
-Na raiz do repositório:
+Como alternativa, o instalador de linha de comando prepara `.venv` e instala dependências
+Python, mas não instala serviços do sistema, Ollama ou modelos:
 
 ```bash
 cd desktop_pet_pixel_art
 ./install.sh
 ```
 
-O instalador cria o ambiente virtual `.venv`, instala as dependências de `requirements.txt` e registra o lançador no menu de aplicativos do usuário.
-
 ### Iniciar
 
 ```bash
 cd desktop_pet_pixel_art
-.venv/bin/python src/desktop_pet.py
+./launchers/run-nova.sh
 ```
 
 ## Conversa com IA
 
-O **Ollama local** é o provedor padrão. Para conversar com um modelo, instale o Ollama, inicie o serviço e baixe o modelo configurado por padrão:
+O **Ollama local** é o único provedor disponível. Para conversar com um modelo, instale o Ollama, inicie o serviço e baixe o modelo configurado por padrão:
 
 ```bash
 ollama pull llama3.2:1b
 ```
 
-A mascote e os recursos locais continuam disponíveis mesmo sem o Ollama. A conversa online é opcional: Gemini, Groq e Mistral podem ser configurados nas preferências da Nova. Perguntas são enviadas ao provedor selecionado; mensagens anteriores só são incluídas se a opção de contexto estiver ligada. Verifique a política do provedor antes de enviar informações. As chaves não são armazenadas em `settings.json`; o projeto oferece suporte ao cofre Secret Service ou às variáveis de ambiente indicadas abaixo:
-
-```text
-GEMINI_API_KEY
-GROQ_API_KEY
-MISTRAL_API_KEY
-```
-
-Verifique os limites, a privacidade e as condições da sua conta diretamente no painel do provedor. A Nova também oferece um teste de conexão que não envia o histórico da conversa.
+A mascote e os recursos locais continuam disponíveis sem o Ollama. A conversa usa somente
+o serviço Ollama local. O download do modelo exige confirmação e pode consumir internet e
+espaço em disco. O histórico não é salvo nem reutilizado como contexto por padrão; essas
+opções podem ser ativadas separadamente em **Preferências > Memória**.
 
 ## Recursos da interface
 
@@ -164,7 +165,10 @@ Os dados da aplicação são mantidos localmente nos seguintes caminhos:
 | `~/.config/desktop_pet/downloads_undo.json` | Informações necessárias para desfazer a última organização de Downloads |
 | `~/.config/desktop_pet/permissions.json` | Permissões concedidas ou revogadas |
 
-As chaves dos provedores de IA não ficam nas preferências JSON. O envio de contexto a um provedor online depende das opções de privacidade configuradas na interface. Se arquivos JSON de dados estiverem corrompidos, a aplicação tenta preservar uma cópia antes de substituí-los.
+As conversas são processadas pelo Ollama local, sem envio a provedores de IA online. O
+histórico não é salvo nem reutilizado como contexto por padrão; as opções podem ser
+controladas separadamente em **Preferências > Memória**. Se arquivos JSON de dados estiverem
+corrompidos, a aplicação tenta preservar uma cópia antes de substituí-los.
 
 ## Desenvolvimento e testes
 

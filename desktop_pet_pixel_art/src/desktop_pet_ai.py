@@ -135,9 +135,15 @@ class DesktopPetAIMixin:
             or save_history(self.history, self.history_path)
         )
         failed = answer == PROVIDER_FAILURE_MESSAGE
-        self.state = "curious" if failed else "walk"
+        focus_mode = getattr(self, "focus_mode", "idle")
+        if focus_mode == "focus":
+            self.state = "focused"
+        elif focus_mode == "break":
+            self.state = "sitting"
+        else:
+            self.state = "curious" if failed else "walk"
         self._show_idea_icon = True
-        if failed:
+        if failed and focus_mode == "idle":
             answer = pick_line(
                 "oops", name=self.settings.get("user_name", ""),
                 rng=random, history=self._speech_history,

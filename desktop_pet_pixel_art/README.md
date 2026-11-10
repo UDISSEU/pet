@@ -4,22 +4,23 @@ A Nova é uma mascote em pixel art para Linux. Ela anima na área de trabalho, c
 
 ## Instalar
 
-É necessário Python 3.10 ou superior, o módulo `venv` e Tkinter. Em Debian ou Ubuntu, instale os componentes de sistema e execute o instalador. Ele valida a versão e as dependências, diagnostica recursos opcionais, cria/reutiliza o ambiente virtual, verifica a importação da aplicação e registra o lançador no menu do usuário:
+É necessário Python 3.10 ou superior, o módulo `venv` e Tkinter. Na primeira execução, inicie o lançador para abrir a preparação guiada:
 
 ```bash
-sudo apt install python3-venv python3-tk
-./install.sh
+./launchers/run-nova.sh
 ```
 
-Uma instalação existente é detectada antes da atualização. Para automatizar a instalação sem confirmação, use `./install.sh --yes`. Para remover o ambiente virtual e o lançador, preservando preferências, histórico e demais dados pessoais:
+O assistente verifica individualmente as dependências do ambiente virtual e pede confirmação antes de instalar ou reparar `.venv`. Não usa `sudo` nem modifica o Python global. Se componentes do sistema estiverem ausentes, ele explica como instalá-los manualmente; em Debian ou Ubuntu, por exemplo, `sudo apt install python3-venv python3-tk`. Essa etapa exige sua autorização e não é executada pela Nova.
+
+Como alternativa, é possível usar o instalador de linha de comando. Uma instalação existente é detectada antes da atualização. Para automatizar a instalação sem confirmação, use `./install.sh --yes`. Para remover o ambiente virtual e o lançador, preservando preferências, histórico e demais dados pessoais:
 
 ```bash
 ./install.sh --uninstall
 ```
 
-O instalador prepara somente o ambiente Python da aplicação e o lançador; não instala serviços do sistema, não inicia o Ollama e não baixa modelos. Instalação do Ollama e dependências do sistema são ações manuais.
+O instalador de linha de comando prepara somente o ambiente Python da aplicação e o lançador; não instala serviços do sistema, não inicia o Ollama e não baixa modelos. A preparação guiada também orienta a instalação do Ollama, testa o serviço local e oferece baixar um modelo somente após confirmação. Instalar o Ollama e dependências do sistema continua sendo uma ação manual.
 
-Na primeira abertura, a tela de boas-vindas verifica a versão do Python, dependências, Ollama, modelo local, banco, personalidade, animações e espaço em disco. O diagnóstico também fica disponível no menu principal e pode ser atualizado sem instalar ou modificar dados. A Nova pode continuar sem Ollama. Essa tela não instala o Ollama nem baixa modelos; qualquer download de modelo exige confirmação posterior. O estado da instalação fica separado dos perfis em `~/.config/desktop_pet/installation_state.json`.
+Depois da preparação, a tela de boas-vindas verifica Ollama, modelo local, banco, personalidade, animações e espaço em disco. O diagnóstico também fica disponível no menu principal e pode ser atualizado sem instalar ou modificar dados. A Nova pode continuar sem Ollama. O estado da instalação fica separado dos perfis em `~/.config/desktop_pet/installation_state.json`.
 
 `python-xlib` é opcional. Sem ela, os recursos dependentes de X11 (observar janelas, transparência por forma e posicionamento sobre outras janelas) ficam indisponíveis. O instalador informa também se Ollama, Bubblewrap e `prlimit` estão disponíveis; são recursos opcionais para IA local e execução isolada de plugins externos. Para habilitar X11 no ambiente virtual:
 
@@ -54,7 +55,7 @@ Os lembretes são exibidos enquanto a Nova está aberta. Os horários usam a hor
 
 Para usar a conversa, instale o [Ollama](https://ollama.com/), inicie o serviço e baixe o modelo definido em `src/config.py` (padrão: `llama3.2:1b`). Sem o Ollama, a mascote e os outros recursos continuam disponíveis.
 
-O Ollama local é o provedor padrão. Se outro provedor estiver configurado, a pergunta, o histórico enviado como contexto e as memórias habilitadas podem ser processados por esse serviço; verifique os termos do provedor. O histórico não é salvo nem reutilizado como contexto por padrão. Em **Preferências > Memória**, as opções de salvar e reutilizar conversas podem ser ativadas separadamente; o histórico pode ser consultado e apagado. O download do modelo Ollama configurado só começa após confirmação explícita.
+O Ollama local é o único provedor disponível. A pergunta e as memórias habilitadas são processadas pelo serviço local. O histórico não é salvo nem reutilizado como contexto por padrão. Em **Preferências > Memória**, as opções de salvar e reutilizar conversas podem ser ativadas separadamente; o histórico pode ser consultado e apagado. O download do modelo Ollama configurado só começa após confirmação explícita.
 
 ## Arquivos de dados
 

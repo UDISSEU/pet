@@ -1,6 +1,6 @@
 # Capacidades offline
 
-## Funcionam sem provedor online
+## Funcionalidades locais e operação offline
 
 | Capacidade | Condição / limite observado |
 |---|---|
@@ -24,6 +24,6 @@
 
 ## IA independente e funcionamento offline
 
-A arquitetura usa exclusivamente um runtime/modelo local de terceiro (Ollama), não inferência própria da aplicação. “Offline” requer que o Ollama e o modelo já estejam instalados e disponíveis; a tela inicial não baixa modelos, e Preferências oferece download apenas após confirmação explícita. Sem Ollama, permanecem respostas/intents locais e funcionalidades da mascote; não há geração aberta equivalente para perguntas livres.
+A arquitetura usa exclusivamente um runtime/modelo local de terceiro (Ollama), não inferência própria da aplicação. “Offline” requer que o Ollama e o modelo já estejam instalados e disponíveis; a preparação guiada e Preferências oferecem download somente após confirmação explícita. Sem Ollama, permanecem respostas/intents locais e funcionalidades da mascote; não há geração aberta equivalente para perguntas livres.
 
 Para independência operacional, a futura camada de inferência local precisará ser substituível atrás de interface, com detecção de hardware/modelo, limites de contexto e fallback explícito. Para independência de provedor, separar backend de geração é pré-requisito; treinamento do zero não é um passo de implementação no hardware descrito.

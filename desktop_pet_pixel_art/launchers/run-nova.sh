@@ -2,12 +2,11 @@
 set -eu
 
 APP_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-PYTHON="$APP_DIR/.venv/bin/python"
+PYTHON="${PYTHON:-python3}"
 
-if [ ! -x "$PYTHON" ]; then
-    printf '%s\n' "Ambiente Python da Nova não encontrado: $PYTHON" >&2
-    printf '%s\n' "Consulte o README para instalar as dependências." >&2
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    printf '%s\n' "Python 3 não foi encontrado. Instale Python 3.10 ou superior." >&2
     exit 1
 fi
 
-exec "$PYTHON" "$APP_DIR/src/desktop_pet.py"
+exec "$PYTHON" "$APP_DIR/tools/nova_setup.py"

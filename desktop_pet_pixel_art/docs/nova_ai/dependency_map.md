@@ -28,8 +28,8 @@ src/desktop_pet.py
 | `desktop_pet.py` | Quase todos os serviços, controladores e integrações | Maior ponto de composição e provável gargalo de alteração. Importa diretamente provider factory e `ProviderError`, além de `answer_request`; parte da lógica de IA vaza para a camada principal. |
 | `ai.request_handler` | `AICore`, `ProviderError` | Ponto adequado para fronteira de aplicação; converte falhas em resposta da UI. |
 | `ai.ai_core` | ContextManager, ModelRouter, prompts | Abstração útil, mas ainda entende formato de settings e estrutura de provedor. |
-| `ai.model_router` | `SUPPORTED_PROVIDERS`, fábrica concreta, settings flat | Roteamento conhece nomes explícitos, regras de privacidade e fallback para Ollama. |
-| `providers.provider_factory` | Cada adaptador concreto | Importa os quatro providers no carregamento; adicionar provider exige alterar a fábrica e validação/settings. |
+| `ai.model_router` | `SUPPORTED_PROVIDERS`, fábrica concreta, settings flat | Roteamento permite exclusivamente Ollama local; falhas não acionam fallback para serviços remotos. |
+| `providers.provider_factory` | Adaptador concreto do Ollama | Cria o backend local e valida a seleção; as opções legadas de provedores remotos são normalizadas para Ollama. |
 | `autonomy.py` | `json_persistence.py`, XDG/applications, arquivos de usuário | Mistura settings, agenda/quiet hours e descoberta/validação de apps. |
 | `automations.py` | `json_persistence`, FS, shutil/hashlib | Mistura reconhecimento de frases, leitura, prévias e execução de ações. Reconhecimento e executor existem no mesmo módulo. |
 | `personality.py` + controllers | `config.py`, estado temporário, preferências | Falas e comportamento distribuídos entre personalidade, configuração e mixins. |
@@ -37,7 +37,7 @@ src/desktop_pet.py
 | `preferences_*_ui.py` | diretamente serviços e estado da aplicação | UI não é apenas adaptador de apresentação; algumas abas chamam funções de domínio/persistência diretamente. |
 | `notifications.py` / `system_monitor.py` | arquivos locais, psutil/pathlib, EventBus | Serviços razoavelmente reutilizáveis, porém inicialização e consumo ligados à janela principal. |
 
-## Provedores e caminhos de execução
+## Backend de IA e caminhos de execução
 
 A interface comum é `BaseProvider.is_available/generate/test_connection`. `ModelRouter` e `provider_factory` permitem somente Ollama local e serializam uma chamada por vez com lock. Requisições usam `urllib` e JSON sem SDKs específicos; erros locais não recorrem a provedores remotos.
 

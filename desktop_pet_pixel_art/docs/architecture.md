@@ -8,7 +8,8 @@
 
 - `desktop_pet.py`: inicialização e coordenação principal; `DesktopPet` mantém a API e o ciclo `tick()`.
 - `desktop_pet_ai.py`: workers de provedores e fluxo de conversa fora do orquestrador visual.
-- `first_run.py`, `environment_check.py`, `diagnostics_ui.py` e `installation_state.py`: boas-vindas no primeiro acesso, diagnóstico local atualizável e somente leitura, orientações de reparo e estado global da instalação, separado dos perfis.
+- `tools/nova_setup.py` e `launchers/run-nova.sh`: preparação guiada na primeira execução, instalação Python isolada em `.venv` após confirmação, diagnóstico local do Ollama e download de modelo consentido. Não usa `sudo` nem altera o Python global.
+- `first_run.py`, `environment_check.py`, `diagnostics_ui.py` e `installation_state.py`: boas-vindas após a preparação, diagnóstico local atualizável e somente leitura, orientações de reparo e estado global da instalação, separado dos perfis.
 - `animation_controller.py`: seleção, reprodução, renderização e sincronização das animações.
 - `interaction_controller.py`: cliques, arraste e registro das interações.
 - `routine_controller.py`: foco, horários silenciosos, lembretes e rotinas periódicas.
@@ -29,7 +30,7 @@
 - `config.py`: caminhos dos assets, animações e parâmetros padrão.
 - `ollama_client.py`: API e persistência do histórico JSON legado.
 - `providers/`: contrato comum e adaptador Ollama, acessado pela API HTTP local.
-- `ai/`: contexto, prompts, roteamento e pedidos; `AICore` conecta a conversa ao provedor selecionado. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
+- `ai/`: contexto, prompts, roteamento e pedidos; `AICore` conecta a conversa exclusivamente ao Ollama local. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
 - `nova_ai/personality/`: fonte canônica da identidade, das regras, do estado e do estilo conversacional e da fala local. `personality.py` e `ai/personality.py` mantêm exports compatíveis.
 - `x11_helper.py`: observação da janela ativa e geometria de janelas em ambientes X11. O módulo falha de forma segura se X11 ou `python-xlib` não estiverem disponíveis.
 - `event_bus.py`: barramento tipado, com publicação síncrona e fila `post`/`drain` para encaminhar eventos de workers à thread Tkinter.
@@ -44,14 +45,14 @@ As dependências obrigatórias estão em `requirements.txt`. `python-xlib` é op
 
 ## Primeiro acesso
 
-Antes de criar `DesktopPet`, `run_first_access_if_needed()` lê `~/.config/desktop_pet/installation_state.json` e mostra a tela de boas-vindas somente se a configuração ainda não foi concluída. A tela informa que salvar e reutilizar conversas anteriores são opções independentes, ambas desligadas por padrão, e que o provedor escolhido pode ser local ou online. `check_environment()` verifica Python, dependências, recursos gráficos, banco/perfil, memória física, espaço em disco e a API local de tags do Ollama. A tela **Diagnóstico do sistema**, no menu, permite repetir as verificações e oferece instruções de reparo. O diagnóstico não cria o registro de perfis, não preserva/move arquivos inválidos, não instala dependências, não inicia serviços e não baixa modelos; a ausência do Ollama é opcional. A instalação de dependências usa `./install.sh` após fechar o aplicativo; correções de banco requerem avaliação manual para evitar apagar dados.
+O lançador encaminha a primeira execução a `tools/nova_setup.py`, que verifica pré-requisitos e dependências do `.venv`, pede confirmação antes de instalar pacotes Python no ambiente virtual e não executa comandos administrativos. A tela também orienta a instalação manual do Ollama, testa somente o serviço local e solicita confirmação explícita antes de baixar um modelo. A ausência do Ollama é opcional. Depois da preparação, `run_first_access_if_needed()` lê `~/.config/desktop_pet/installation_state.json` e mostra a tela de boas-vindas quando a configuração ainda não foi concluída. O aviso informa que salvar e reutilizar conversas são opções independentes, ambas desligadas por padrão; o único provedor de conversa disponível é o Ollama local. `check_environment()` verifica Python, dependências, recursos gráficos, banco/perfil, memória física, espaço em disco e a API local de tags do Ollama. A tela **Diagnóstico do sistema**, no menu, permite repetir as verificações e oferece instruções de reparo sem instalar ou modificar dados; correções de banco requerem avaliação manual para evitar apagar dados.
 
 ## Fluxo da conversa
 
 1. A interface recebe a pergunta e verifica primeiro data, calendário e intents locais de automação allowlist.
-2. Automações reconhecidas localmente não passam pelos provedores de IA. Relatórios são somente leitura; movimentações mostram prévia e pedem confirmação; a Lixeira exige confirmação antes de apagar. Operações demoradas rodam em thread e retornam por Event Bus ou pela fila de callbacks UI, consumida pelo ciclo Tkinter. Avisos de pausa e bateria são verificados periodicamente, respeitando foco e horário silencioso.
+2. Automações reconhecidas localmente não passam pela IA. Relatórios são somente leitura; movimentações mostram prévia e pedem confirmação; a Lixeira exige confirmação antes de apagar. Operações demoradas rodam em thread e retornam por Event Bus ou pela fila de callbacks UI, consumida pelo ciclo Tkinter. Avisos de pausa e bateria são verificados periodicamente, respeitando foco e horário silencioso.
 3. Se a solicitação corresponder a um app cadastrado, a Nova mostra o comando e pede confirmação.
-4. Outras perguntas são processadas em worker por `desktop_pet_ai.py` e encaminhadas ao provedor configurado. Por padrão, somente a mensagem atual é enviada como contexto; mensagens anteriores só são incluídas após ativação explícita da opção correspondente. Uma falha não provoca fallback para outro provedor. A resposta retorna por Event Bus, sem manipulação de widgets fora da thread Tkinter.
+4. Outras perguntas são processadas em worker por `desktop_pet_ai.py` e encaminhadas exclusivamente ao Ollama local. Por padrão, somente a mensagem atual é enviada como contexto; mensagens anteriores só são incluídas após ativação explícita da opção correspondente. Uma falha não provoca fallback para outro provedor. A resposta retorna por Event Bus, sem manipulação de widgets fora da thread Tkinter.
 5. O histórico é sempre mantido na sessão atual, mas só é persistido quando a pessoa ativa **Salvar as conversas neste computador**. Seu uso como contexto é controlado separadamente. A interface permite consultar e apagar mensagens. Preferências e histórico persistido usam arquivos JSON por substituição atômica; ao encontrar JSON inválido, a Nova guarda uma cópia `*.corrupt-*` antes de permitir nova gravação. Se não conseguir criar essa cópia, bloqueia a substituição.
 
 As memórias explícitas são selecionadas por relevância e adicionadas ao contexto como dados de referência, nunca como instruções. Preferências duplicadas são removidas ao carregar as configurações, sem alterar o formato JSON existente. O seletor de apps lê lançadores `*.desktop` dos diretórios XDG de aplicações; comandos são divididos em argumentos e executados sem shell.
@@ -77,7 +78,7 @@ Saudações podem retomar uma memória de projeto cadastrada explicitamente no S
 
 ## Backend de IA
 
-O roteador e a fábrica suportam Ollama e provedores online configuráveis. A pergunta atual é enviada ao provedor escolhido; mensagens anteriores dependem do opt-in de contexto. O modelo, os limites de recursos e as credenciais são configuráveis em **Inteligência artificial**. O botão de download envia um pedido de pull ao Ollama apenas após confirmação; a operação ocorre em worker, exibe progresso e pode ser cancelada. Chaves de serviços online não são gravadas em `settings.json`.
+O roteador e a fábrica suportam somente Ollama local. A pergunta atual é enviada ao serviço local; mensagens anteriores dependem do opt-in de contexto. O modelo e os limites de recursos são configuráveis em **Inteligência artificial**. O botão de download envia um pedido de pull ao Ollama apenas após confirmação; a operação ocorre em worker, exibe progresso e pode ser cancelada.
 
 Os lembretes são verificados pelo próprio processo da Nova. Eles são mostrados quando o app está em execução e não estão no horário silencioso.
 

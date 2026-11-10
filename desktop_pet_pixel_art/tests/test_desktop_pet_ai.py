@@ -54,6 +54,53 @@ class TestDesktopPetAI(unittest.TestCase):
         save.assert_not_called()
         pet.show_bubble.assert_called_once_with("resposta", duration=6000)
 
+    def test_answer_returns_to_the_active_focus_pose(self):
+        for focus_mode, expected_state in (("focus", "focused"), ("break", "sitting")):
+            with self.subTest(focus_mode=focus_mode):
+                pet = _Pet({})
+                pet.focus_mode = focus_mode
+
+                pet._show_answer("resposta")
+
+                self.assertEqual(pet.state, expected_state)
+                pet.show_bubble.assert_called_once_with("resposta", duration=6000)
+
+    def test_failed_answer_does_not_override_focus_pose_or_message(self):
+        from ai.request_handler import PROVIDER_FAILURE_MESSAGE
+
+        pet = _Pet({})
+        pet.focus_mode = "focus"
+
+        pet._show_answer(PROVIDER_FAILURE_MESSAGE)
+
+        self.assertEqual(pet.state, "focused")
+        pet.show_bubble.assert_called_once_with(PROVIDER_FAILURE_MESSAGE, duration=6000)
+
+    def test_adaptive_personality_instructions_reach_the_conversation_request(self):
+        pet = _Pet({"adaptive_learning_enabled": True})
+        integration = mock.Mock()
+        integration.build_context.return_value = ["memória"]
+        integration.personality_instructions.return_value = (
+            "Prefira respostas breves e diretas."
+        )
+        pet.nova_integration = integration
+        settings = {"adaptive_learning_enabled": True}
+
+        with mock.patch("desktop_pet_ai.answer_request", return_value="resposta") as request:
+            pet._ask_worker(pet.history, settings=settings)
+
+        integration.learn_from_interaction.assert_called_once_with(
+            "pergunta atual", settings
+        )
+        integration.build_context.assert_called_once_with(
+            "pergunta atual", None, enabled=True
+        )
+        self.assertEqual(
+            request.call_args.kwargs["settings"]["nova_personality_instructions"],
+            "Prefira respostas breves e diretas.",
+        )
+        self.assertEqual(request.call_args.kwargs["memories"], ["memória"])
+
     def test_answer_is_persisted_only_when_enabled(self):
         pet = _Pet({"conversation_history_enabled": True})
         with mock.patch("desktop_pet_ai.save_history", return_value=True) as save:
