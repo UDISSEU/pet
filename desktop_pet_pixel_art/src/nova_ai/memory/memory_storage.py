@@ -25,6 +25,83 @@ APPLICATION_ID = 0x4E4F5641  # ASCII "NOVA"
 _MEMORY_KINDS = "'episodic', 'semantic', 'procedural', 'preference', 'profile', 'project', 'conversation', 'learning'"
 
 
+class _PinnedDirectoryConnection(sqlite3.Connection):
+    def __init__(self, *args, directory_fd, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._directory_fd = directory_fd
+
+    def close(self):
+        directory_fd = self._directory_fd
+        self._directory_fd = None
+        try:
+            super().close()
+        finally:
+            if directory_fd is not None:
+                os.close(directory_fd)
+
+
+def _open_storage_directory(path, *, create=False, private=True):
+    """Open a directory by walking from / without following replaceable symlinks."""
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise OSError("A plataforma não oferece abertura segura de diretórios")
+    directory = Path(os.path.abspath(os.path.expanduser(str(path))))
+    if ".." in directory.parts:
+        raise OSError("O caminho do banco contém componentes inválidos")
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    directory_fd = os.open(directory.anchor, flags)
+    try:
+        parts = directory.parts[1:]
+        for index, name in enumerate(parts):
+            try:
+                child_fd = os.open(name, flags, dir_fd=directory_fd)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                try:
+                    os.mkdir(name, 0o700, dir_fd=directory_fd)
+                except FileExistsError:
+                    pass
+                child_fd = os.open(name, flags, dir_fd=directory_fd)
+
+            try:
+                info = os.fstat(child_fd)
+                if not stat.S_ISDIR(info.st_mode):
+                    raise OSError(
+                        "O caminho do banco contém um componente que não é diretório"
+                    )
+                is_final = index == len(parts) - 1
+                mode = stat.S_IMODE(info.st_mode)
+                if mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+                    raise OSError(
+                        "O caminho do banco atravessa um diretório gravável por terceiros"
+                    )
+                if is_final and private:
+                    if info.st_uid != os.geteuid():
+                        raise OSError(
+                            "O diretório do banco precisa pertencer ao usuário atual"
+                        )
+                    os.fchmod(child_fd, 0o700)
+                    if stat.S_IMODE(os.fstat(child_fd).st_mode) != 0o700:
+                        raise OSError("Não foi possível restringir o diretório do banco")
+            except BaseException:
+                os.close(child_fd)
+                raise
+
+            os.close(directory_fd)
+            directory_fd = child_fd
+
+        if private:
+            info = os.fstat(directory_fd)
+            if (info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o700):
+                raise OSError("O diretório do banco não é privado para o usuário atual")
+        return directory_fd
+    except BaseException:
+        os.close(directory_fd)
+        raise
+
+
 def _utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -44,34 +121,49 @@ class MemoryStorage:
         )
         self.corrupt_backup_path = None
         validate_storage_path(self.path, label="banco de memória")
-        ensure_private_directory(self.path.parent, label="diretório do banco de memória")
+        try:
+            directory_fd = _open_storage_directory(self.path.parent, create=True)
+            os.close(directory_fd)
+        except OSError as exc:
+            raise MemoryStorageError(
+                "Não foi possível proteger o diretório do banco de memória", cause=exc
+            ) from exc
         self._create_secure_file()
         self._prepare_database()
 
     def _create_secure_file(self):
-        nofollow = getattr(os, "O_NOFOLLOW", 0)
         created = False
         descriptor = None
+        directory_fd = None
         try:
+            directory_fd = _open_storage_directory(self.path.parent)
             try:
                 descriptor = os.open(
-                    self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR | nofollow, 0o600
+                    self.path.name,
+                    os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW
+                    | getattr(os, "O_CLOEXEC", 0),
+                    0o600,
+                    dir_fd=directory_fd,
                 )
                 created = True
             except FileExistsError:
-                descriptor = os.open(self.path, os.O_RDWR | nofollow)
+                descriptor = os.open(
+                    self.path.name,
+                    os.O_RDWR | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                    dir_fd=directory_fd,
+                )
             file_stat = os.fstat(descriptor)
-            if not stat.S_ISREG(file_stat.st_mode):
+            if (not stat.S_ISREG(file_stat.st_mode)
+                    or file_stat.st_uid != os.geteuid()
+                    or file_stat.st_nlink != 1):
                 raise OSError("O banco de memória precisa ser um arquivo regular")
             os.fchmod(descriptor, 0o600)
             if stat.S_IMODE(os.fstat(descriptor).st_mode) != 0o600:
                 raise OSError("Não foi possível restringir as permissões do banco")
-        except FileExistsError:
-            raise MemoryStorageError("Não foi possível abrir o arquivo privado de memória")
         except OSError as exc:
             if created:
                 try:
-                    self.path.unlink(missing_ok=True)
+                    os.unlink(self.path.name, dir_fd=directory_fd)
                 except OSError:
                     pass
             raise MemoryStorageError(
@@ -80,19 +172,84 @@ class MemoryStorage:
         finally:
             if descriptor is not None:
                 os.close(descriptor)
+            if directory_fd is not None:
+                os.close(directory_fd)
+
+    @staticmethod
+    def _connect_file(path, *, read_only=False, private_directory=False):
+        path = validate_storage_path(path, label="banco de memória")
+        directory_fd = _open_storage_directory(
+            path.parent, private=private_directory
+        )
+        file_descriptor = None
+        connection = None
+        state = {}
+        try:
+            open_flags = (os.O_RDONLY if read_only else os.O_RDWR)
+            file_descriptor = os.open(
+                path.name,
+                open_flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=directory_fd,
+            )
+            opened_stat = os.fstat(file_descriptor)
+            if (not stat.S_ISREG(opened_stat.st_mode)
+                    or opened_stat.st_uid != os.geteuid()
+                    or opened_stat.st_nlink != 1):
+                raise OSError("O banco precisa ser um arquivo regular do usuário atual")
+            if private_directory and stat.S_IMODE(opened_stat.st_mode) != 0o600:
+                raise OSError("As permissões do banco de memória não são privadas")
+
+            sqlite_path = Path(f"/proc/self/fd/{directory_fd}/{path.name}")
+            if not sqlite_path.parent.is_dir():
+                raise OSError("O sistema não oferece o acesso SQLite por diretório fixado")
+            mode = "ro" if read_only else "rw"
+            uri = f"{sqlite_path.as_uri()}?mode={mode}"
+
+            def connection_factory(*args, **kwargs):
+                connection = _PinnedDirectoryConnection(
+                    *args, directory_fd=directory_fd, **kwargs
+                )
+                state["connection"] = connection
+                return connection
+
+            connection = sqlite3.connect(
+                uri, uri=True, timeout=2.0, factory=connection_factory
+            )
+            current_stat = os.stat(
+                path.name, dir_fd=directory_fd, follow_symlinks=False
+            )
+            if (not stat.S_ISREG(current_stat.st_mode)
+                    or (current_stat.st_dev, current_stat.st_ino)
+                    != (opened_stat.st_dev, opened_stat.st_ino)):
+                raise OSError("O arquivo do banco foi substituído durante a abertura")
+            directory_fd = None
+            connection.row_factory = sqlite3.Row
+            return connection
+        except BaseException:
+            opened_connection = connection or state.get("connection")
+            if opened_connection is not None:
+                opened_connection.close()
+                directory_fd = None
+            raise
+        finally:
+            if file_descriptor is not None:
+                os.close(file_descriptor)
+            if directory_fd is not None:
+                os.close(directory_fd)
 
     def _connect(self, *, read_only=False):
-        path = validate_storage_path(self.path, label="banco de memória")
-        mode = "ro" if read_only else "rw"
-        connection = sqlite3.connect(
-            f"{path.as_uri()}?mode={mode}&nofollow=1", uri=True, timeout=2.0
+        connection = self._connect_file(
+            self.path, read_only=read_only, private_directory=True
         )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 2000")
-        connection.execute("PRAGMA synchronous = FULL")
-        connection.execute("PRAGMA secure_delete = ON")
-        return connection
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 2000")
+            connection.execute("PRAGMA synchronous = FULL")
+            connection.execute("PRAGMA secure_delete = ON")
+            return connection
+        except BaseException:
+            connection.close()
+            raise
 
     def _table_columns(self, connection, table_name):
         rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -132,7 +289,12 @@ class MemoryStorage:
                                 "Não foi possível migrar o banco de memória", cause=exc
                             ) from exc
                     if version == 3:
-                        self._migrate_v3_v4(connection)
+                        try:
+                            self._migrate_v3_v4(connection)
+                        except sqlite3.DatabaseError as exc:
+                            raise MemoryStorageError(
+                                "Não foi possível migrar o banco de memória", cause=exc
+                            ) from exc
             except MemoryStorageError:
                 raise
             except sqlite3.DatabaseError as exc:
@@ -1120,14 +1282,25 @@ class MemoryStorage:
         destination = validate_storage_path(destination, label="backup de memória")
         if destination == self.path:
             raise MemoryStorageError("O destino do backup deve ser outro arquivo")
-        ensure_private_directory(destination.parent, label="diretório do backup da memória")
+        try:
+            directory_fd = _open_storage_directory(
+                destination.parent, create=True
+            )
+            os.close(directory_fd)
+        except OSError as exc:
+            raise MemoryStorageError(
+                "Não foi possível proteger o diretório do backup da memória", cause=exc
+            ) from exc
         temporary = None
         try:
             fd, temporary_name = tempfile.mkstemp(
                 prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
             )
-            os.close(fd)
             temporary = Path(temporary_name)
+            try:
+                os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
             with self._read_connection() as source, closing(sqlite3.connect(str(temporary))) as target:
                 target.execute("PRAGMA foreign_keys = ON")
                 source.backup(target)
@@ -1135,8 +1308,15 @@ class MemoryStorage:
                     target.execute("BEGIN IMMEDIATE")
                     target.execute("DELETE FROM users WHERE id != ?", (user_key,))
                 target.commit()
-            os.chmod(temporary, 0o600)
-            os.replace(temporary, destination)
+                if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise sqlite3.DatabaseError("backup integrity check failed")
+                if target.execute("PRAGMA foreign_key_check").fetchall():
+                    raise sqlite3.DatabaseError("backup foreign key check failed")
+
+            with temporary.open("rb") as backup_file:
+                os.fsync(backup_file.fileno())
+            os.link(temporary, destination, follow_symlinks=False)
+            temporary.unlink()
             return destination
         except (OSError, sqlite3.DatabaseError, MemoryStorageError) as exc:
             if temporary is not None:
@@ -1153,9 +1333,10 @@ class MemoryStorage:
         if source == self.path:
             raise MemoryStorageError("A origem da restauração deve ser outro arquivo")
         temporary = None
+        backup_target = None
+        replaced = False
         try:
-            source_uri = f"{source.resolve().as_uri()}?mode=ro"
-            with closing(sqlite3.connect(source_uri, uri=True, timeout=2.0)) as source_db:
+            with closing(self._connect_file(source, read_only=True)) as source_db:
                 integrity = source_db.execute("PRAGMA quick_check").fetchone()[0]
                 foreign_key_errors = source_db.execute(
                     "PRAGMA foreign_key_check"
@@ -1167,19 +1348,18 @@ class MemoryStorage:
                 if version not in (1, 2, 3, SCHEMA_VERSION):
                     raise MemoryStorageError("Versão do backup não suportada")
 
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=self.path.parent,
-                prefix=f".{self.path.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temporary = Path(handle.name)
-            with closing(sqlite3.connect(source_uri, uri=True, timeout=2.0)) as source_db, \
-                    closing(sqlite3.connect(str(temporary), timeout=2.0)) as candidate_db:
-                source_db.backup(candidate_db)
-                candidate_db.commit()
-            os.chmod(temporary, 0o600)
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    dir=self.path.parent,
+                    prefix=f".{self.path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    temporary = Path(handle.name)
+                    os.fchmod(handle.fileno(), 0o600)
+                with closing(sqlite3.connect(str(temporary), timeout=2.0)) as candidate_db:
+                    source_db.backup(candidate_db)
+                    candidate_db.commit()
             candidate_storage = MemoryStorage(temporary)
             if user_key is not None:
                 try:
@@ -1192,20 +1372,45 @@ class MemoryStorage:
             if candidate_storage.health_snapshot()["status"] != "healthy":
                 raise MemoryStorageError("O backup não passou na verificação de integridade")
 
-            if keep_backup and self.path.exists():
+            if self.path.exists():
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
                 backup_dir = self.path.parent / "backups"
-                ensure_private_directory(backup_dir, label="diretório de backups")
                 backup_target = backup_dir / (
                     f"{self.path.stem}-pre-restore-{stamp}-{uuid.uuid4().hex[:8]}.sqlite3"
                 )
                 self.backup_to(backup_target, user_id=user_key)
 
-            os.replace(temporary, self.path)
+            directory_fd = _open_storage_directory(self.path.parent)
+            try:
+                os.replace(
+                    temporary.name, self.path.name,
+                    src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+                )
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
             temporary = None
+            replaced = True
+            if self.health_snapshot()["status"] != "healthy":
+                raise MemoryStorageError(
+                    "O banco restaurado não passou na verificação de integridade"
+                )
+            if not keep_backup and backup_target is not None:
+                backup_target.unlink(missing_ok=True)
+                backup_target = None
             self.corrupt_backup_path = None
             return self.path
         except (OSError, sqlite3.DatabaseError, MemoryStorageError, ValueError) as exc:
+            if replaced and backup_target is not None and backup_target.exists():
+                try:
+                    os.replace(backup_target, self.path)
+                    backup_target = None
+                except OSError as rollback_error:
+                    exc = MemoryStorageError(
+                        "A restauração falhou e a cópia anterior permanece em "
+                        f"{backup_target}; não foi possível revertê-la",
+                        cause=rollback_error,
+                    )
             if temporary is not None and temporary.exists():
                 temporary.unlink(missing_ok=True)
             raise MemoryStorageError("Não foi possível restaurar o backup da memória", cause=exc) from exc

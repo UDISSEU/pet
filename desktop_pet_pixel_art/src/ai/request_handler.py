@@ -10,6 +10,28 @@ logger = logging.getLogger(__name__)
 PROVIDER_FAILURE_MESSAGE = "A IA não conseguiu responder agora. Tente novamente daqui a pouco."
 
 
+def conversation_context_for_request(history, settings):
+    """Return saved conversation context only after an explicit opt-in."""
+    if isinstance(settings, dict) and settings.get("conversation_context_enabled") is True:
+        return list(history)
+    latest_user_message = next(
+        (
+            message for message in reversed(history)
+            if isinstance(message, dict) and message.get("role") == "user"
+        ),
+        None,
+    )
+    return [latest_user_message] if latest_user_message is not None else []
+
+
+def conversation_history_is_enabled(settings):
+    """Return whether persistent conversation storage was explicitly enabled."""
+    return (
+        isinstance(settings, dict)
+        and settings.get("conversation_history_enabled") is True
+    )
+
+
 def answer_request(history, memories=None, settings=None, user_name="", core_factory=AICore):
     """Return a displayable answer while keeping Tkinter out of the worker."""
     try:

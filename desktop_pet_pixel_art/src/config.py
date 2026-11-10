@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PIL import ImageFont
 
-from personality import (
+from nova_ai.personality.speech import (
     APP_COMMENTS,
     GENERIC_COMMENTS,
     SIT_DOWN_LINES,

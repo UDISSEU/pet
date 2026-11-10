@@ -129,10 +129,11 @@ class PersonalityEngine:
             # Invalid or manually edited preferences do not break startup.
             return
 
-    def build_personality_instructions(self):
+    def build_personality_instructions(self, *, include_saved_preferences=True):
         parts = [self.identity.system_description()]
         parts.extend(self.rules.instructions())
-        parts.append(self.response_style.guidance())
+        response_style = self.response_style if include_saved_preferences else ResponseStyle()
+        parts.append(response_style.guidance())
         parts.append(
             f"Estado comportamental atual: {self.behavior_state.value}; "
             f"expressão simulada: {self.simulated_emotion.value}."

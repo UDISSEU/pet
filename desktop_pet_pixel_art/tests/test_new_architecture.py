@@ -366,7 +366,7 @@ class ArchitectureTests(unittest.TestCase):
         observed = []
         for event_type in (EventType.AI_REQUEST_STARTED, EventType.AI_RESPONSE_RECEIVED):
             bus.subscribe(event_type, observed.append)
-        with mock.patch("desktop_pet.answer_request", return_value="resposta local"):
+        with mock.patch("desktop_pet_ai.answer_request", return_value="resposta local"):
             pet._ask_worker([], settings=pet.settings)
         self.assertEqual(observed, [])
         bus.drain()
@@ -392,7 +392,7 @@ class ArchitectureTests(unittest.TestCase):
             automation = {"id": "large_files", "executor": lambda: (
                 ready.wait(timeout=2), {"title": "relatório", "lines": [], "status": "ok"},
             )[1]}
-            with mock.patch("desktop_pet.answer_request", side_effect=lambda *args, **kwargs: (
+            with mock.patch("desktop_pet_ai.answer_request", side_effect=lambda *args, **kwargs: (
                     ready.wait(timeout=2), "resposta em paralelo")[1]):
                 workers = [
                     threading.Thread(target=pet._ask_worker, args=([],), kwargs={"settings": pet.settings}),

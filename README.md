@@ -57,9 +57,26 @@ As pastas `movimentação Nova/` e `movimento 2.0/` guardam materiais visuais de
 
 ### Como as partes se conectam
 
-`src/desktop_pet.py` coordena a janela e o ciclo da aplicação; `desktop_pet_ui.py` reúne menus e preferências. `AnimationLoader` carrega as animações em segundo plano e entrega os resultados à interface Tkinter. Na conversa, `ai.request_handler` encaminha o contexto a `AICore`, que usa `ModelRouter` e os módulos de `providers/`.
+`src/desktop_pet.py` coordena a janela e o ciclo da aplicação; `desktop_pet_ai.py` contém os workers e o fluxo de conversa; `desktop_pet_ui.py` agrega mixins menores de interface. `AnimationLoader` carrega as animações em segundo plano e entrega os resultados à interface Tkinter. Na conversa, `ai.request_handler` encaminha o contexto a `AICore`, que usa `ModelRouter` e os módulos de `providers/`. A identidade, as regras e a personalidade conversacional ficam em `nova_ai/personality/`; `personality.py` e `ai/personality.py` preservam importações antigas.
 
 Pedidos locais conhecidos, como algumas automações e ações de sistema, podem ser tratados sem chamar um modelo de IA. As operações de arquivo que modificam conteúdo apresentam uma prévia e pedem confirmação; a interface também exige confirmação para esvaziar a Lixeira ou executar determinadas ações de manutenção.
+
+### Privacidade e memória
+
+O histórico da conversa não é salvo nem reutilizado como contexto por padrão. Em
+**Preferências > Memória**, cada opção pode ser ativada separadamente; ali também é
+possível consultar mensagens e apagar uma mensagem ou todo o histórico. As memórias estruturadas só são gravadas quando a pessoa confirma em
+**Guardar**. Essa tela permite consultá-las, corrigir ou excluir uma memória e desativar
+seu uso como contexto nas respostas. A interface indica a origem e a confiança da
+informação; uma inferência não é apresentada como confirmação do usuário.
+
+O SQLite usa um diretório de perfil privado e abertura por descritor de diretório no
+Linux. `nofollow=1` não é tratado como proteção: a API `sqlite3` do Python não expõe
+`SQLITE_OPEN_NOFOLLOW`. Backups são criados com permissão restrita, verificados e
+publicados sem sobrescrever arquivos existentes; a restauração valida o arquivo antes
+da troca e mantém uma cópia para rollback até concluir a verificação.
+Essa proteção isola os dados de outros usuários do sistema; processos executados com o
+mesmo usuário têm as permissões do proprietário do banco.
 
 ## Histórico e evolução
 
@@ -113,7 +130,7 @@ O **Ollama local** é o provedor padrão. Para conversar com um modelo, instale 
 ollama pull llama3.2:1b
 ```
 
-A mascote e os recursos locais continuam disponíveis mesmo sem o Ollama. A conversa online é opcional: Gemini, Groq e Mistral podem ser configurados nas preferências da Nova. Para usar um provedor online, selecione-o e habilite as opções de uso e compartilhamento de contexto. As chaves não são armazenadas em `settings.json`; o projeto oferece suporte ao cofre Secret Service ou às variáveis de ambiente indicadas abaixo:
+A mascote e os recursos locais continuam disponíveis mesmo sem o Ollama. A conversa online é opcional: Gemini, Groq e Mistral podem ser configurados nas preferências da Nova. Perguntas são enviadas ao provedor selecionado; mensagens anteriores só são incluídas se a opção de contexto estiver ligada. Verifique a política do provedor antes de enviar informações. As chaves não são armazenadas em `settings.json`; o projeto oferece suporte ao cofre Secret Service ou às variáveis de ambiente indicadas abaixo:
 
 ```text
 GEMINI_API_KEY

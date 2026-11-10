@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from autonomy import is_quiet_now, save_settings, valid_reminder_time
 from config import APP_COMMENTS, REMINDER_ANIMATION_SECONDS, THUMBS_UP_ANIMATION_SECONDS, VIDEO_REACTION_SECONDS
 from nova_ai.memory.errors import MemoryStorageError
-from personality import pick_line, record_spontaneous_speech
+from nova_ai.personality.speech import pick_line, record_spontaneous_speech
 
 
 def _project_topic(content):
@@ -169,7 +169,8 @@ class RoutineControllerMixin:
             self.state = "walk"
 
     def _project_followup_candidate(self, now):
-        if not self.settings.get("routine_context"):
+        if (not self.settings.get("routine_context")
+                or self.settings.get("memory_enabled", True) is not True):
             return None
         integration = getattr(self, "nova_integration", None)
         if integration is None:

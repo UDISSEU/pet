@@ -84,6 +84,7 @@ class MemorySystemTests(unittest.TestCase):
         self.database.chmod(0o644)
         MemoryStorage(self.database)
         self.assertEqual(self.database.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.database.parent.stat().st_mode & 0o777, 0o700)
 
         other_database = self.root / "unsecurable.sqlite3"
         with mock.patch("nova_ai.memory.memory_storage.os.fchmod", side_effect=PermissionError):
@@ -93,12 +94,50 @@ class MemorySystemTests(unittest.TestCase):
 
     def test_sqlite_storage_rejects_file_symlink(self):
         target = self.root / "target.sqlite3"
-        MemoryStorage(target)
+        storage = MemoryStorage(target)
+        with mock.patch(
+            "nova_ai.memory.memory_storage.sqlite3.connect", wraps=sqlite3.connect
+        ) as connect:
+            connection = storage._connect()
+            connection.close()
+        sqlite_uri = connect.call_args.args[0]
+        self.assertIn("/proc/self/fd/", sqlite_uri)
+        self.assertNotIn("nofollow=", sqlite_uri)
         link = self.root / "linked.sqlite3"
         link.symlink_to(target)
 
         with self.assertRaises(OSError):
             MemoryStorage(link)
+
+    def test_connections_reject_symlink_and_file_replacement(self):
+        storage = MemoryStorage(self.root / "active.sqlite3")
+        replacement = MemoryStorage(self.root / "replacement.sqlite3")
+        active_original = self.root / "active-original.sqlite3"
+
+        storage.path.rename(active_original)
+        storage.path.symlink_to(replacement.path)
+        with self.assertRaises(OSError):
+            storage._connect()
+        storage.path.unlink()
+        active_original.rename(storage.path)
+
+        original_connect = sqlite3.connect
+
+        def replace_before_sqlite_open(*args, **kwargs):
+            storage.path.rename(active_original)
+            replacement.path.rename(storage.path)
+            return original_connect(*args, **kwargs)
+
+        with mock.patch(
+            "nova_ai.memory.memory_storage.sqlite3.connect",
+            side_effect=replace_before_sqlite_open,
+        ):
+            with self.assertRaisesRegex(OSError, "substituído"):
+                storage._connect()
+
+        storage.path.rename(replacement.path)
+        active_original.rename(storage.path)
+        self.assertEqual(storage.health_snapshot()["status"], "healthy")
 
     def test_memory_managers_are_scoped_by_user_and_allow_same_content(self):
         storage = MemoryStorage(self.root / "shared.sqlite3")
@@ -303,7 +342,61 @@ class MemorySystemTests(unittest.TestCase):
         self.assertEqual(record.content, "Nova funciona offline")
         self.assertEqual(record.provenance, "user_provided")
         self.assertIsNone(record.expires_at)
+        self.assertEqual(migrated.storage.health_snapshot()["user_version"], 4)
         self.assertEqual(migrated.add("project", "Projeto X", consent=True).kind.value, "project")
+
+        restored = MemoryStorage(self.root / "restored-from-v1.sqlite3")
+        restored.restore_from(legacy)
+        self.assertEqual(
+            restored.health_snapshot()["user_version"], 4
+        )
+        self.assertEqual(
+            restored.get_memory("legacy", user_id="legacy")["content"],
+            "Nova funciona offline",
+        )
+
+    def test_schema_v2_is_migrated_to_v4_without_losing_records(self):
+        database = self.root / "legacy-v2.sqlite3"
+        with sqlite3.connect(database) as connection:
+            connection.executescript("""
+                CREATE TABLE memories (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    normalized_content TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    relevance REAL NOT NULL,
+                    consent_granted INTEGER NOT NULL,
+                    provenance TEXT NOT NULL,
+                    expires_at TEXT,
+                    UNIQUE(kind, normalized_content)
+                );
+                INSERT INTO memories VALUES (
+                    'v2-record', 'semantic', 'Registro da versão dois.',
+                    'registro da versao dois.', 'user',
+                    '2025-01-01T00:00:00+00:00', '2025-01-01T00:00:00+00:00',
+                    0.8, 0.8, 1, 'user_provided', NULL
+                );
+                PRAGMA application_id = 1313822273;
+                PRAGMA user_version = 2;
+            """)
+
+        restored = MemoryStorage(self.root / "restored-from-v2.sqlite3")
+        restored.restore_from(database)
+        self.assertEqual(
+            restored.get_memory("v2-record", user_id="legacy")["content"],
+            "Registro da versão dois.",
+        )
+
+        migrated = MemoryStorage(database)
+        self.assertEqual(migrated.health_snapshot()["user_version"], 4)
+        self.assertEqual(
+            migrated.get_memory("v2-record", user_id="legacy")["content"],
+            "Registro da versão dois.",
+        )
 
     def test_schema_v3_is_migrated_to_user_scoped_constraints(self):
         database = self.root / "legacy-v3.sqlite3"
@@ -312,10 +405,120 @@ class MemorySystemTests(unittest.TestCase):
         with sqlite3.connect(database) as connection:
             connection.execute("PRAGMA user_version = 3")
 
+        restored = MemoryStorage(self.root / "restored-from-v3.sqlite3")
+        restored.restore_from(database)
+        self.assertEqual(restored.health_snapshot()["user_version"], 4)
+        self.assertEqual(
+            restored.get_memory(record.memory_id, user_id="legacy")["content"],
+            record.content,
+        )
+
         migrated = MemoryStorage(database)
         self.assertEqual(migrated.health_snapshot()["user_version"], 4)
         self.assertEqual(
             migrated.get_memory(record.memory_id, user_id="legacy")["content"],
+            record.content,
+        )
+
+    def test_v3_migration_preserves_valid_duplicate_records_and_repairs_bad_references(self):
+        database = self.root / "legacy-v3-data.sqlite3"
+        storage = MemoryStorage(database)
+        alice = storage.ensure_user("profile-alice")
+        bob = storage.ensure_user("profile-bob")
+        alice_conversation = storage.create_conversation(
+            alice["id"], "Alice", consent_granted=True
+        )
+        bob_conversation = storage.create_conversation(
+            bob["id"], "Bob", consent_granted=True
+        )
+        alice_project = storage.create_project(
+            alice["id"], "Projeto Alice", consent_granted=True
+        )
+        bob_project = storage.create_project(
+            bob["id"], "Projeto Bob", consent_granted=True
+        )
+        alice_memory = storage.create_memory(
+            alice["id"], kind="profile", content="Prefere respostas concisas.",
+            consent_granted=True, conversation_id=alice_conversation,
+            project_id=alice_project,
+        )
+        bob_memory = storage.create_memory(
+            bob["id"], kind="profile", content="Prefere respostas concisas.",
+            consent_granted=True, conversation_id=bob_conversation,
+            project_id=bob_project,
+        )
+        bob_message = storage.add_message(
+            bob_conversation, bob["id"], "user", "Registro de conversa.",
+            consent_granted=True,
+        )
+        with sqlite3.connect(database) as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute(
+                "UPDATE messages SET user_id = ? WHERE id = ?",
+                (alice["id"], bob_message),
+            )
+            connection.execute(
+                "UPDATE memories SET conversation_id = ?, project_id = ? WHERE id = ?",
+                (bob_conversation, bob_project, alice_memory),
+            )
+            connection.execute("PRAGMA user_version = 3")
+
+        migrated = MemoryStorage(database)
+        self.assertEqual(migrated.health_snapshot()["status"], "healthy")
+        self.assertEqual(
+            migrated.get_memory(alice_memory, user_id=alice["id"])["content"],
+            "Prefere respostas concisas.",
+        )
+        self.assertEqual(
+            migrated.get_memory(bob_memory, user_id=bob["id"])["content"],
+            "Prefere respostas concisas.",
+        )
+        with migrated._read_connection() as connection:
+            repaired_message = connection.execute(
+                "SELECT user_id FROM messages WHERE id = ?", (bob_message,)
+            ).fetchone()
+            repaired_memory = connection.execute(
+                "SELECT conversation_id, project_id FROM memories WHERE id = ?",
+                (alice_memory,),
+            ).fetchone()
+            self.assertEqual(repaired_message["user_id"], bob["id"])
+            self.assertIsNone(repaired_memory["conversation_id"])
+            self.assertIsNone(repaired_memory["project_id"])
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_failed_v3_migration_rolls_back_and_can_be_restarted(self):
+        database = self.root / "interrupted-v3.sqlite3"
+        manager = MemoryManager(MemoryStorage(database))
+        record = manager.add("semantic", "Dados originais preservados.", consent=True)
+        with sqlite3.connect(database) as connection:
+            connection.execute("PRAGMA user_version = 3")
+
+        def fail_after_writing(_storage, connection):
+            connection.execute(
+                "UPDATE memories SET content = 'migração incompleta' WHERE id = ?",
+                (record.memory_id,),
+            )
+            raise sqlite3.DatabaseError("injected migration failure")
+
+        with mock.patch.object(
+            MemoryStorage, "_migrate_v3_v4", fail_after_writing
+        ):
+            with self.assertRaises(MemoryStorageError):
+                MemoryStorage(database)
+
+        with sqlite3.connect(database) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT content FROM memories WHERE id = ?", (record.memory_id,)
+                ).fetchone()[0],
+                record.content,
+            )
+
+        restarted = MemoryStorage(database)
+        self.assertEqual(restarted.health_snapshot()["user_version"], 4)
+        self.assertEqual(
+            restarted.get_memory(record.memory_id, user_id="legacy")["content"],
             record.content,
         )
 
@@ -485,6 +688,14 @@ assert not any(name == 'providers' or name.startswith('providers.') for name in 
 
         backup = self.root / "backups" / "memory-backup.sqlite3"
         primary.backup(backup)
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+        with sqlite3.connect(backup) as connection:
+            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        original_backup = backup.read_bytes()
+        with self.assertRaises(MemoryStorageError):
+            primary.backup(backup)
+        self.assertEqual(backup.read_bytes(), original_backup)
 
         restored_path = self.root / "restored.sqlite3"
         restored = MemoryStorage(restored_path)
@@ -498,6 +709,24 @@ assert not any(name == 'providers' or name.startswith('providers.') for name in 
         self.assertEqual(snapshot["schema_version"], 4)
         self.assertGreaterEqual(snapshot["database_size_bytes"], 1)
         self.assertIn("memories", snapshot["tables"])
+
+    def test_restore_failure_after_replace_rolls_back_original_database(self):
+        storage = MemoryStorage(self.root / "rollback.sqlite3")
+        manager = MemoryManager(storage)
+        original = manager.add("semantic", "Banco original preservado.", consent=True)
+        backup_manager = MemoryManager(MemoryStorage(self.root / "restore-source.sqlite3"))
+        backup_manager.add("semantic", "Dados a restaurar.", consent=True)
+        backup = self.root / "new-backup.sqlite3"
+        backup_manager.backup(backup)
+
+        with mock.patch.object(storage, "health_snapshot", return_value={"status": "degraded"}):
+            with self.assertRaises(MemoryStorageError):
+                storage.restore_from(backup)
+
+        self.assertEqual(
+            MemoryManager(storage).get(original.memory_id).content,
+            original.content,
+        )
 
     def test_restore_rejects_unrelated_database_without_changing_live_data(self):
         storage = MemoryStorage(self.root / "active.sqlite3")

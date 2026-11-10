@@ -79,9 +79,8 @@ def _show_welcome_window(icon_path=None, report=None):
     intro = ttk.Label(
         content,
         text=(
-            "Que bom ter você por aqui. A Nova pode continuar funcionando sem o Ollama; "
-            "a conversa por IA só fica disponível quando o serviço local e um modelo já "
-            "estiverem prontos."
+            "Que bom ter você por aqui. A Nova funciona sem configurar IA; a conversa "
+            "fica disponível quando o provedor selecionado estiver pronto."
         ),
         justify="left",
         wraplength=640,
@@ -91,7 +90,12 @@ def _show_welcome_window(icon_path=None, report=None):
         content,
         text=(
             "Nenhum modelo será baixado nesta tela. A instalação ou o download de um "
-            "modelo só acontecerá depois de uma confirmação explícita."
+            "modelo só acontecerá depois de uma confirmação explícita. As conversas não "
+            "são salvas nem reutilizadas como contexto por padrão. Em Preferências > Memória, "
+            "você pode ativar separadamente o salvamento e o uso de conversas anteriores, "
+            "consultar ou apagar o histórico. As perguntas são processadas pelo provedor "
+            "selecionado nas Preferências de IA; provedores online podem receber o conteúdo "
+            "enviado. Escolha um provedor local se não quiser enviar dados a um serviço online."
         ),
         justify="left",
         wraplength=640,

@@ -154,7 +154,9 @@ class DesktopNovaIntegration:
             return False
         return True
 
-    def build_context(self, question, legacy_memories=(), *, limit=8):
+    def build_context(self, question, legacy_memories=(), *, limit=8, enabled=True):
+        if enabled is not True:
+            return []
         memories = (
             list(legacy_memories or ())[:limit]
             if self.profile.profile_id == "legacy" else []
@@ -224,7 +226,13 @@ class DesktopNovaIntegration:
         if (self._visual_behavior
                 and self.personality.get_behavior_state() != self._visual_behavior):
             self.personality.transition_behavior(self._visual_behavior)
-        instructions = self.personality.build_personality_instructions()
+        use_saved_preferences = (
+            not isinstance(settings, dict)
+            or settings.get("memory_enabled", True) is True
+        )
+        instructions = self.personality.build_personality_instructions(
+            include_saved_preferences=use_saved_preferences
+        )
         if isinstance(settings, dict) and settings.get("adaptive_learning_enabled") is True:
             guidance = self.preference_learner.guidance(
                 settings.get("adaptive_learning_state")

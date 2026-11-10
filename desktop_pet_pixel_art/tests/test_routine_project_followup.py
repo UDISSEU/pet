@@ -82,6 +82,16 @@ class RoutineProjectFollowupTests(unittest.TestCase):
         self.controller.nova_integration.project_memories.assert_not_called()
         show.assert_called_once_with("greeting", "greeting", duration=6500)
 
+    def test_memory_opt_out_prevents_project_lookup(self):
+        self.controller.settings["memory_enabled"] = False
+        with mock.patch.object(
+            self.controller, "_show_spontaneous_pose", return_value=True,
+            create=True,
+        ) as show:
+            self.controller._show_greeting_pose("greeting", self.now)
+        self.controller.nova_integration.project_memories.assert_not_called()
+        show.assert_called_once_with("greeting", "greeting", duration=6500)
+
     def test_missing_project_memory_preserves_the_regular_greeting(self):
         self.controller.nova_integration.project_memories.return_value = []
         with mock.patch.object(

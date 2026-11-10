@@ -55,6 +55,13 @@ class DesktopIntegrationTests(unittest.TestCase):
         self.assertLessEqual(len(context), 3)
         self.assertEqual(context[0], "legado")
         self.assertIn("PDFs", context[1])
+        self.assertIn("origem=user_provided", context[1])
+        self.assertEqual(
+            self.integration.build_context(
+                "Onde colocar os PDFs?", ["legado"], enabled=False
+            ),
+            [],
+        )
 
     def test_visual_state_maps_to_persisted_personality(self):
         self.integration.sync_visual_state("thinking")
@@ -94,6 +101,15 @@ class DesktopIntegrationTests(unittest.TestCase):
         settings["adaptive_learning_state"]["evidence"]["verbosity"]["concise"] = 3
         self.assertIn("Prefira respostas breves e diretas", self.integration.personality_instructions(settings))
         self.assertIn("Você é Nova", self.integration.personality_instructions(settings))
+
+    def test_disabling_memory_also_disables_saved_response_preferences(self):
+        self.integration.personality.set_response_preferences(
+            verbosity="concise", consent_confirmed=True
+        )
+        with_memory = self.integration.personality_instructions({"memory_enabled": True})
+        without_memory = self.integration.personality_instructions({"memory_enabled": False})
+        self.assertIn("curtas e diretas", with_memory)
+        self.assertNotIn("curtas e diretas", without_memory)
 
     def test_explicit_emotional_tone_changes_only_the_current_response_guidance(self):
         original_state = self.integration.personality.get_behavior_state()

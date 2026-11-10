@@ -3,6 +3,7 @@
 import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, simpledialog, ttk
+from autonomy import save_settings
 from nova_ai.memory.errors import (
     DuplicateMemoryError,
     MemoryNotFoundError,
@@ -133,8 +134,43 @@ class MemoryPreferencesTabMixin:
         memory_card = card(
             memory_content, "O que a Nova deve lembrar?",
             "Memórias manuais antigas pertencem ao perfil principal. "
-            "Memórias de outros perfis ficam no armazenamento local separado.",
+            "Memórias de outros perfis ficam no armazenamento local separado. "
+            "Desativar o uso impede sua recuperação em respostas, estilo e saudações; "
+            "não apaga os registros.",
         )
+        memory_enabled = tk.BooleanVar(
+            value=self.settings.get("memory_enabled", True) is True
+        )
+
+        def persist_privacy_setting(key, variable, default):
+            had_setting = key in self.settings
+            previous = self.settings.get(key, default)
+            self.settings[key] = variable.get() is True
+            if save_settings(self.settings, self.settings_path):
+                if key in {
+                    "conversation_history_enabled", "conversation_context_enabled",
+                }:
+                    refresh_history()
+                return
+            if had_setting:
+                self.settings[key] = previous
+            else:
+                self.settings.pop(key, None)
+            variable.set(previous is True)
+            messagebox.showerror(
+                "Não foi possível salvar",
+                "A preferência de privacidade não foi alterada.",
+                parent=window,
+            )
+
+        ttk.Checkbutton(
+            memory_card,
+            text="Usar memórias salvas nas respostas e saudações",
+            variable=memory_enabled,
+            command=lambda: persist_privacy_setting(
+                "memory_enabled", memory_enabled, True
+            ),
+        ).pack(anchor="w", pady=(0, 8))
         memory_entry = tk.StringVar()
         memory_form = ttk.Frame(memory_card, style="Card.TFrame")
         memory_form.pack(fill="x")
@@ -202,8 +238,16 @@ class MemoryPreferencesTabMixin:
                     structured_status.set(f"Erro ao ler memórias: {exc}")
                     return
                 for memory in structured_memories:
+                    provenance_label = {
+                        "user_provided": "confirmada pelo usuário",
+                        "inference": "inferência",
+                        "uncertain": "incerta",
+                        "system_observation": "observação do sistema",
+                    }.get(memory.provenance, memory.provenance)
                     structured_list.insert(
-                        "end", f"[{memory.kind.value}] {memory.content}"
+                        "end",
+                        f"[{memory.kind.value} · {provenance_label} · "
+                        f"confiança {memory.confidence:.0%}] {memory.content}",
                     )
                 structured_status.set(
                     f"{len(structured_memories)} memória(s) neste perfil."
@@ -268,7 +312,8 @@ class MemoryPreferencesTabMixin:
             )
             structured_list, _refresh_structured_list, _remove_structured_item = setup_list(
                 structured_card, [], lambda memory: (
-                    f"[{memory.kind.value}] {memory.content}"
+                    f"[{memory.kind.value} · {memory.provenance} · "
+                    f"confiança {memory.confidence:.0%}] {memory.content}"
                 ),
                 "Nenhuma memória estruturada cadastrada neste perfil.",
             )
@@ -345,8 +390,32 @@ class MemoryPreferencesTabMixin:
 
         history_card = card(
             history_content, "Histórico de conversa",
-            "Veja as mensagens salvas, quando foram registradas e apague uma mensagem ou todo o histórico.",
+            "Novas conversas não são salvas nem reutilizam mensagens anteriores por padrão. "
+            "Ative cada opção se desejar; as mensagens enviadas ao modelo configurado são "
+            "processadas pelo Ollama local.",
         )
+        history_enabled = tk.BooleanVar(
+            value=self.settings.get("conversation_history_enabled", False) is True
+        )
+        ttk.Checkbutton(
+            history_card,
+            text="Salvar as conversas neste computador",
+            variable=history_enabled,
+            command=lambda: persist_privacy_setting(
+                "conversation_history_enabled", history_enabled, True
+            ),
+        ).pack(anchor="w", pady=(0, 8))
+        context_enabled = tk.BooleanVar(
+            value=self.settings.get("conversation_context_enabled", False) is True
+        )
+        ttk.Checkbutton(
+            history_card,
+            text="Incluir mensagens anteriores como contexto ao perguntar à IA",
+            variable=context_enabled,
+            command=lambda: persist_privacy_setting(
+                "conversation_context_enabled", context_enabled, False
+            ),
+        ).pack(anchor="w", pady=(0, 8))
         history_status = tk.StringVar(value="")
         ttk.Label(history_card, textvariable=history_status, style="Hint.TLabel").pack(anchor="w")
         history_list_frame = ttk.Frame(history_content, style="Card.TFrame", padding=4)
@@ -469,7 +538,15 @@ class MemoryPreferencesTabMixin:
             profile = getattr(self, "profile_manager", None)
             profile_name = profile.active_profile.name if profile else "principal"
             history_status.set(
-                f"{len(self.history)} mensagem(ns) salvas no perfil {profile_name}."
+                f"{len(self.history)} mensagem(ns) no perfil {profile_name}; "
+                + (
+                    "salvamento ativado."
+                    if history_enabled.get() else "novas mensagens não serão salvas."
+                )
+                + (
+                    " Contexto anterior ativado."
+                    if context_enabled.get() else " Contexto anterior desativado."
+                )
             )
             show_selected_history_message()
 

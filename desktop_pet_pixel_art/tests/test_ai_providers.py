@@ -15,7 +15,13 @@ if str(SRC) not in sys.path:
 from ai.ai_core import AICore
 from ai.context_manager import ContextManager
 from ai.model_router import ModelRouter
-from ai.request_handler import answer_request
+from ai.request_handler import (
+    answer_request,
+    conversation_context_for_request,
+    conversation_history_is_enabled,
+)
+from ai.personality import Personality as LegacyPersonality
+from nova_ai.personality import NovaIdentity, Personality
 from autonomy import load_settings, save_settings
 from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
@@ -40,6 +46,42 @@ class FakeProvider:
 
 
 class TestAIProviders(unittest.TestCase):
+    def test_legacy_and_canonical_personality_imports_share_one_implementation(self):
+        self.assertIs(LegacyPersonality, Personality)
+        prompt = Personality().system_prompt()
+        self.assertIn(NovaIdentity().system_description(), prompt)
+        self.assertIn("Responda primeiro ao pedido", prompt)
+
+    def test_conversation_context_requires_explicit_opt_in(self):
+        history = [
+            {"role": "user", "content": "mensagem anterior"},
+            {"role": "assistant", "content": "resposta anterior"},
+            {"role": "user", "content": "mensagem atual"},
+        ]
+        self.assertEqual(
+            conversation_context_for_request(history, {}),
+            [history[-1]],
+        )
+        self.assertEqual(
+            conversation_context_for_request(
+                history, {"conversation_context_enabled": True}
+            ),
+            history,
+        )
+        self.assertEqual(
+            conversation_context_for_request(
+                history, {"conversation_context_enabled": 1}
+            ),
+            [history[-1]],
+        )
+        self.assertFalse(conversation_history_is_enabled({}))
+        self.assertFalse(
+            conversation_history_is_enabled({"conversation_history_enabled": 1})
+        )
+        self.assertTrue(
+            conversation_history_is_enabled({"conversation_history_enabled": True})
+        )
+
     def test_router_uses_only_the_ollama_backend_contract(self):
         local = FakeProvider("resposta local")
         factory = mock.Mock(return_value=local)

@@ -1,7 +1,7 @@
 """Prompts comuns aos provedores da Nova."""
 
 from assistant_actions import current_datetime_context
-from ai.personality import Personality
+from nova_ai.personality import Personality
 
 
 def build_system_prompt(personality=None, humor_style="equilibrada"):
