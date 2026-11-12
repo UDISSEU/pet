@@ -1,6 +1,9 @@
 """Package-manager update parsing, progress estimation, and command streaming."""
 
+import json
+import logging
 import os
+import fcntl
 import queue
 import re
 import signal
@@ -11,6 +14,30 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 from autonomy import application_command_target_exists
+from json_persistence import (
+    atomic_json_write,
+    block_replacement,
+    ensure_private_directory,
+    mark_valid,
+    may_replace,
+    preserve_corrupt_file,
+    validate_storage_path,
+)
+
+
+logger = logging.getLogger(__name__)
+_INVENTORY_CACHE_VERSION = 1
+_INVENTORY_SOURCES = ("APT/DEB", "Flatpak", "Snap")
+_INVENTORY_APP_FIELDS = (
+    "name", "version", "origin", "package", "source",
+    "candidate_version", "update_status",
+)
+_INVENTORY_UPDATE_STATES = {
+    "Atualizado",
+    "Atualização disponível",
+    "Verificação necessária",
+    "Atualização não gerenciada",
+}
 
 
 _APT_UPGRADE_LINE = re.compile(
@@ -164,13 +191,65 @@ def find_installed_snap_applications(snap_output, *, snap_root="/snap"):
     return applications
 
 
-def run_inventory_query(command, *, timeout, env=None, allow_partial=False):
+def _stop_inventory_process(process):
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        process.terminate()
+    try:
+        process.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            process.kill()
+        process.communicate()
+
+
+def run_inventory_query(
+    command, *, timeout, env=None, allow_partial=False, cancel_event=None,
+):
     """Run one inventory source without making other sources depend on it."""
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout,
-            check=False, env=env,
-        )
+        if cancel_event is None:
+            result = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout,
+                check=False, env=env,
+            )
+        else:
+            if cancel_event.is_set():
+                return "", "consulta cancelada"
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                start_new_session=True,
+            )
+            deadline = time.monotonic() + timeout
+            while True:
+                if cancel_event.is_set():
+                    _stop_inventory_process(process)
+                    return "", "consulta cancelada"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _stop_inventory_process(process)
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    stdout, stderr = process.communicate(
+                        timeout=min(0.1, remaining),
+                    )
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            result = subprocess.CompletedProcess(
+                command, process.returncode, stdout, stderr,
+            )
     except (OSError, subprocess.SubprocessError) as exc:
         return "", str(exc)
     if result.returncode and allow_partial and result.returncode == 1:
@@ -459,6 +538,7 @@ def query_installed_app_sources(
         command_env = dict(query_env if command_env is None else command_env)
         command_env["LC_ALL"] = "C"
         kwargs["env"] = command_env
+        kwargs["cancel_event"] = cancel_event
         return query(command, **kwargs)
 
     desktop_files = sorted({
@@ -491,13 +571,17 @@ def query_installed_app_sources(
         timeout=60, env=env, allow_partial=True,
     )
     package_versions = parse_dpkg_query_packages(output)
-    package_query_ok = not error
+    package_query_ok = not error and bool(output.strip())
+    if not error and not output.strip():
+        error = "a consulta retornou saída vazia inesperada"
     if error:
         errors.append(f"dpkg (pacotes instalados): {error}")
 
     apt_output, apt_error = run(
         ["apt", "list", "--upgradable"], timeout=120, env=env,
     )
+    if not apt_error and not apt_output.strip():
+        apt_error = "a consulta retornou saída vazia inesperada"
     apt_upgradable = parse_apt_upgradable(apt_output) if not apt_error else []
     apt_metadata_time = latest_apt_metadata_time(apt_lists_directory)
     if apt_metadata_time is None:
@@ -560,9 +644,13 @@ def query_installed_app_sources(
     snap_output, snap_error = run(
         ["snap", "list"], timeout=60, env=env,
     )
+    if not snap_error and not snap_output.strip():
+        snap_error = "a consulta retornou saída vazia inesperada"
     snap_update_output, snap_update_error = run(
         ["snap", "refresh", "--list"], timeout=120, env=env,
     )
+    if not snap_update_error and not snap_update_output.strip():
+        snap_update_error = "a consulta retornou saída vazia inesperada"
     if snap_error:
         errors.append(f"Snap (aplicativos): {snap_error}")
     if snap_update_error:
@@ -656,6 +744,311 @@ def merge_inventory_after_partial_failure(previous, current, failed_sources):
         inventory,
         key=lambda app: (app["name"].casefold(), app["package"].casefold()),
     )
+
+
+class InstalledAppInventoryStore:
+    """Persist the last known inventory with versioned, atomic JSON writes."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    @staticmethod
+    def _normalize_app(application):
+        if not isinstance(application, dict):
+            return None
+        normalized = {
+            field: application.get(field)
+            for field in _INVENTORY_APP_FIELDS
+        }
+        if any(not isinstance(value, str) for value in normalized.values()):
+            return None
+        if (
+            not normalized["name"].strip()
+            or normalized["source"] not in (
+                *_INVENTORY_SOURCES, "AppImage", "Manual/outro",
+            )
+            or normalized["update_status"] not in _INVENTORY_UPDATE_STATES
+        ):
+            return None
+        return normalized
+
+    @staticmethod
+    def _valid_timestamp(value):
+        if not isinstance(value, str) or not value:
+            return False
+        try:
+            datetime.fromisoformat(value)
+        except ValueError:
+            return False
+        return True
+
+    @classmethod
+    def _normalize_sources(cls, sources):
+        if not isinstance(sources, dict):
+            return {}
+        normalized = {}
+        for source in _INVENTORY_SOURCES:
+            state = sources.get(source)
+            if not isinstance(state, dict):
+                continue
+            checked_at = state.get("checked_at", "")
+            metadata_updated_at = state.get("metadata_updated_at", "")
+            metadata_stale = state.get("metadata_stale", False)
+            needs_verification = state.get("needs_verification", False)
+            if (
+                not isinstance(checked_at, str)
+                or not isinstance(metadata_updated_at, str)
+                or (
+                    checked_at and not cls._valid_timestamp(checked_at)
+                )
+                or (
+                    metadata_updated_at
+                    and not cls._valid_timestamp(metadata_updated_at)
+                )
+                or not isinstance(metadata_stale, bool)
+                or not isinstance(needs_verification, bool)
+            ):
+                continue
+            normalized[source] = {
+                "checked_at": checked_at,
+                "metadata_updated_at": metadata_updated_at,
+                "metadata_stale": metadata_stale,
+                "needs_verification": needs_verification,
+            }
+        return normalized
+
+    @classmethod
+    def _sources_after_refresh(cls, previous_sources, source_results):
+        sources = cls._normalize_sources(previous_sources)
+        if not isinstance(source_results, dict):
+            source_results = {}
+        for source in _INVENTORY_SOURCES:
+            result = source_results.get(source)
+            if not isinstance(result, dict):
+                continue
+            checked_at = result.get("checked_at", "")
+            metadata_updated_at = result.get("metadata_updated_at", "")
+            fully_checked = (
+                result.get("inventory_complete") is True
+                and result.get("updates_complete") is True
+                and not result.get("metadata_stale", False)
+                and cls._valid_timestamp(checked_at)
+                and (
+                    not metadata_updated_at
+                    or cls._valid_timestamp(metadata_updated_at)
+                )
+            )
+            if fully_checked:
+                previous = sources.get(source, {})
+                previous_checked_at = previous.get("checked_at", "")
+                if (
+                    not previous_checked_at
+                    or datetime.fromisoformat(checked_at).timestamp()
+                    >= datetime.fromisoformat(previous_checked_at).timestamp()
+                ):
+                    sources[source] = {
+                        "checked_at": checked_at,
+                        "metadata_updated_at": metadata_updated_at,
+                        "metadata_stale": False,
+                        "needs_verification": False,
+                    }
+            else:
+                state = dict(sources.get(source, {}))
+                state["needs_verification"] = True
+                sources[source] = {
+                    "checked_at": state.get("checked_at", ""),
+                    "metadata_updated_at": state.get("metadata_updated_at", ""),
+                    "metadata_stale": state.get("metadata_stale", False),
+                    "needs_verification": True,
+                }
+        return sources
+
+    def _read_snapshot(self, *, mark_unverified):
+        try:
+            path = validate_storage_path(self.path, label="inventário de aplicativos")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            mark_valid(self.path)
+            return {"apps": [], "sources": {}, "saved_at": ""}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            preserve_corrupt_file(self.path, type(exc).__name__)
+            logger.error(
+                "O inventário persistido está corrompido; iniciando sem cache válido",
+            )
+            return {"apps": [], "sources": {}, "saved_at": ""}
+        except OSError as exc:
+            block_replacement(self.path, type(exc).__name__)
+            logger.error(
+                "Não foi possível ler o inventário persistido (%s)",
+                type(exc).__name__,
+            )
+            return {"apps": [], "sources": {}, "saved_at": ""}
+
+        if (
+            not isinstance(payload, dict)
+            or type(payload.get("version")) is not int
+            or payload.get("version") != _INVENTORY_CACHE_VERSION
+            or not isinstance(payload.get("apps"), list)
+        ):
+            preserve_corrupt_file(self.path, "formato ou versão inválidos")
+            logger.error(
+                "O formato do inventário persistido é inválido ou incompatível",
+            )
+            return {"apps": [], "sources": {}, "saved_at": ""}
+
+        applications = []
+        for item in payload["apps"]:
+            application = self._normalize_app(item)
+            if application is None:
+                logger.warning("Um item inválido do inventário persistido foi ignorado")
+                continue
+            if mark_unverified and application["source"] in _INVENTORY_SOURCES:
+                application["update_status"] = "Verificação necessária"
+                application["candidate_version"] = "—"
+            applications.append(application)
+
+        saved_at = payload.get("saved_at", "")
+        if saved_at and not self._valid_timestamp(saved_at):
+            saved_at = ""
+        sources = self._normalize_sources(payload.get("sources", {}))
+        if mark_unverified:
+            for state in sources.values():
+                state["needs_verification"] = True
+        mark_valid(self.path)
+        return {"apps": applications, "sources": sources, "saved_at": saved_at}
+
+    def load(self):
+        """Return cached applications as unverified until a fresh scan completes."""
+        return self._read_snapshot(mark_unverified=True)
+
+    def save(self, applications, source_results, *, previous_sources=None):
+        """Serialize writers and merge failed or superseded source snapshots."""
+        normalized_apps = []
+        for item in applications:
+            application = self._normalize_app(item)
+            if application is None:
+                raise ValueError("O inventário contém um aplicativo inválido")
+            normalized_apps.append(application)
+        path = validate_storage_path(self.path, label="inventário de aplicativos")
+        ensure_private_directory(path.parent, label="inventário de aplicativos")
+        lock_path = validate_storage_path(
+            path.with_name(f".{path.name}.lock"),
+            label="bloqueio do inventário de aplicativos",
+        )
+        lock_flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            lock_flags |= os.O_NOFOLLOW
+        lock_fd = os.open(lock_path, lock_flags, 0o600)
+        try:
+            os.fchmod(lock_fd, 0o600)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if not may_replace(path):
+                raise OSError(
+                    "A gravação foi bloqueada para preservar o inventário original",
+                )
+
+            latest = self._read_snapshot(mark_unverified=False)
+            latest_sources = self._normalize_sources(latest["sources"])
+            for source, state in self._normalize_sources(previous_sources).items():
+                latest_sources.setdefault(source, state)
+
+            complete_sources = {
+                source for source in _INVENTORY_SOURCES
+                if (
+                    isinstance(source_results, dict)
+                    and isinstance(source_results.get(source), dict)
+                    and source_results[source].get("inventory_complete") is True
+                )
+            }
+            failed_sources = set(_INVENTORY_SOURCES) - complete_sources
+            stale_sources = set()
+            if isinstance(source_results, dict):
+                for source in _INVENTORY_SOURCES:
+                    result = source_results.get(source)
+                    old_checked_at = latest_sources.get(source, {}).get(
+                        "checked_at", "",
+                    )
+                    new_checked_at = (
+                        result.get("checked_at", "")
+                        if isinstance(result, dict) else ""
+                    )
+                    if (
+                        old_checked_at
+                        and self._valid_timestamp(old_checked_at)
+                        and self._valid_timestamp(new_checked_at)
+                        and datetime.fromisoformat(new_checked_at)
+                        .timestamp()
+                        < datetime.fromisoformat(old_checked_at).timestamp()
+                    ):
+                        stale_sources.add(source)
+            preserve_sources = failed_sources | stale_sources
+            merged_apps = [
+                application for application in normalized_apps
+                if application["source"] not in preserve_sources
+            ]
+            retained_apps = [
+                application for application in latest["apps"]
+                if application["source"] in preserve_sources
+            ]
+            merged_apps = merge_inventory_after_partial_failure(
+                retained_apps,
+                merged_apps,
+                failed_sources,
+            )
+            identities = {
+                (app["source"], app["package"], app["name"].casefold())
+                for app in merged_apps
+            }
+            for application in retained_apps:
+                if application["source"] not in stale_sources:
+                    continue
+                identity = (
+                    application["source"],
+                    application["package"],
+                    application["name"].casefold(),
+                )
+                if identity not in identities:
+                    merged_apps.append(application)
+                    identities.add(identity)
+            for application in normalized_apps:
+                if application["source"] not in failed_sources:
+                    continue
+                identity = (
+                    application["source"],
+                    application["package"],
+                    application["name"].casefold(),
+                )
+                if identity in identities:
+                    continue
+                retained = dict(application)
+                retained["update_status"] = "Verificação necessária"
+                retained["candidate_version"] = "—"
+                merged_apps.append(retained)
+                identities.add(identity)
+            merged_apps.sort(
+                key=lambda app: (app["name"].casefold(), app["package"].casefold()),
+            )
+
+            sources = self._sources_after_refresh(latest_sources, source_results)
+            payload = {
+                "version": _INVENTORY_CACHE_VERSION,
+                "saved_at": datetime.now().astimezone().isoformat(),
+                "apps": merged_apps,
+                "sources": sources,
+            }
+            atomic_json_write(
+                path, payload, label="inventário de aplicativos", mode=0o600,
+            )
+            return {
+                "apps": merged_apps,
+                "sources": sources,
+                "saved_at": payload["saved_at"],
+            }
+        finally:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
 
 
 class InventoryLoadState:

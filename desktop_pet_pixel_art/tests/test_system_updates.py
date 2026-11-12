@@ -1,7 +1,9 @@
+import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+_INVENTORY_TEST_SOURCES = {"APT/DEB", "Flatpak", "Snap"}
 
 from system_updates import (
     apt_upgrade_command,
@@ -18,6 +21,7 @@ from system_updates import (
     estimate_remaining_seconds,
     flatpak_upgrade_command,
     InventoryLoadState,
+    InstalledAppInventoryStore,
     parse_apt_upgradable,
     parse_dpkg_query_owners,
     parse_dpkg_query_packages,
@@ -38,9 +42,501 @@ from system_updates import (
 class AptUpdateParsingTests(unittest.TestCase):
     def fresh_apt_lists(self, directory):
         apt_lists = Path(directory) / "apt-lists"
-        apt_lists.mkdir()
+        apt_lists.mkdir(parents=True)
         (apt_lists / "index").touch()
         return apt_lists
+
+    def mocked_inventory_scan(self, directory, failed_sources=()):
+        root = Path(directory)
+        apt_lists = self.fresh_apt_lists(root)
+        snap_root = root / "snap"
+        snap_gui = snap_root / "demo-snap" / "current" / "meta" / "gui"
+        snap_gui.mkdir(parents=True)
+        (snap_gui / "demo.desktop").write_text(
+            "[Desktop Entry]\nType=Application\nName=Snap Demo\nExec=demo\n",
+            encoding="utf-8",
+        )
+        applications = [
+            {
+                "name": "APT Demo",
+                "command": "apt-demo",
+                "desktop_file": "/usr/share/applications/apt-demo.desktop",
+            },
+            {
+                "name": "Flatpak Demo",
+                "command": "flatpak-demo",
+                "desktop_file": (
+                    "/home/user/.local/share/flatpak/exports/share/"
+                    "applications/org.example.FlatpakDemo.desktop"
+                ),
+            },
+        ]
+        package_query = (
+            "dpkg-query", "-W",
+            "-f=${binary:Package}\\t${Version}\\t${Status}\\n",
+        )
+
+        def runner(command, **_kwargs):
+            command = tuple(command)
+            if command[:2] == ("dpkg-query", "-S"):
+                return (
+                    "apt-demo: /usr/share/applications/apt-demo.desktop\n",
+                    "dpkg-query: no path found matching pattern "
+                    + applications[1]["desktop_file"],
+                )
+            if command == package_query:
+                if "APT/DEB" in failed_sources:
+                    return "", "Permission denied"
+                return "apt-demo\t1.0\tinstall ok installed\n", None
+            if command == ("apt", "list", "--upgradable"):
+                return "Listing...\n", None
+            if command == (
+                "flatpak", "list", "--app",
+                "--columns=application,name,version,origin",
+            ):
+                if "Flatpak" in failed_sources:
+                    return "", "flatpak indisponível"
+                return "org.example.FlatpakDemo\tFlatpak Demo\t2.0\tflathub\n", None
+            if command == (
+                "flatpak", "remote-ls", "--updates",
+                "--columns=ref,version,commit",
+            ):
+                return "", None
+            if command == ("snap", "list"):
+                if "Snap" in failed_sources:
+                    return "", "snap indisponível"
+                return (
+                    "Name Version Rev Tracking Publisher Notes\n"
+                    "demo-snap 3.0 12 stable publisher -\n",
+                    None,
+                )
+            if command == ("snap", "refresh", "--list"):
+                return "All snaps up to date.\n", None
+            self.fail(f"Consulta inesperada: {command}")
+
+        sources = query_installed_app_sources(
+            applications,
+            query_runner=runner,
+            apt_lists_directory=apt_lists,
+            apt_metadata_directories=(),
+            snap_root=snap_root,
+        )
+        current = build_installed_app_inventory(
+            applications,
+            sources["package_versions"],
+            sources["package_owners"],
+            sources["flatpak_output"],
+            apt_upgradable=sources["apt_upgradable"],
+            flatpak_update_output=sources["flatpak_update_output"],
+            snap_output=sources["snap_output"],
+            snap_update_output=sources["snap_update_output"],
+            checked_sources=sources["checked_sources"],
+            apt_owners_checked=sources["apt_owners_checked"],
+            apt_applications=sources["apt_applications"],
+            snap_applications=sources["snap_applications"],
+        )
+        return current, sources
+
+    def test_inventory_persists_across_new_store_instance_and_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "profiles" / "profile-a" / "inventory.json"
+            first_scan, first_sources = self.mocked_inventory_scan(
+                Path(tmpdir) / "first",
+            )
+            first_store = InstalledAppInventoryStore(path)
+            first_store.save(first_scan, first_sources["source_results"])
+            del first_store
+
+            restarted_store = InstalledAppInventoryStore(path)
+            cached = restarted_store.load()
+            self.assertEqual(
+                {app["name"] for app in cached["apps"]},
+                {"APT Demo", "Flatpak Demo", "Snap Demo"},
+            )
+            self.assertTrue(all(
+                app["update_status"] == "Verificação necessária"
+                for app in cached["apps"]
+            ))
+
+            refreshed, refresh_sources = self.mocked_inventory_scan(
+                Path(tmpdir) / "second",
+            )
+            failed_sources = (
+                set(refresh_sources["source_results"])
+                - refresh_sources["inventory_complete_sources"]
+            )
+            refreshed = merge_inventory_after_partial_failure(
+                cached["apps"], refreshed, failed_sources,
+            )
+            self.assertTrue(all(
+                app["update_status"] == "Atualizado" for app in refreshed
+            ))
+            restarted_store.save(
+                refreshed,
+                refresh_sources["source_results"],
+                previous_sources=cached["sources"],
+            )
+            saved_payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(all(
+                app["update_status"] == "Atualizado"
+                for app in saved_payload["apps"]
+            ))
+
+            reopened = InstalledAppInventoryStore(path).load()
+
+        self.assertEqual(
+            {app["name"] for app in reopened["apps"]},
+            {"APT Demo", "Flatpak Demo", "Snap Demo"},
+        )
+        self.assertTrue(all(
+            app["update_status"] == "Verificação necessária"
+            for app in reopened["apps"]
+        ))
+        self.assertEqual(
+            {source for source, state in reopened["sources"].items()
+             if state["checked_at"]},
+            {"APT/DEB", "Flatpak", "Snap"},
+        )
+
+    def test_individual_source_failures_preserve_other_sources_and_cached_apps(self):
+        for failed_source in ("APT/DEB", "Flatpak", "Snap"):
+            with self.subTest(failed_source=failed_source):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    path = Path(tmpdir) / "inventory.json"
+                    initial, initial_sources = self.mocked_inventory_scan(
+                        Path(tmpdir) / "initial",
+                    )
+                    store = InstalledAppInventoryStore(path)
+                    store.save(initial, initial_sources["source_results"])
+                    cached = InstalledAppInventoryStore(path).load()
+
+                    current, sources = self.mocked_inventory_scan(
+                        Path(tmpdir) / "refresh", {failed_source},
+                    )
+                    failed = (
+                        set(sources["source_results"])
+                        - sources["inventory_complete_sources"]
+                    )
+                    merged = merge_inventory_after_partial_failure(
+                        cached["apps"], current, failed,
+                    )
+                    by_name_before_save = {
+                        app["name"]: app for app in merged
+                    }
+                    expected_statuses = {
+                        "APT Demo": "Atualizado",
+                        "Flatpak Demo": "Atualizado",
+                        "Snap Demo": "Atualizado",
+                    }
+                    expected_statuses[{
+                        "APT/DEB": "APT Demo",
+                        "Flatpak": "Flatpak Demo",
+                        "Snap": "Snap Demo",
+                    }[failed_source]] = "Verificação necessária"
+                    self.assertEqual(
+                        {
+                            name: app["update_status"]
+                            for name, app in by_name_before_save.items()
+                        },
+                        expected_statuses,
+                    )
+                    store.save(
+                        merged, sources["source_results"],
+                        previous_sources=cached["sources"],
+                    )
+                    reopened = InstalledAppInventoryStore(path).load()
+
+                by_name = {app["name"]: app for app in reopened["apps"]}
+                self.assertEqual(
+                    set(by_name), {"APT Demo", "Flatpak Demo", "Snap Demo"},
+                )
+                self.assertTrue(all(
+                    app["update_status"] == "Verificação necessária"
+                    for app in by_name.values()
+                ))
+
+    def test_all_failed_sources_keep_persisted_inventory_unverified(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "inventory.json"
+            initial, initial_sources = self.mocked_inventory_scan(
+                Path(tmpdir) / "initial",
+            )
+            store = InstalledAppInventoryStore(path)
+            store.save(initial, initial_sources["source_results"])
+            cached = InstalledAppInventoryStore(path).load()
+
+            current, sources = self.mocked_inventory_scan(
+                Path(tmpdir) / "failed", _INVENTORY_TEST_SOURCES,
+            )
+            failed = (
+                set(sources["source_results"])
+                - sources["inventory_complete_sources"]
+            )
+            merged = merge_inventory_after_partial_failure(
+                cached["apps"], current, failed,
+            )
+            store.save(
+                merged, sources["source_results"],
+                previous_sources=cached["sources"],
+            )
+            reopened = InstalledAppInventoryStore(path).load()
+
+        self.assertEqual(
+            {app["name"] for app in reopened["apps"]},
+            {"APT Demo", "Flatpak Demo", "Snap Demo"},
+        )
+        self.assertTrue(all(
+            app["update_status"] == "Verificação necessária"
+            for app in reopened["apps"]
+        ))
+
+    def test_inventory_store_skips_invalid_rows_and_recovers_corrupt_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "inventory.json"
+            path.write_text("{invalid", encoding="utf-8")
+
+            store = InstalledAppInventoryStore(path)
+            self.assertEqual(store.load()["apps"], [])
+            self.assertTrue(list(Path(tmpdir).glob("inventory.json.corrupt-*")))
+
+            path.write_text(json.dumps({
+                "version": 1,
+                "saved_at": "2026-11-12T10:00:00+00:00",
+                "apps": [
+                    {"name": "invalid"},
+                    {
+                        "name": "Valid App",
+                        "version": "1.0",
+                        "origin": "APT/DEB",
+                        "package": "valid-app",
+                        "source": "APT/DEB",
+                        "candidate_version": "—",
+                        "update_status": "Atualizado",
+                    },
+                ],
+                "sources": {},
+            }), encoding="utf-8")
+            loaded = store.load()
+
+        self.assertEqual([app["name"] for app in loaded["apps"]], ["Valid App"])
+        self.assertEqual(
+            loaded["apps"][0]["update_status"], "Verificação necessária",
+        )
+
+    def test_inventory_store_preserves_previous_file_when_atomic_replace_fails(self):
+        application = {
+            "name": "Safe App",
+            "version": "1.0",
+            "origin": "APT/DEB",
+            "package": "safe-app",
+            "source": "APT/DEB",
+            "candidate_version": "—",
+            "update_status": "Atualizado",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "nested" / "inventory.json"
+            store = InstalledAppInventoryStore(path)
+            store.save([application], {})
+            previous = path.read_bytes()
+
+            with mock.patch(
+                "json_persistence.os.replace",
+                side_effect=OSError("interrupção simulada"),
+            ), self.assertRaises(OSError):
+                store.save(
+                    [{**application, "version": "2.0"}],
+                    {},
+                )
+
+            self.assertEqual(path.read_bytes(), previous)
+            self.assertEqual(
+                InstalledAppInventoryStore(path).load()["apps"][0]["version"],
+                "1.0",
+            )
+
+    def test_inventory_store_merges_concurrent_writers_from_separate_instances(self):
+        source_names = ("APT/DEB", "Flatpak", "Snap")
+
+        def application(name, source, package, version):
+            return {
+                "name": name,
+                "version": version,
+                "origin": source,
+                "package": package,
+                "source": source,
+                "candidate_version": "—",
+                "update_status": "Atualizado",
+            }
+
+        def results(verified_source, checked_at):
+            return {
+                source: {
+                    "inventory_complete": source == verified_source,
+                    "updates_complete": source == verified_source,
+                    "checked_at": checked_at if source == verified_source else "",
+                    "metadata_updated_at": "",
+                    "metadata_stale": False,
+                }
+                for source in source_names
+            }
+
+        initial_apps = [
+            application("APT App", "APT/DEB", "apt-app", "1.0"),
+            application("Flatpak App", "Flatpak", "flatpak-app", "1.0"),
+            application("Snap App", "Snap", "snap-app", "1.0"),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "inventory.json"
+            InstalledAppInventoryStore(path).save(
+                initial_apps,
+                {
+                    source: {
+                        "inventory_complete": True,
+                        "updates_complete": True,
+                        "checked_at": "2026-11-12T10:00:00+00:00",
+                        "metadata_updated_at": "",
+                        "metadata_stale": False,
+                    }
+                    for source in source_names
+                },
+            )
+            barrier = threading.Barrier(3)
+            errors = []
+
+            def save_from_separate_instance(apps, source_results):
+                try:
+                    barrier.wait(timeout=5)
+                    InstalledAppInventoryStore(path).save(
+                        apps, source_results,
+                    )
+                except Exception as exc:
+                    errors.append(exc)
+
+            writers = [
+                threading.Thread(
+                    target=save_from_separate_instance,
+                    args=(
+                        [application("APT App", "APT/DEB", "apt-app", "2.0")],
+                        results("APT/DEB", "2026-11-12T10:01:00+00:00"),
+                    ),
+                ),
+                threading.Thread(
+                    target=save_from_separate_instance,
+                    args=(
+                        [application("Flatpak App", "Flatpak", "flatpak-app", "2.0")],
+                        results("Flatpak", "2026-11-12T10:02:00+00:00"),
+                    ),
+                ),
+            ]
+            for writer in writers:
+                writer.start()
+            barrier.wait(timeout=5)
+            for writer in writers:
+                writer.join(timeout=5)
+                self.assertFalse(writer.is_alive())
+            self.assertEqual(errors, [])
+            saved = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            {app["name"]: app["version"] for app in saved["apps"]},
+            {"APT App": "2.0", "Flatpak App": "2.0", "Snap App": "1.0"},
+        )
+
+    def test_inventory_store_does_not_overwrite_data_after_permission_error(self):
+        application = {
+            "name": "Protected App",
+            "version": "1.0",
+            "origin": "APT/DEB",
+            "package": "protected-app",
+            "source": "APT/DEB",
+            "candidate_version": "—",
+            "update_status": "Atualizado",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "inventory.json"
+            store = InstalledAppInventoryStore(path)
+            store.save([application], {})
+            with mock.patch.object(
+                Path, "read_text", side_effect=PermissionError("acesso negado"),
+            ):
+                self.assertEqual(store.load()["apps"], [])
+            with self.assertRaisesRegex(OSError, "bloqueada"):
+                store.save([application], {})
+
+    def test_empty_apt_update_response_requires_verification(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            apt_lists = self.fresh_apt_lists(tmpdir)
+
+            def runner(command, **_kwargs):
+                command = tuple(command)
+                if command[0] == "dpkg-query":
+                    return "editor\t1.0\tinstall ok installed\n", None
+                if command[:2] == ("apt", "list"):
+                    return "", None
+                if command[:2] == ("flatpak", "list"):
+                    return "", None
+                if command[:2] == ("flatpak", "remote-ls"):
+                    return "", None
+                if command == ("snap", "list"):
+                    return "Name Version Rev Tracking Publisher Notes\n", None
+                if command[:2] == ("snap", "refresh"):
+                    return "All snaps up to date.\n", None
+                self.fail(f"Consulta inesperada: {command}")
+
+            sources = query_installed_app_sources(
+                [],
+                query_runner=runner,
+                apt_lists_directory=apt_lists,
+                apt_metadata_directories=(),
+            )
+
+        self.assertNotIn("APT/DEB", sources["checked_sources"])
+        self.assertFalse(sources["source_results"]["APT/DEB"]["updates_complete"])
+        self.assertTrue(any("saída vazia inesperada" in error for error in sources["errors"]))
+
+    def test_inventory_query_reports_timeout_and_permission_failures(self):
+        with mock.patch(
+            "system_updates.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(["apt"], timeout=1),
+        ):
+            output, error = run_inventory_query(["apt", "list"], timeout=1)
+        self.assertEqual(output, "")
+        self.assertTrue(error)
+
+        with mock.patch(
+            "system_updates.subprocess.run",
+            side_effect=PermissionError("acesso negado"),
+        ):
+            output, error = run_inventory_query(["apt", "list"], timeout=1)
+        self.assertEqual(output, "")
+        self.assertIn("acesso negado", error)
+
+    def test_inventory_query_cancellation_terminates_running_process_group(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = Path(tmpdir) / "query.pid"
+            cancel_event = threading.Event()
+            timer = threading.Timer(0.2, cancel_event.set)
+            timer.daemon = True
+            timer.start()
+            output, error = run_inventory_query(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os,sys,time; "
+                    "open(sys.argv[1], 'w').write(str(os.getpid())); "
+                    "time.sleep(30)",
+                    str(pid_path),
+                ],
+                timeout=10,
+                cancel_event=cancel_event,
+            )
+            timer.join(timeout=2)
+
+            self.assertEqual(output, "")
+            self.assertEqual(error, "consulta cancelada")
+            process_id = int(pid_path.read_text(encoding="utf-8"))
+            with self.assertRaises(ProcessLookupError):
+                os.kill(process_id, 0)
 
     def test_inventory_query_failures_do_not_require_a_shell(self):
         output, error = run_inventory_query(
@@ -57,6 +553,13 @@ class AptUpdateParsingTests(unittest.TestCase):
         )
         self.assertEqual(output.strip(), "partial")
         self.assertIsNone(error)
+
+        output, error = run_inventory_query(
+            [sys.executable, "-c", "import sys; sys.exit(2)"],
+            timeout=5,
+        )
+        self.assertEqual(output, "")
+        self.assertIn("código 2", error)
 
         output, error = run_inventory_query(
             ["inventory-command-that-does-not-exist"],
@@ -554,7 +1057,7 @@ All packages are up to date.
             responses = {
                 ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
                     ("", None),
-                ("apt", "list", "--upgradable"): ("", None),
+                ("apt", "list", "--upgradable"): ("Listing...\n", None),
                 ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
                     ("", None),
                 ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
@@ -622,7 +1125,7 @@ All packages are up to date.
                 ),
             ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
                 ("editor\t1.0\tinstall ok installed\n", None),
-            ("apt", "list", "--upgradable"): ("", None),
+            ("apt", "list", "--upgradable"): ("Listing...\n", None),
             ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
                 ("", None),
             ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
@@ -707,7 +1210,7 @@ All packages are up to date.
                     (f"editor: {apt_launcher}\n", None),
                 ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
                     ("editor\t1.0\tinstall ok installed\n", None),
-                ("apt", "list", "--upgradable"): ("", None),
+                ("apt", "list", "--upgradable"): ("Listing...\n", None),
                 ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
                     ("", None),
                 ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
@@ -765,7 +1268,7 @@ All packages are up to date.
                 (f"editor: {apt_launcher}\n", None),
             ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
                 ("editor\t1.0\tinstall ok installed\n", None),
-            ("apt", "list", "--upgradable"): ("", None),
+            ("apt", "list", "--upgradable"): ("Listing...\n", None),
             ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
                 ("", "sem rede"),
             ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):

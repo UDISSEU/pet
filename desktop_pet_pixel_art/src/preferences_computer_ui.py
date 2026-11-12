@@ -6,6 +6,7 @@ import threading
 import time
 import tkinter as tk
 from datetime import datetime
+from pathlib import Path
 from tkinter import messagebox, ttk
 from autonomy import find_installed_apps, save_settings
 from system_updates import (
@@ -14,6 +15,7 @@ from system_updates import (
     display_package_name,
     estimate_remaining_seconds,
     flatpak_upgrade_command,
+    InstalledAppInventoryStore,
     InventoryLoadState,
     parse_apt_upgradable,
     parse_flatpak_upgradable,
@@ -909,7 +911,7 @@ class ComputerPreferencesTabMixin:
         )
         apps_controls = ttk.Frame(apps_card, style="Card.TFrame")
         apps_controls.pack(fill="x", pady=(6, 8))
-        app_search = tk.StringVar()
+        app_search = tk.StringVar(value="")
         ttk.Label(
             apps_controls, text="Buscar:", style="Hint.TLabel",
         ).pack(side="left", padx=(0, 6))
@@ -1030,7 +1032,40 @@ class ComputerPreferencesTabMixin:
         inventory_state = InventoryLoadState()
         app_by_item = {}
         inventory_sort = {"column": "name", "reverse": False}
-        verified_at = {"value": ""}
+        settings_path = getattr(self, "settings_path", None)
+        inventory_cache_path = (
+            Path(settings_path).with_name("installed_apps_inventory.json")
+            if settings_path
+            else Path.home() / ".config" / "desktop_pet"
+            / "installed_apps_inventory.json"
+        )
+        inventory_store = InstalledAppInventoryStore(inventory_cache_path)
+        cached_snapshot = inventory_store.load()
+        installed_apps_inventory.extend(cached_snapshot["apps"])
+        source_metadata = {"value": cached_snapshot["sources"]}
+
+        def format_source_check_times(sources):
+            return " · ".join(
+                f"{source}: {datetime.fromisoformat(state['checked_at']).strftime('%d/%m %H:%M')}"
+                + (" (precisa verificar)" if state["needs_verification"] else "")
+                + (
+                    f" · catálogo local {datetime.fromisoformat(state['metadata_updated_at']).strftime('%d/%m %H:%M')}"
+                    + (" (pode estar desatualizado)" if state["metadata_stale"] else "")
+                    if state["metadata_updated_at"] else ""
+                )
+                for source, state in sources.items()
+                if state["checked_at"]
+            )
+
+        verified_at = {"value": format_source_check_times(cached_snapshot["sources"])}
+        if installed_apps_inventory:
+            inventory_status_banner.set(
+                "Inventário salvo recuperado; os estados precisam de nova verificação.",
+            )
+            app_inventory_status.set(
+                f"{len(installed_apps_inventory)} aplicativo(s) recuperado(s) "
+                "do armazenamento local."
+            )
         selected_app_details = tk.StringVar(
             value="Selecione um aplicativo para ver suas versões e detalhes.",
         )
@@ -1260,6 +1295,7 @@ class ComputerPreferencesTabMixin:
             return True
 
         render_update_history()
+        render_installed_apps()
 
         def load_installed_apps(*, force=False):
             if not inventory_state.begin(force=force):
@@ -1283,6 +1319,11 @@ class ComputerPreferencesTabMixin:
             refresh_apps_button.configure(state="disabled")
             inventory_status_banner.set("Consultando apps instalados e versões disponíveis…")
             app_inventory_status.set("Lendo aplicativos e versões instaladas…")
+            if not installed_apps_inventory:
+                inventory_empty_state.configure(
+                    text="Consultando fontes; a lista será exibida quando a consulta terminar.",
+                )
+                inventory_empty_state.pack(anchor="w", pady=(0, 8))
             computer_progress.pack(
                 fill="x", pady=(10, 0), before=details_button,
             )
@@ -1295,6 +1336,7 @@ class ComputerPreferencesTabMixin:
                 commit_inventory = False
                 previous_inventory = list(installed_apps_inventory)
                 sources = None
+                saved_snapshot = None
 
                 def preserve_previous_inventory():
                     failed_sources = {"APT/DEB", "Flatpak", "Snap"}
@@ -1373,6 +1415,30 @@ class ComputerPreferencesTabMixin:
                     commit_inventory = bool(previous_inventory)
                     error = f"Falha ao montar o inventário ({type(exc).__name__}): {exc}"
                 finally:
+                    if commit_inventory:
+                        source_results = (
+                            sources["source_results"] if sources else {
+                                source: {
+                                    "inventory_complete": False,
+                                    "updates_complete": False,
+                                }
+                                for source in ("APT/DEB", "Flatpak", "Snap")
+                            }
+                        )
+                        try:
+                            saved_snapshot = inventory_store.save(
+                                inventory,
+                                source_results,
+                                previous_sources=source_metadata["value"],
+                            )
+                        except (OSError, TypeError, ValueError) as exc:
+                            persistence_error = (
+                                "Não foi possível salvar o inventário local: "
+                                f"{exc}"
+                            )
+                            error = "\n".join(
+                                filter(None, (error, persistence_error)),
+                            )
                     self.system_maintenance_active = False
                     inventory_state.finish(completed=completed)
 
@@ -1413,19 +1479,11 @@ class ComputerPreferencesTabMixin:
                         inventory_error.set("")
                     if commit_inventory:
                         installed_apps_inventory[:] = inventory
-                        if sources:
-                            source_check_times = " · ".join(
-                                f"{source}: {datetime.fromisoformat(result['checked_at']).strftime('%d/%m %H:%M')}"
-                                + (
-                                    f" · catálogo local {datetime.fromisoformat(result['metadata_updated_at']).strftime('%d/%m %H:%M')}"
-                                    + (" (pode estar desatualizado)" if result["metadata_stale"] else "")
-                                    if result["metadata_updated_at"] else ""
-                                )
-                                for source, result in sources["source_results"].items()
-                                if result["checked_at"]
+                        if saved_snapshot:
+                            source_metadata["value"] = saved_snapshot["sources"]
+                            verified_at["value"] = format_source_check_times(
+                                saved_snapshot["sources"],
                             )
-                            if source_check_times:
-                                verified_at["value"] = source_check_times
                         inventory_sort.update(column="name", reverse=False)
                     render_installed_apps()
 
