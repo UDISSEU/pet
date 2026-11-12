@@ -258,6 +258,108 @@ class DesktopControllerRegressionTests(unittest.TestCase):
         self.assertEqual(tuple(signature.parameters), ("self", "selected_tab"))
         self.assertEqual(signature.parameters["selected_tab"].default, "behavior")
 
+    def test_open_autonomy_settings_refreshes_computer_inventory_when_selected(self):
+        class FakeVariable:
+            def __init__(self, value=None):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+            def trace_add(self, *_args):
+                return "trace"
+
+        class FakeWidget:
+            def __init__(self, *_args, **_kwargs):
+                self.options = _kwargs
+                self.children = []
+
+            def pack(self, *args, **kwargs):
+                return None
+
+            def pack_forget(self):
+                return None
+
+            def bind(self, *_args, **_kwargs):
+                return None
+
+            def configure(self, *args, **kwargs):
+                return None
+
+            def __getattr__(self, name):
+                if name in ("curselection", "selection"):
+                    return lambda *args, **kwargs: ()
+                if name == "winfo_exists":
+                    return lambda: True
+                if name.startswith("winfo_"):
+                    return lambda *args, **kwargs: 100
+                return lambda *args, **kwargs: None
+
+        class FakeTk:
+            TclError = RuntimeError
+            StringVar = BooleanVar = DoubleVar = FakeVariable
+
+            def __getattr__(self, _name):
+                return FakeWidget
+
+        class FakeTtk:
+            def __getattr__(self, _name):
+                return FakeWidget
+
+        pet = DesktopPet.__new__(DesktopPet)
+        pet.root = FakeWidget()
+        pet.settings = {
+            "mode": "companhia",
+            "apps": [],
+            "memories": [],
+            "reminders": [],
+            "automations": {"enabled": {}, "last_run": {}, "activity": []},
+        }
+        pet.history = []
+        pet.auto_speech_var = FakeVariable(True)
+        pet.observe_apps_var = FakeVariable(True)
+        pet.auto_sit_var = FakeVariable(False)
+        pet.peekaboo_var = FakeVariable(False)
+        pet.focus_mode = "idle"
+        pet.ai_request_active = False
+        pet.dragging = False
+        pet._set_nova_window_icon = lambda window: window
+        pet._activate_panel = mock.Mock()
+        pet._refresh_automation_activity = mock.Mock()
+        refresh_called = mock.Mock()
+
+        def fake_build_computer(self, context):
+            context.refresh_computer_inventory = refresh_called
+
+        with ExitStack() as stack:
+            for module in (
+                preferences_ui,
+                preferences_ai_ui,
+                preferences_apps_ui,
+                preferences_automation_ui,
+                preferences_behavior_ui,
+                preferences_common_ui,
+                preferences_computer_ui,
+                preferences_memory_ui,
+            ):
+                stack.enter_context(mock.patch.object(module, "tk", FakeTk()))
+                if hasattr(module, "ttk"):
+                    stack.enter_context(mock.patch.object(module, "ttk", FakeTtk()))
+            stack.enter_context(mock.patch.object(preferences_ui, "make_header"))
+            stack.enter_context(
+                mock.patch.object(
+                    preferences_ui.PreferencesUIMixin,
+                    "_build_computer_preferences_tab",
+                    fake_build_computer,
+                )
+            )
+            pet.open_autonomy_settings("computer")
+
+        refresh_called.assert_called_once_with()
+
     def test_preference_tabs_build_without_a_display(self):
         class FakeVariable:
             def __init__(self, value=None):
@@ -269,6 +371,9 @@ class DesktopControllerRegressionTests(unittest.TestCase):
             def set(self, value):
                 self.value = value
 
+            def trace_add(self, *_args):
+                return "trace"
+
         class FakeWidget:
             instances = []
 
@@ -278,6 +383,8 @@ class DesktopControllerRegressionTests(unittest.TestCase):
 
             def __getattr__(self, name):
                 if name == "curselection":
+                    return lambda: ()
+                if name in ("get_children", "selection"):
                     return lambda: ()
                 if name == "winfo_exists":
                     return lambda: True

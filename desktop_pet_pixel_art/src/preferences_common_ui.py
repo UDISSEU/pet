@@ -5,9 +5,8 @@ from tkinter import ttk
 
 
 def setup_list(parent, items, format_item, empty_text):
-    ttk.Label(parent, text=empty_text, style="PageHint.TLabel").pack(
-        anchor="w", pady=(0, 8)
-    )
+    empty_label = ttk.Label(parent, text=empty_text, style="PageHint.TLabel")
+    empty_label.pack(anchor="w", pady=(0, 8))
     list_frame = ttk.Frame(parent, style="Card.TFrame", padding=1)
     list_frame.pack(fill="both", expand=True)
     listing = tk.Listbox(
@@ -25,6 +24,13 @@ def setup_list(parent, items, format_item, empty_text):
 
     def refresh():
         listing.delete(0, "end")
+        if not items:
+            empty_label.configure(text=empty_text)
+            empty_label.pack(anchor="w", pady=(0, 8))
+            list_frame.pack_forget()
+            return
+        empty_label.pack_forget()
+        list_frame.pack(fill="both", expand=True)
         for item in items:
             listing.insert("end", format_item(item))
 

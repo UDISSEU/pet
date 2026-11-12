@@ -36,7 +36,7 @@ class AppsPreferencesTabMixin:
         reminder_list, refresh_reminders, remove_reminder = setup_list(
             reminder_content, reminder_items,
             lambda item: f"{item.get('at', '')[:16].replace('T', ' ')}   ·   {item.get('text', '')}",
-            "Quando vencer, a Nova mostra o lembrete em um balão.",
+            "Nenhum lembrete cadastrado. Adicione um lembrete para receber a notificação no momento certo.",
         )
         def add_reminder():
             value = f"{reminder_date.get().strip()}T{reminder_time.get().strip()}"
@@ -102,7 +102,7 @@ class AppsPreferencesTabMixin:
         app_list, refresh_apps, remove_app = setup_list(
             apps_content, app_items,
             lambda item: f"{item.get('name', '')}   ·   {item.get('command', '')}",
-            "Selecione um app para editar ou remover. As alterações são salvas na hora.",
+            "Nenhum aplicativo cadastrado. Adicione um app para que a Nova possa abrir com segurança.",
         )
         def clear_app_form():
             editing_app["index"] = None

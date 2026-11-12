@@ -41,6 +41,9 @@ class PreferencesUIMixin(
         style.configure("CardTitle.TLabel", background=COLORS["surface"], foreground=COLORS["ink"], font=("TkDefaultFont", 10, "bold"))
         style.configure("Hint.TLabel", background=COLORS["surface"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
         style.configure("PageHint.TLabel", background=COLORS["background"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
+        style.configure("StatusBanner.TLabel", background="#E7F0FF", foreground="#1D4ED8", font=("TkDefaultFont", 9, "bold"))
+        style.configure("StatusBannerError.TLabel", background="#FEE2E2", foreground="#B42318", font=("TkDefaultFont", 9, "bold"))
+        style.configure("StatusBannerSuccess.TLabel", background="#E8F7E8", foreground="#1F7A3D", font=("TkDefaultFont", 9, "bold"))
         style.configure("ComputerStatus.TLabel", background=COLORS["surface"], foreground=COLORS["ink"], font=("TkDefaultFont", 10, "bold"))
         style.configure("ComputerStatusError.TLabel", background=COLORS["surface"], foreground="#B42318", font=("TkDefaultFont", 10, "bold"))
         style.configure("ModeHint.TLabel", background=COLORS["surface"], foreground=COLORS["muted"], font=("TkDefaultFont", 8))
@@ -93,6 +96,8 @@ class PreferencesUIMixin(
                     active_tab_name.set(name)
                     if name == "Histórico" and history_refresh_callback["callback"]:
                         history_refresh_callback["callback"]()
+                    if name == "Meu Computador" and getattr(context, "refresh_computer_inventory", None):
+                        context.refresh_computer_inventory()
                 else:
                     page.pack_forget()
 
@@ -277,6 +282,9 @@ class PreferencesUIMixin(
         self._build_behavior_preferences_tabs(context)
         self._build_computer_preferences_tab(context)
 
+        if hasattr(context, "refresh_computer_inventory"):
+            self.root.after(120, context.refresh_computer_inventory)
+
         self._build_memory_preferences_tabs(context)
 
         self._build_reminders_and_apps_preferences_tabs(context)
@@ -436,6 +444,8 @@ class PreferencesUIMixin(
             select_tab(apps_tab)
         elif selected_tab == "computer":
             select_tab(computer_tab)
+            if hasattr(context, "refresh_computer_inventory"):
+                self.root.after(180, context.refresh_computer_inventory)
         elif selected_tab == "automation":
             select_tab(automation_tab)
         elif selected_tab == "ai":

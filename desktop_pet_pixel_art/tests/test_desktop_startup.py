@@ -43,21 +43,40 @@ class DesktopStartupTests(unittest.TestCase):
             for node in ast.walk(tree)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        for function_name in ("run_maintenance", "preview_autoremove"):
-            with self.subTest(function=function_name):
-                calls = [
-                    node for node in ast.walk(functions[function_name])
-                    if isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "subprocess"
-                    and node.func.attr == "run"
-                ]
-                self.assertEqual(len(calls), 1)
-                env_arg = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "env")
-                self.assertIsInstance(env_arg, ast.Call)
-                self.assertIsInstance(env_arg.func, ast.Attribute)
-                self.assertEqual(env_arg.func.attr, "_child_process_env")
+        maintenance_calls = [
+            node for node in ast.walk(functions["run_maintenance"])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "run_streaming_command"
+        ]
+        self.assertEqual(len(maintenance_calls), 1)
+        streaming_env = next(
+            keyword.value for keyword in maintenance_calls[0].keywords
+            if keyword.arg == "env"
+        )
+        self.assertTrue(any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_child_process_env"
+            for node in ast.walk(streaming_env)
+        ))
+
+        autoremove_calls = [
+            node for node in ast.walk(functions["preview_autoremove"])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and node.func.attr == "run"
+        ]
+        self.assertEqual(len(autoremove_calls), 1)
+        env_arg = next(
+            keyword.value for keyword in autoremove_calls[0].keywords
+            if keyword.arg == "env"
+        )
+        self.assertIsInstance(env_arg, ast.Call)
+        self.assertIsInstance(env_arg.func, ast.Attribute)
+        self.assertEqual(env_arg.func.attr, "_child_process_env")
     def test_missing_pillow_or_opencv_shows_installer_hint_without_traceback(self):
         script = '''
 import builtins, runpy, sys
