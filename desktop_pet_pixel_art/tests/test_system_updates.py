@@ -3,6 +3,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -15,6 +16,7 @@ from system_updates import (
     display_package_name,
     estimate_remaining_seconds,
     flatpak_upgrade_command,
+    InventoryLoadState,
     parse_apt_upgradable,
     parse_dpkg_query_owners,
     parse_dpkg_query_packages,
@@ -25,6 +27,7 @@ from system_updates import (
     parse_snap_upgradable,
     run_streaming_command,
     run_inventory_query,
+    query_installed_app_sources,
     snap_upgrade_command,
 )
 
@@ -184,6 +187,22 @@ All packages are up to date.
         manual = next(row for row in inventory if row["name"] == "Manual Tool")
         self.assertEqual(manual["update_status"], "Atualização não gerenciada")
 
+    def test_inventory_marks_appimage_updates_as_unmanaged(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Portable Editor",
+                "command": "/home/user/Applications/PortableEditor.AppImage",
+                "desktop_file": "/home/user/.local/share/applications/editor.desktop",
+            }],
+            {},
+            {},
+        )
+
+        self.assertEqual(inventory[0]["source"], "AppImage")
+        self.assertEqual(
+            inventory[0]["update_status"], "Atualização não gerenciada",
+        )
+
     def test_inventory_identifies_snap_application_updates(self):
         inventory = build_installed_app_inventory(
             [{
@@ -260,14 +279,166 @@ All packages are up to date.
     def test_parses_flatpak_application_inventory(self):
         self.assertEqual(
             parse_flatpak_installed(
-                "com.spotify.Client\t1.2.95\tflathub\n"
-                "org.freedesktop.Platform\t25.08\tflathub\n"
+                "com.spotify.Client\tSpotify\t1.2.95\tflathub\n"
+                "runtime/org.freedesktop.Platform\tPlatform\t25.08\tflathub\n"
             ),
             {
-                "com.spotify.Client": ("1.2.95", "flathub"),
-                "org.freedesktop.Platform": ("25.08", "flathub"),
+                "com.spotify.Client": ("Spotify", "1.2.95", "flathub"),
             },
         )
+
+    def test_includes_flatpak_apps_without_shortcuts_and_filters_runtimes(self):
+        inventory = build_installed_app_inventory(
+            [], {}, {}, "org.example.Editor\tEditor Pro\t2.4\tflathub\n"
+            "runtime/org.example.Platform\tPlatform\t25.08\tflathub\n",
+            flatpak_update_output="app/org.example.Editor/x86_64/stable\t2.5\tnew\n",
+            checked_sources={"Flatpak"},
+        )
+
+        self.assertEqual(len(inventory), 1)
+        self.assertEqual(inventory[0]["name"], "Editor Pro")
+        self.assertEqual(inventory[0]["version"], "2.4")
+        self.assertEqual(inventory[0]["candidate_version"], "2.5")
+        self.assertEqual(inventory[0]["update_status"], "Atualização disponível")
+
+    def test_marks_flatpak_updated_only_after_both_queries_succeed(self):
+        applications = []
+        installed = "org.example.Editor\tEditor Pro\t2.4\tflathub\n"
+        self.assertEqual(
+            build_installed_app_inventory(
+                applications, {}, {}, installed, checked_sources={"Flatpak"},
+            )[0]["update_status"],
+            "Atualizado",
+        )
+        self.assertEqual(
+            build_installed_app_inventory(
+                applications, {}, {}, installed,
+            )[0]["update_status"],
+            "Verificação necessária",
+        )
+
+    def test_keeps_apt_launcher_when_package_owner_lookup_failed(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Editor",
+                "desktop_file": "/usr/share/applications/editor.desktop",
+            }],
+            {},
+            {},
+            checked_sources={"APT/DEB"},
+            apt_owners_checked=False,
+        )
+
+        self.assertEqual(inventory[0]["update_status"], "Verificação necessária")
+
+    def test_query_failures_are_independent_and_reported(self):
+        apt_launcher = "/usr/share/applications/editor.desktop"
+        snap_launcher = "/var/lib/snapd/desktop/applications/code_code.desktop"
+        responses = {
+            ("dpkg-query", "-S", "--", apt_launcher, snap_launcher):
+                (f"editor: {apt_launcher}\n", None),
+            ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
+                ("editor\t1.0\tinstall ok installed\n", None),
+            ("apt", "list", "--upgradable"): ("", None),
+            ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
+                ("", "sem rede"),
+            ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
+                ("", "sem rede"),
+            ("snap", "list"): (
+                "Name Version Rev Tracking Publisher Notes\ncode 1.0 1 stable pub -\n",
+                None,
+            ),
+            ("snap", "refresh", "--list"): ("All snaps up to date.\n", None),
+        }
+
+        def runner(command, **_kwargs):
+            return responses[tuple(command)]
+
+        sources = query_installed_app_sources(
+            [
+                {"name": "Editor", "desktop_file": apt_launcher},
+                {"name": "Code", "desktop_file": snap_launcher},
+            ],
+            query_runner=runner,
+        )
+        inventory = build_installed_app_inventory(
+            [
+                {"name": "Editor", "desktop_file": apt_launcher},
+                {"name": "Code", "desktop_file": snap_launcher},
+            ],
+            sources["package_versions"],
+            sources["package_owners"],
+            sources["flatpak_output"],
+            apt_upgradable=sources["apt_upgradable"],
+            flatpak_update_output=sources["flatpak_update_output"],
+            snap_output=sources["snap_output"],
+            snap_update_output=sources["snap_update_output"],
+            checked_sources=sources["checked_sources"],
+            apt_owners_checked=sources["apt_owners_checked"],
+        )
+
+        self.assertEqual(sources["checked_sources"], {"APT/DEB", "Snap"})
+        self.assertTrue(any("Flatpak" in error for error in sources["errors"]))
+        self.assertEqual(
+            {app["name"]: app["update_status"] for app in inventory},
+            {"Code": "Atualizado", "Editor": "Atualizado"},
+        )
+
+    def test_manager_failures_leave_apps_in_verification_state(self):
+        def runner(_command, **_kwargs):
+            return "", "sem conexão ou gerenciador ausente"
+
+        sources = query_installed_app_sources(
+            [{"name": "Editor", "desktop_file": "/usr/share/applications/editor.desktop"}],
+            query_runner=runner,
+        )
+        inventory = build_installed_app_inventory(
+            [{"name": "Editor", "desktop_file": "/usr/share/applications/editor.desktop"}],
+            sources["package_versions"],
+            sources["package_owners"],
+            sources["flatpak_output"],
+            apt_upgradable=sources["apt_upgradable"],
+            flatpak_update_output=sources["flatpak_update_output"],
+            snap_output=sources["snap_output"],
+            snap_update_output=sources["snap_update_output"],
+            checked_sources=sources["checked_sources"],
+            apt_owners_checked=sources["apt_owners_checked"],
+        )
+
+        self.assertEqual(sources["checked_sources"], set())
+        self.assertEqual(len(sources["errors"]), 7)
+        self.assertEqual(inventory[0]["update_status"], "Verificação necessária")
+
+    def test_closed_inventory_stops_starting_additional_queries(self):
+        state = InventoryLoadState()
+        state.begin()
+        state.close()
+        runner = mock.Mock()
+
+        sources = query_installed_app_sources(
+            [], query_runner=runner, cancel_event=state.cancel_event,
+        )
+
+        runner.assert_not_called()
+        self.assertIn("consulta cancelada", " ".join(sources["errors"]))
+
+    def test_empty_successful_sources_produce_a_real_empty_inventory(self):
+        self.assertEqual(build_installed_app_inventory([], {}, {}, checked_sources={
+            "APT/DEB", "Flatpak", "Snap",
+        }), [])
+
+    def test_inventory_load_state_blocks_duplicates_and_closed_windows(self):
+        state = InventoryLoadState()
+        self.assertTrue(state.begin())
+        self.assertFalse(state.begin())
+        state.finish(completed=True)
+        self.assertFalse(state.begin())
+        self.assertTrue(state.begin(force=True))
+        state.close()
+        self.assertTrue(state.cancel_event.is_set())
+        self.assertFalse(state.begin(force=True))
+        state.finish()
+        self.assertFalse(state.loading)
 
     def test_matches_flatpak_update_refs_to_installed_versions(self):
         updates = (

@@ -438,16 +438,16 @@ def find_installed_apps(search="", directories=None):
                 continue
             try:
                 argv = _desktop_exec_argv(exec_value, name, desktop_file)
-                resolve_app_command(shlex.join(argv))
             except ValueError:
                 continue
+            command = shlex.join(argv)
             generic_name = entry.get("GenericName", "").strip()
             searchable = f"{name} {generic_name}".casefold()
             if needle and needle not in searchable:
                 continue
             results.append({
                 "name": name,
-                "command": shlex.join(argv),
+                "command": command,
                 "generic_name": generic_name,
                 "desktop_file": str(desktop_file),
             })

@@ -72,19 +72,26 @@ def run_inventory_query(command, *, timeout, env=None, allow_partial=False):
 
 
 def parse_flatpak_installed(output):
-    """Return installed Flatpak application IDs with versions and remotes."""
+    """Return Flatpak application IDs with display names, versions, and remotes."""
     installed = {}
     for line in output.splitlines():
         fields = line.split("\t")
-        if not fields or fields[0].strip().lower() == "application":
+        if not fields or fields[0].strip().lower() in ("application", "ref"):
             continue
         application = fields[0].strip()
+        if application.startswith("runtime/"):
+            continue
+        if application.startswith("app/"):
+            application = application.removeprefix("app/")
         if not application or "." not in application:
             continue
-        installed[application] = (
-            fields[1].strip() if len(fields) > 1 else "",
-            fields[2].strip() if len(fields) > 2 else "",
-        )
+        if len(fields) >= 4:
+            name, version, remote = (field.strip() for field in fields[1:4])
+        else:
+            name = application
+            version = fields[1].strip() if len(fields) > 1 else ""
+            remote = fields[2].strip() if len(fields) > 2 else ""
+        installed[application] = (name or application, version, remote)
     return installed
 
 
@@ -136,7 +143,7 @@ def parse_flatpak_upgradable_apps(output):
 def build_installed_app_inventory(
     applications, package_versions, package_owners, flatpak_output="",
     *, apt_upgradable=(), flatpak_update_output="", snap_output="",
-    snap_update_output="", checked_sources=(),
+    snap_update_output="", checked_sources=(), apt_owners_checked=True,
 ):
     """Combine desktop launchers with package versions and known update status."""
     flatpak_apps = parse_flatpak_installed(flatpak_output)
@@ -149,6 +156,7 @@ def build_installed_app_inventory(
     checked_sources = set(checked_sources)
     inventory = []
     seen = set()
+    linked_flatpak_apps = set()
     for application in applications:
         name = application.get("name", "").strip()
         desktop_file = application.get("desktop_file", "")
@@ -158,12 +166,38 @@ def build_installed_app_inventory(
         package = package_owners.get(desktop_file, "")
         command = application.get("command", "").casefold()
         candidate = None
-        if flatpak_id in flatpak_apps or "/flatpak/" in desktop_file:
-            version, remote = flatpak_apps.get(flatpak_id, ("", ""))
+        if "/flatpak/exports/share/applications/" in desktop_file:
+            flatpak_name, version, remote = flatpak_apps.get(
+                flatpak_id, (name, "", ""),
+            )
             origin = f"Flatpak · {remote}" if remote else "Flatpak"
             package = flatpak_id
             source = "Flatpak"
             candidate = flatpak_updates.get(flatpak_id)
+            linked_flatpak_apps.add(flatpak_id)
+            if flatpak_name and flatpak_name != flatpak_id:
+                name = flatpak_name
+        elif (
+            desktop_file.startswith("/var/lib/snapd/desktop/applications/")
+            or command.startswith("/snap/")
+            or command.startswith("snap run ")
+        ):
+            snap_name = flatpak_id.split("_", 1)[0]
+            if command.startswith("/snap/bin/"):
+                snap_name = command.split("/", 3)[3].split("/", 1)[0]
+            elif command.startswith("/snap/"):
+                snap_name = command.split("/", 2)[2].split("/", 1)[0]
+            elif command.startswith("snap run "):
+                snap_name = command.split()[2]
+            package = snap_name
+            version = snap_apps.get(package, "")
+            origin = "Snap"
+            source = "Snap"
+            candidate = snap_updates.get(package) if package else None
+        elif ".appimage" in command or ".appimage" in desktop_file.casefold():
+            version = ""
+            origin = "AppImage / arquivo local"
+            source = "AppImage"
         elif package:
             version = (
                 package_versions.get(package)
@@ -176,22 +210,6 @@ def build_installed_app_inventory(
                 apt_updates.get(package)
                 or apt_updates.get(package.split(":", 1)[0])
             )
-        elif (
-            desktop_file.startswith("/var/lib/snapd/desktop/applications/")
-            or command.startswith("/snap/")
-        ):
-            snap_name = flatpak_id.split("_", 1)[0]
-            if snap_name not in snap_apps and command.startswith("/snap/"):
-                snap_name = command.split("/", 3)[2]
-            package = snap_name
-            version = snap_apps.get(package, "")
-            origin = "Snap"
-            source = "Snap"
-            candidate = snap_updates.get(package) if package else None
-        elif ".appimage" in command or ".appimage" in desktop_file.casefold():
-            version = ""
-            origin = "AppImage / arquivo local"
-            source = "AppImage"
         else:
             version = ""
             origin = "Manual / origem não identificada"
@@ -201,7 +219,9 @@ def build_installed_app_inventory(
             update_status = "Atualização disponível"
         elif source in checked_sources:
             update_status = "Atualizado"
-        elif source in ("AppImage", "Manual/outro"):
+        elif source == "AppImage":
+            update_status = "Atualização não gerenciada"
+        elif source == "Manual/outro" and apt_owners_checked:
             update_status = "Atualização não gerenciada"
         else:
             update_status = "Verificação necessária"
@@ -219,7 +239,157 @@ def build_installed_app_inventory(
             "candidate_version": candidate or "—",
             "update_status": update_status,
         })
+
+    for application_id, (name, version, remote) in flatpak_apps.items():
+        if application_id in linked_flatpak_apps:
+            continue
+        candidate = flatpak_updates.get(application_id)
+        if candidate:
+            update_status = "Atualização disponível"
+        elif "Flatpak" in checked_sources:
+            update_status = "Atualizado"
+        else:
+            update_status = "Verificação necessária"
+        inventory.append({
+            "name": name or application_id,
+            "version": version or "Não informada",
+            "origin": f"Flatpak · {remote}" if remote else "Flatpak",
+            "package": application_id,
+            "source": "Flatpak",
+            "candidate_version": candidate or "—",
+            "update_status": update_status,
+        })
+
     return sorted(inventory, key=lambda item: (item["name"].casefold(), item["package"].casefold()))
+
+
+def query_installed_app_sources(
+    applications, *, env=None, query_runner=None, cancel_event=None,
+):
+    """Query package managers independently and return parsed inventory data."""
+    query = query_runner or run_inventory_query
+
+    def run(command, **kwargs):
+        if cancel_event is not None and cancel_event.is_set():
+            return "", "consulta cancelada"
+        return query(command, **kwargs)
+
+    desktop_files = sorted({
+        application["desktop_file"]
+        for application in applications
+        if application.get("desktop_file")
+    })
+    errors = []
+    package_owners = {}
+    apt_owners_checked = not desktop_files
+    if desktop_files:
+        output, error = run(
+            ["dpkg-query", "-S", "--", *desktop_files],
+            timeout=60, env=env, allow_partial=True,
+        )
+        package_owners = parse_dpkg_query_owners(output)
+        apt_owners_checked = not error
+        if error:
+            errors.append(f"dpkg (atalhos): {error}")
+
+    output, error = run(
+        [
+            "dpkg-query", "-W", "-f=" +
+            "${binary:Package}\\t${Version}\\t${Status}\\n",
+        ],
+        timeout=60, env=env, allow_partial=True,
+    )
+    package_versions = parse_dpkg_query_packages(output)
+    if error:
+        errors.append(f"dpkg (versões): {error}")
+
+    apt_output, apt_error = run(
+        ["apt", "list", "--upgradable"], timeout=120, env=env,
+    )
+    apt_upgradable = parse_apt_upgradable(apt_output) if not apt_error else []
+    if apt_error:
+        errors.append(f"APT: {apt_error}")
+    checked_sources = set()
+    if not apt_error:
+        checked_sources.add("APT/DEB")
+
+    flatpak_output, flatpak_error = run(
+        [
+            "flatpak", "list", "--app",
+            "--columns=application,name,version,origin",
+        ],
+        timeout=60, env=env,
+    )
+    flatpak_update_output, flatpak_update_error = run(
+        [
+            "flatpak", "remote-ls", "--updates",
+            "--columns=ref,version,commit",
+        ],
+        timeout=120, env=env,
+    )
+    if flatpak_error:
+        errors.append(f"Flatpak (aplicativos): {flatpak_error}")
+    if flatpak_update_error:
+        errors.append(f"Flatpak (atualizações): {flatpak_update_error}")
+    if not flatpak_error and not flatpak_update_error:
+        checked_sources.add("Flatpak")
+
+    snap_output, snap_error = run(
+        ["snap", "list"], timeout=60, env=env,
+    )
+    snap_update_output, snap_update_error = run(
+        ["snap", "refresh", "--list"], timeout=120, env=env,
+    )
+    if snap_error:
+        errors.append(f"Snap (aplicativos): {snap_error}")
+    if snap_update_error:
+        errors.append(f"Snap (atualizações): {snap_update_error}")
+    if not snap_error and not snap_update_error:
+        checked_sources.add("Snap")
+
+    return {
+        "package_versions": package_versions,
+        "package_owners": package_owners,
+        "apt_owners_checked": apt_owners_checked,
+        "apt_upgradable": apt_upgradable,
+        "flatpak_output": flatpak_output if not flatpak_error else "",
+        "flatpak_update_output": (
+            flatpak_update_output if not flatpak_update_error else ""
+        ),
+        "snap_output": snap_output if not snap_error else "",
+        "snap_update_output": snap_update_output if not snap_update_error else "",
+        "checked_sources": checked_sources,
+        "errors": errors,
+    }
+
+
+class InventoryLoadState:
+    """Prevent duplicate inventory scans and ignore results after window closure."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.loading = False
+        self.loaded = False
+        self.closed = False
+        self.cancel_event = threading.Event()
+
+    def begin(self, *, force=False):
+        with self._lock:
+            if self.closed or self.loading or (self.loaded and not force):
+                return False
+            self.loading = True
+            self.cancel_event.clear()
+            return True
+
+    def finish(self, *, completed=False):
+        with self._lock:
+            self.loading = False
+            self.loaded = self.loaded or completed
+
+    def close(self):
+        with self._lock:
+            self.closed = True
+            self.cancel_event.set()
 
 
 def apt_upgrade_command(package):

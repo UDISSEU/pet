@@ -80,7 +80,7 @@ class PreferencesUIMixin(
         tab_navigation.pack(fill="x", pady=(0, 6))
         tab_pages = []
         history_refresh_callback = {"callback": None}
-        active_tab_index = 0
+        active_tab_index = -1
         active_tab_name = tk.StringVar(value="Comportamento")
 
         def select_tab(target):
@@ -89,6 +89,8 @@ class PreferencesUIMixin(
                 index = target % len(tab_pages)
             else:
                 index = next(i for i, (_name, page) in enumerate(tab_pages) if page is target)
+            if index == active_tab_index:
+                return
             active_tab_index = index
             for i, (name, page) in enumerate(tab_pages):
                 if i == index:
@@ -282,9 +284,6 @@ class PreferencesUIMixin(
         self._build_behavior_preferences_tabs(context)
         self._build_computer_preferences_tab(context)
 
-        if hasattr(context, "refresh_computer_inventory"):
-            self.root.after(120, context.refresh_computer_inventory)
-
         self._build_memory_preferences_tabs(context)
 
         self._build_reminders_and_apps_preferences_tabs(context)
@@ -444,8 +443,6 @@ class PreferencesUIMixin(
             select_tab(apps_tab)
         elif selected_tab == "computer":
             select_tab(computer_tab)
-            if hasattr(context, "refresh_computer_inventory"):
-                self.root.after(180, context.refresh_computer_inventory)
         elif selected_tab == "automation":
             select_tab(automation_tab)
         elif selected_tab == "ai":

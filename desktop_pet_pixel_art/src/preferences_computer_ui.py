@@ -14,12 +14,13 @@ from system_updates import (
     display_package_name,
     estimate_remaining_seconds,
     flatpak_upgrade_command,
+    InventoryLoadState,
     parse_apt_upgradable,
     parse_flatpak_upgradable,
     parse_package_activity,
     parse_snap_installed,
     parse_snap_upgradable,
-    run_inventory_query,
+    query_installed_app_sources,
     snap_upgrade_command,
     run_streaming_command,
 )
@@ -36,7 +37,7 @@ class ComputerPreferencesTabMixin:
         window = getattr(context, 'window', None)
         computer_intro = card(
             computer_content, "Atualizações e manutenção",
-            "Veja versões instaladas e disponíveis do APT e do Flatpak, quando instalado. Nenhum pacote é removido automaticamente.",
+            "Consulte versões e atualizações de APT/DEB, Flatpak e Snap. Nenhum pacote é alterado durante a consulta.",
         )
         ttk.Label(
             computer_intro, text="A autenticação é solicitada pelo Linux quando necessária.", style="Hint.TLabel",
@@ -554,7 +555,7 @@ class ComputerPreferencesTabMixin:
                             packages,
                         )
                 if title in update_operations:
-                    load_installed_apps()
+                    load_installed_apps(force=True)
                 return
 
             computer_status_label.configure(style="ComputerStatus.TLabel")
@@ -601,7 +602,7 @@ class ComputerPreferencesTabMixin:
             elif on_success:
                 on_success()
             if title in update_operations:
-                load_installed_apps()
+                load_installed_apps(force=True)
 
         def run_maintenance(
             title, commands, on_success=None, expected_packages=(),
@@ -903,7 +904,7 @@ class ComputerPreferencesTabMixin:
 
         apps_card = card(
             computer_content, "Aplicativos instalados",
-            "Lista aplicativos com atalho no menu em ordem alfabética, com versão e origem quando identificadas.",
+            "Inventário alfabético de aplicativos gráficos, incluindo pacotes e aplicativos Flatpak sem atalho no menu.",
         )
         apps_controls = ttk.Frame(apps_card, style="Card.TFrame")
         apps_controls.pack(fill="x", pady=(6, 8))
@@ -928,9 +929,14 @@ class ComputerPreferencesTabMixin:
         ttk.Label(
             apps_card, textvariable=app_inventory_status, style="Hint.TLabel",
         ).pack(anchor="w", pady=(0, 6))
+        inventory_summary = tk.StringVar(value="Nenhuma consulta realizada.")
+        ttk.Label(
+            apps_card, textvariable=inventory_summary, style="Hint.TLabel",
+            wraplength=460,
+        ).pack(anchor="w", pady=(0, 6))
         inventory_empty_state = ttk.Label(
             apps_card,
-            text="Nenhum aplicativo foi encontrado na consulta atual. Clique em Recarregar lista para tentar novamente.",
+            text="Nenhum aplicativo encontrado.",
             style="PageHint.TLabel",
             wraplength=460,
         )
@@ -1018,7 +1024,9 @@ class ComputerPreferencesTabMixin:
         inventory_table.pack(side="left", fill="both", expand=True)
         inventory_scroll.pack(side="right", fill="y")
         inventory_horizontal_scroll.pack(side="bottom", fill="x")
+
         installed_apps_inventory = []
+        inventory_state = InventoryLoadState()
         app_by_item = {}
         inventory_sort = {"column": "name", "reverse": False}
         verified_at = {"value": ""}
@@ -1091,11 +1099,36 @@ class ComputerPreferencesTabMixin:
                 app_by_item[item_id] = app
             if rows:
                 inventory_empty_state.pack_forget()
-                inventory_error.set("")
                 inventory_table.pack(side="left", fill="both", expand=True)
             else:
                 inventory_table.pack_forget()
-                inventory_empty_state.pack(anchor="w", pady=(0, 8))
+                if installed_apps_inventory:
+                    inventory_empty_state.configure(
+                        text="Nenhum aplicativo corresponde aos filtros atuais.",
+                    )
+                    inventory_empty_state.pack(anchor="w", pady=(0, 8))
+                elif inventory_error.get():
+                    inventory_empty_state.pack_forget()
+                else:
+                    inventory_empty_state.configure(
+                        text="Nenhum aplicativo encontrado nas fontes consultadas.",
+                    )
+                    inventory_empty_state.pack(anchor="w", pady=(0, 8))
+            counts = {
+                "Atualizado": 0,
+                "Atualização disponível": 0,
+                "Verificação necessária": 0,
+                "Atualização não gerenciada": 0,
+            }
+            for app in installed_apps_inventory:
+                counts[app["update_status"]] = counts.get(app["update_status"], 0) + 1
+            inventory_summary.set(
+                f"Total: {len(installed_apps_inventory)} · "
+                f"atualizados: {counts['Atualizado']} · "
+                f"desatualizados: {counts['Atualização disponível']} · "
+                f"aguardando verificação: {counts['Verificação necessária']} · "
+                f"não gerenciados: {counts['Atualização não gerenciada']}"
+            )
             app_inventory_status.set(
                 f"{len(rows)} aplicativo(s) exibido(s) · "
                 f"{len(installed_apps_inventory)} instalado(s)"
@@ -1222,25 +1255,21 @@ class ComputerPreferencesTabMixin:
 
         render_update_history()
 
-        def load_installed_apps():
-            permission_notice = ""
+        def load_installed_apps(*, force=False):
+            if not inventory_state.begin(force=force):
+                return
             try:
                 self._authorize_core_action("system.maintenance.read")
             except (PermissionError, OSError) as exc:
-                permission_notice = (
-                    "Acesso de leitura limitado; Nova continuará com a consulta local do sistema."
-                )
-                inventory_status_banner.set(permission_notice)
-                if hasattr(self, "permission_manager"):
-                    try:
-                        self.permission_manager.require("nova.core", "system.maintenance.read")
-                    except Exception:
-                        pass
+                inventory_state.finish()
+                inventory_status_banner.set("Permissão necessária para consultar o inventário.")
+                inventory_error.set(f"Não foi possível consultar os aplicativos: {exc}")
+                return
             if self.system_maintenance_active:
-                messagebox.showinfo(
-                    "Manutenção em andamento",
-                    "Aguarde a ação atual terminar.",
-                    parent=window,
+                inventory_state.finish()
+                inventory_status_banner.set("Aguarde a manutenção atual terminar.")
+                app_inventory_status.set(
+                    "A consulta será iniciada quando não houver manutenção em andamento.",
                 )
                 return
             self.system_maintenance_active = True
@@ -1248,128 +1277,64 @@ class ComputerPreferencesTabMixin:
             refresh_apps_button.configure(state="disabled")
             inventory_status_banner.set("Consultando apps instalados e versões disponíveis…")
             app_inventory_status.set("Lendo aplicativos e versões instaladas…")
-            inventory_empty_state.pack_forget()
-            inventory_table.pack_forget()
             computer_progress.pack(
                 fill="x", pady=(10, 0), before=details_button,
             )
             computer_progress.start(12)
 
             def worker():
+                inventory = []
+                error = None
+                completed = False
                 try:
-                    try:
-                        self.permission_manager.require(
-                            "nova.core", "system.maintenance.read",
-                        )
-                    except Exception:
-                        pass
-                    apps = find_installed_apps()
-                    desktop_files = [
-                        app["desktop_file"] for app in apps
-                        if app.get("desktop_file")
-                    ]
-                    package_owners = {}
-                    package_versions = {}
+                    self.permission_manager.require(
+                        "nova.core", "system.maintenance.read",
+                    )
                     source_errors = []
-                    if desktop_files:
-                        owners_output, owners_error = run_inventory_query(
-                            ["dpkg-query", "-S", "--", *desktop_files],
-                            timeout=60,
-                            env={**self._child_process_env(), "LC_ALL": "C"},
-                            allow_partial=True,
-                        )
-                        package_owners = parse_dpkg_query_owners(owners_output)
-                        if owners_error:
-                            source_errors.append(f"dpkg: {owners_error}")
-                    packages_output, packages_error = run_inventory_query(
-                        [
-                            "dpkg-query", "-W", "-f=" +
-                            "${binary:Package}\\t${Version}\\t${Status}\\n",
-                        ],
-                        timeout=60,
+                    try:
+                        apps = find_installed_apps()
+                    except OSError as exc:
+                        apps = []
+                        source_errors.append(f"Atalhos do sistema: {exc}")
+                    sources = query_installed_app_sources(
+                        apps,
                         env={**self._child_process_env(), "LC_ALL": "C"},
-                        allow_partial=True,
+                        cancel_event=inventory_state.cancel_event,
                     )
-                    package_versions = parse_dpkg_query_packages(packages_output)
-                    if packages_error:
-                        source_errors.append(f"dpkg: {packages_error}")
-                    flatpak_output = ""
-                    flatpak_updates = ""
-                    snap_output = ""
-                    snap_updates = ""
-                    apt_updates = []
-                    checked_sources = set()
-                    apt_output, apt_error = run_inventory_query(
-                        ["apt", "list", "--upgradable"],
-                        timeout=120,
-                        env={**self._child_process_env(), "LC_ALL": "C"},
-                    )
-                    if not apt_error:
-                        apt_updates = parse_apt_upgradable(apt_output)
-                        checked_sources.add("APT/DEB")
-                    else:
-                        source_errors.append(f"APT: {apt_error}")
-                    if shutil.which("flatpak"):
-                        flatpak_output, flatpak_error = run_inventory_query(
-                            [
-                                "flatpak", "list",
-                                "--columns=application,version,origin",
-                            ],
-                            timeout=60,
-                            env={**self._child_process_env(), "LC_ALL": "C"},
-                        )
-                        if flatpak_error:
-                            source_errors.append(f"Flatpak: {flatpak_error}")
-                        flatpak_update_output, flatpak_update_error = run_inventory_query(
-                            [
-                                "flatpak", "remote-ls", "--updates",
-                                "--columns=ref,version,commit",
-                            ],
-                            timeout=120,
-                            env={**self._child_process_env(), "LC_ALL": "C"},
-                        )
-                        flatpak_updates = flatpak_update_output
-                        if not flatpak_update_error:
-                            checked_sources.add("Flatpak")
-                        else:
-                            source_errors.append(f"Flatpak: {flatpak_update_error}")
-                    if shutil.which("snap"):
-                        snap_output, snap_error = run_inventory_query(
-                            ["snap", "list"], timeout=60,
-                            env={**self._child_process_env(), "LC_ALL": "C"},
-                        )
-                        if snap_error:
-                            source_errors.append(f"Snap: {snap_error}")
-                        else:
-                            snap_updates, snap_update_error = run_inventory_query(
-                                ["snap", "refresh", "--list"],
-                                timeout=120,
-                                env={**self._child_process_env(), "LC_ALL": "C"},
-                            )
-                            if not snap_update_error:
-                                checked_sources.add("Snap")
-                            else:
-                                source_errors.append(f"Snap: {snap_update_error}")
+                    source_errors.extend(sources["errors"])
                     inventory = build_installed_app_inventory(
                         apps,
-                        package_versions,
-                        package_owners,
-                        flatpak_output,
-                        apt_upgradable=apt_updates,
-                        flatpak_update_output=flatpak_updates,
-                        snap_output=snap_output,
-                        snap_update_output=snap_updates,
-                        checked_sources=checked_sources,
+                        sources["package_versions"],
+                        sources["package_owners"],
+                        sources["flatpak_output"],
+                        apt_upgradable=sources["apt_upgradable"],
+                        flatpak_update_output=sources["flatpak_update_output"],
+                        snap_output=sources["snap_output"],
+                        snap_update_output=sources["snap_update_output"],
+                        checked_sources=sources["checked_sources"],
+                        apt_owners_checked=sources["apt_owners_checked"],
                     )
                     error = "\n".join(source_errors) or None
-                except (OSError, subprocess.SubprocessError) as exc:
+                    completed = True
+                except (PermissionError, OSError, subprocess.SubprocessError, ValueError) as exc:
                     inventory = []
                     error = str(exc)
+                except Exception as exc:
+                    inventory = []
+                    error = f"Falha ao montar o inventário ({type(exc).__name__}): {exc}"
                 finally:
                     self.system_maintenance_active = False
+                    inventory_state.finish(completed=completed)
+
+                if inventory_state.closed:
+                    return
 
                 def finish_inventory():
-                    if not window.winfo_exists():
+                    try:
+                        window_exists = window.winfo_exists()
+                    except tk.TclError:
+                        window_exists = False
+                    if inventory_state.closed or not window_exists:
                         return
                     computer_progress.stop()
                     computer_progress.pack_forget()
@@ -1380,9 +1345,7 @@ class ComputerPreferencesTabMixin:
                             "Os itens sem consulta não são marcados como atualizados."
                         )
                         inventory_status_banner.set("Consulta concluída com pendências.")
-                        inventory_error.set(
-                            "Algumas fontes não responderam: " + error[:240]
-                        )
+                        inventory_error.set("Detalhes das falhas:\n" + error)
                         maintenance_details["text"] = error
                         details_button.configure(state="normal")
                     else:
@@ -1390,19 +1353,36 @@ class ComputerPreferencesTabMixin:
                             f"Consulta concluída · última atualização em {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M')}"
                         )
                         inventory_error.set("")
-                    installed_apps_inventory[:] = inventory
-                    verified_at["value"] = datetime.now().astimezone().strftime(
-                        "%d/%m/%Y %H:%M",
-                    )
-                    inventory_sort.update(column="name", reverse=False)
+                    if completed:
+                        installed_apps_inventory[:] = inventory
+                        verified_at["value"] = datetime.now().astimezone().strftime(
+                            "%d/%m/%Y %H:%M",
+                        )
+                        inventory_sort.update(column="name", reverse=False)
                     render_installed_apps()
 
                 self.post_ui_callback(finish_inventory)
 
-            threading.Thread(target=worker, daemon=True).start()
+            try:
+                threading.Thread(target=worker, daemon=True).start()
+            except (OSError, RuntimeError) as exc:
+                self.system_maintenance_active = False
+                inventory_state.finish()
+                computer_progress.stop()
+                computer_progress.pack_forget()
+                refresh_apps_button.configure(state="normal")
+                inventory_status_banner.set("Não foi possível iniciar a consulta.")
+                inventory_error.set(f"Erro ao iniciar o inventário: {exc}")
 
-        refresh_apps_button.configure(command=load_installed_apps)
+        refresh_apps_button.configure(
+            command=lambda: load_installed_apps(force=True),
+        )
         context.refresh_computer_inventory = load_installed_apps
+        window.bind(
+            "<Destroy>",
+            lambda event: inventory_state.close() if event.widget is window else None,
+            add="+",
+        )
 
         def update_inventory_selection():
             selected_apps = [
