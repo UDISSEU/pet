@@ -423,7 +423,7 @@ All packages are up to date.
         self.assertEqual(applications[0]["package"], "editor:amd64")
         self.assertEqual(applications[0]["name"], "Editor")
 
-    def test_apt_update_matches_installed_package_name_across_architecture_suffixes(self):
+    def test_apt_update_does_not_match_another_installed_architecture(self):
         inventory = build_installed_app_inventory(
             [{
                 "name": "Editor",
@@ -437,8 +437,110 @@ All packages are up to date.
             checked_sources={"APT/DEB"},
         )
 
-        self.assertEqual(inventory[0]["candidate_version"], "1.1")
+        self.assertEqual(inventory[0]["candidate_version"], "—")
+        self.assertEqual(inventory[0]["update_status"], "Atualizado")
+
+    def test_apt_update_does_not_match_amd64_update_to_installed_i386(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Editor",
+                "package": "editor:i386",
+                "source": "APT/DEB",
+                "desktop_file": "appstream:org.example.Editor",
+            }],
+            {"editor:amd64": "1.0", "editor:i386": "1.0"},
+            {},
+            apt_upgradable=[("editor:amd64", "1.0", "1.1")],
+            checked_sources={"APT/DEB"},
+        )
+
+        self.assertEqual(inventory[0]["candidate_version"], "—")
+        self.assertEqual(inventory[0]["update_status"], "Atualizado")
+
+    def test_apt_update_matches_exact_architecture(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Editor",
+                "package": "editor:amd64",
+                "source": "APT/DEB",
+                "desktop_file": "appstream:org.example.Editor",
+            }],
+            {"editor:amd64": "1.0", "editor:i386": "1.0"},
+            {},
+            apt_upgradable=[("editor:amd64", "1.0", "1.2")],
+            checked_sources={"APT/DEB"},
+        )
+
+        self.assertEqual(inventory[0]["candidate_version"], "1.2")
         self.assertEqual(inventory[0]["update_status"], "Atualização disponível")
+
+    def test_unqualified_apt_update_matches_only_unambiguous_installed_package(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Editor",
+                "package": "editor:amd64",
+                "source": "APT/DEB",
+                "desktop_file": "appstream:org.example.Editor",
+            }],
+            {"editor:amd64": "1.0"},
+            {},
+            apt_upgradable=[("editor", "1.0", "1.2")],
+            checked_sources={"APT/DEB"},
+        )
+
+        self.assertEqual(inventory[0]["candidate_version"], "1.2")
+        self.assertEqual(inventory[0]["update_status"], "Atualização disponível")
+
+    def test_unqualified_apt_update_does_not_match_multiple_installed_architectures(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Editor",
+                "package": "editor:amd64",
+                "source": "APT/DEB",
+                "desktop_file": "appstream:org.example.Editor",
+            }],
+            {"editor:amd64": "1.0", "editor:i386": "1.0"},
+            {},
+            apt_upgradable=[("editor", "1.0", "1.2")],
+            checked_sources={"APT/DEB"},
+        )
+
+        self.assertEqual(inventory[0]["candidate_version"], "—")
+        self.assertEqual(inventory[0]["update_status"], "Verificação necessária")
+
+    def test_apt_package_without_architecture_uses_exact_update_match(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Editor",
+                "package": "editor",
+                "source": "APT/DEB",
+                "desktop_file": "appstream:org.example.Editor",
+            }],
+            {"editor": "1.0"},
+            {},
+            apt_upgradable=[("editor", "1.0", "1.2")],
+            checked_sources={"APT/DEB"},
+        )
+
+        self.assertEqual(inventory[0]["candidate_version"], "1.2")
+        self.assertEqual(inventory[0]["update_status"], "Atualização disponível")
+
+    def test_apt_package_without_available_update_is_not_reported_as_upgradable(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Editor",
+                "package": "editor:amd64",
+                "source": "APT/DEB",
+                "desktop_file": "appstream:org.example.Editor",
+            }],
+            {"editor:amd64": "1.0"},
+            {},
+            apt_upgradable=[],
+            checked_sources={"APT/DEB"},
+        )
+
+        self.assertEqual(inventory[0]["candidate_version"], "—")
+        self.assertEqual(inventory[0]["update_status"], "Atualizado")
 
     def test_discovers_snap_app_without_exported_shortcut(self):
         with tempfile.TemporaryDirectory() as tmpdir:

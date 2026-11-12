@@ -265,19 +265,19 @@ def build_installed_app_inventory(
     }
 
     def apt_candidate(package):
+        exact_candidate = apt_updates.get(package)
+        if exact_candidate:
+            return exact_candidate, False
+
         base_package = package.split(":", 1)[0]
-        return (
-            apt_updates.get(package)
-            or apt_updates.get(base_package)
-            or next(
-                (
-                    candidate for updated_package, candidate
-                    in sorted(apt_updates.items())
-                    if updated_package.split(":", 1)[0] == base_package
-                ),
-                None,
-            )
-        )
+        installed_variants = {
+            installed_package
+            for installed_package in package_versions
+            if installed_package.split(":", 1)[0] == base_package
+        }
+        if len(installed_variants) != 1:
+            return None, base_package in apt_updates
+        return apt_updates.get(base_package), False
 
     checked_sources = set(checked_sources)
     inventory = []
@@ -296,6 +296,7 @@ def build_installed_app_inventory(
         )
         command = application.get("command", "").casefold()
         candidate = None
+        apt_update_ambiguous = False
         if source_hint == "APT/DEB":
             source = "APT/DEB"
             version = (
@@ -305,7 +306,7 @@ def build_installed_app_inventory(
             if version is None:
                 continue
             origin = "APT/DEB"
-            candidate = apt_candidate(package)
+            candidate, apt_update_ambiguous = apt_candidate(package)
         elif (
             source_hint == "Flatpak"
             or "/flatpak/exports/share/applications/" in desktop_file
@@ -374,7 +375,7 @@ def build_installed_app_inventory(
             )
             origin = "APT/DEB"
             source = "APT/DEB"
-            candidate = apt_candidate(package)
+            candidate, apt_update_ambiguous = apt_candidate(package)
         else:
             if (
                 not desktop_file
@@ -389,6 +390,8 @@ def build_installed_app_inventory(
 
         if candidate:
             update_status = "Atualização disponível"
+        elif apt_update_ambiguous:
+            update_status = "Verificação necessária"
         elif (
             source in checked_sources
             and (source != "APT/DEB" or apt_owners_checked)
