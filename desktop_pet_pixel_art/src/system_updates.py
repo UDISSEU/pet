@@ -84,9 +84,10 @@ def find_installed_apt_applications(
     """Find installed GUI packages from AppStream metadata without launchers."""
     if metadata_directories is None:
         metadata_directories = ("/usr/share/metainfo", "/usr/share/appdata")
-    installed_packages = {
-        package.split(":", 1)[0]: package for package in package_versions
-    }
+    installed_packages = {}
+    for package in sorted(package_versions):
+        installed_packages[package] = package
+        installed_packages.setdefault(package.split(":", 1)[0], package)
     packages_with_launchers = {
         package.split(":", 1)[0] for package in launcher_packages
     }
@@ -131,7 +132,7 @@ def find_installed_apt_applications(
                     installed_package = installed_packages.get(package_name)
                     if (
                         not installed_package
-                        or package_name in packages_with_launchers
+                        or installed_package.split(":", 1)[0] in packages_with_launchers
                     ):
                         continue
                     key = (component_id or name.casefold(), installed_package)
@@ -262,6 +263,22 @@ def build_installed_app_inventory(
     apt_updates = {
         package: candidate for package, _installed, candidate in apt_upgradable
     }
+
+    def apt_candidate(package):
+        base_package = package.split(":", 1)[0]
+        return (
+            apt_updates.get(package)
+            or apt_updates.get(base_package)
+            or next(
+                (
+                    candidate for updated_package, candidate
+                    in sorted(apt_updates.items())
+                    if updated_package.split(":", 1)[0] == base_package
+                ),
+                None,
+            )
+        )
+
     checked_sources = set(checked_sources)
     inventory = []
     seen = set()
@@ -288,10 +305,7 @@ def build_installed_app_inventory(
             if version is None:
                 continue
             origin = "APT/DEB"
-            candidate = (
-                apt_updates.get(package)
-                or apt_updates.get(package.split(":", 1)[0])
-            )
+            candidate = apt_candidate(package)
         elif (
             source_hint == "Flatpak"
             or "/flatpak/exports/share/applications/" in desktop_file
@@ -360,10 +374,7 @@ def build_installed_app_inventory(
             )
             origin = "APT/DEB"
             source = "APT/DEB"
-            candidate = (
-                apt_updates.get(package)
-                or apt_updates.get(package.split(":", 1)[0])
-            )
+            candidate = apt_candidate(package)
         else:
             if (
                 not desktop_file

@@ -1757,6 +1757,8 @@ class DesktopPet(
         ).start()
 
     def _record_local_interaction(self, question, answer):
+        from ai.request_handler import conversation_history_is_enabled
+
         timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
         self.history.extend((
             {"role": "user", "content": question, "timestamp": timestamp},

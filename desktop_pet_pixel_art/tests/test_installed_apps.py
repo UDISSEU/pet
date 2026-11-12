@@ -222,6 +222,18 @@ class InstalledAppsUITests(unittest.TestCase):
                 )
                 self.assertTrue(refresh_button.instate(["!disabled"]))
                 self.assertEqual(query_sources.call_count, 3)
+                query_sources.side_effect = RuntimeError("consulta indisponível")
+                refresh_button.invoke()
+                self.assertEqual(len(inventory.get_children()), 1)
+                self.assertEqual(
+                    inventory.item(inventory.get_children()[0], "values")[0],
+                    "Demo Editor",
+                )
+                self.assertEqual(
+                    inventory.item(inventory.get_children()[0], "values")[3],
+                    "Verificação necessária",
+                )
+                self.assertTrue(refresh_button.instate(["!disabled"]))
         finally:
             root.destroy()
 

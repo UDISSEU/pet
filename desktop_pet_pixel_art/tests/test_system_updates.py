@@ -21,6 +21,7 @@ from system_updates import (
     parse_apt_upgradable,
     parse_dpkg_query_owners,
     parse_dpkg_query_packages,
+    find_installed_apt_applications,
     parse_flatpak_upgradable,
     parse_flatpak_installed,
     parse_package_activity,
@@ -393,6 +394,52 @@ All packages are up to date.
         self.assertEqual(inventory[0]["update_status"], "Atualização disponível")
         self.assertNotIn("internal-lib", {app["package"] for app in inventory})
 
+    def test_appstream_matches_exact_package_architecture_and_skips_launcher_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            metadata = Path(tmpdir) / "metainfo"
+            metadata.mkdir()
+            (metadata / "apps.metainfo.xml").write_text(
+                "<components>"
+                "<component type='desktop-application' id='org.example.Editor'>"
+                "<name>Editor</name><pkgname>editor:amd64</pkgname></component>"
+                "<component type='desktop-application' id='org.example.Other'>"
+                "<name>Other</name><pkgname>other:amd64</pkgname></component>"
+                "</components>",
+                encoding="utf-8",
+            )
+            package_versions = {
+                "editor:amd64": "1.0-native",
+                "editor:i386": "0.9-compat",
+                "other:amd64": "2.0",
+            }
+
+            applications = find_installed_apt_applications(
+                package_versions,
+                launcher_packages={"other:amd64"},
+                metadata_directories=(metadata,),
+            )
+
+        self.assertEqual(len(applications), 1)
+        self.assertEqual(applications[0]["package"], "editor:amd64")
+        self.assertEqual(applications[0]["name"], "Editor")
+
+    def test_apt_update_matches_installed_package_name_across_architecture_suffixes(self):
+        inventory = build_installed_app_inventory(
+            [{
+                "name": "Editor",
+                "package": "editor:amd64",
+                "source": "APT/DEB",
+                "desktop_file": "appstream:org.example.Editor",
+            }],
+            {"editor:amd64": "1.0", "editor:i386": "1.0"},
+            {},
+            apt_upgradable=[("editor:i386", "1.0", "1.1")],
+            checked_sources={"APT/DEB"},
+        )
+
+        self.assertEqual(inventory[0]["candidate_version"], "1.1")
+        self.assertEqual(inventory[0]["update_status"], "Atualização disponível")
+
     def test_discovers_snap_app_without_exported_shortcut(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             gui = Path(tmpdir) / "snap" / "demo" / "current" / "meta" / "gui"
@@ -545,6 +592,41 @@ All packages are up to date.
             checked_sources=sources["checked_sources"],
             apt_owners_checked=sources["apt_owners_checked"],
         )
+        self.assertNotIn("APT/DEB", sources["checked_sources"])
+        self.assertEqual(inventory[0]["update_status"], "Verificação necessária")
+
+    def test_stale_apt_catalog_does_not_confirm_apps_as_updated(self):
+        apt_launcher = "/usr/share/applications/editor.desktop"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            apt_lists = self.fresh_apt_lists(tmpdir)
+            os.utime(apt_lists / "index", (1, 1))
+            responses = {
+                ("dpkg-query", "-S", "--", apt_launcher):
+                    (f"editor: {apt_launcher}\n", None),
+                ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
+                    ("editor\t1.0\tinstall ok installed\n", None),
+                ("apt", "list", "--upgradable"): ("", None),
+                ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
+                    ("", None),
+                ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
+                    ("", None),
+                ("snap", "list"): ("Name Version Rev Tracking Publisher Notes\n", None),
+                ("snap", "refresh", "--list"): ("All snaps up to date.\n", None),
+            }
+            sources = query_installed_app_sources(
+                [{"name": "Editor", "desktop_file": apt_launcher}],
+                query_runner=lambda command, **_kwargs: responses[tuple(command)],
+                apt_lists_directory=apt_lists,
+                apt_metadata_directories=(),
+            )
+
+        inventory = build_installed_app_inventory(
+            [{"name": "Editor", "desktop_file": apt_launcher}],
+            sources["package_versions"], sources["package_owners"],
+            checked_sources=sources["checked_sources"],
+            apt_owners_checked=sources["apt_owners_checked"],
+        )
+        self.assertTrue(sources["source_results"]["APT/DEB"]["metadata_stale"])
         self.assertNotIn("APT/DEB", sources["checked_sources"])
         self.assertEqual(inventory[0]["update_status"], "Verificação necessária")
 

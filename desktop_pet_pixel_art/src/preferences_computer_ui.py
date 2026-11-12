@@ -1295,6 +1295,18 @@ class ComputerPreferencesTabMixin:
                 commit_inventory = False
                 previous_inventory = list(installed_apps_inventory)
                 sources = None
+
+                def preserve_previous_inventory():
+                    failed_sources = {"APT/DEB", "Flatpak", "Snap"}
+                    return merge_inventory_after_partial_failure(
+                        previous_inventory,
+                        [
+                            app for app in previous_inventory
+                            if app["source"] not in failed_sources
+                        ],
+                        failed_sources,
+                    )
+
                 try:
                     self.permission_manager.require(
                         "nova.core", "system.maintenance.read",
@@ -1353,10 +1365,12 @@ class ComputerPreferencesTabMixin:
                     error = "\n".join(source_errors) or None
                     completed = True
                 except (PermissionError, OSError, subprocess.SubprocessError, ValueError) as exc:
-                    inventory = []
+                    inventory = preserve_previous_inventory()
+                    commit_inventory = bool(previous_inventory)
                     error = str(exc)
                 except Exception as exc:
-                    inventory = []
+                    inventory = preserve_previous_inventory()
+                    commit_inventory = bool(previous_inventory)
                     error = f"Falha ao montar o inventário ({type(exc).__name__}): {exc}"
                 finally:
                     self.system_maintenance_active = False
@@ -1399,18 +1413,19 @@ class ComputerPreferencesTabMixin:
                         inventory_error.set("")
                     if commit_inventory:
                         installed_apps_inventory[:] = inventory
-                        source_check_times = " · ".join(
-                            f"{source}: {datetime.fromisoformat(result['checked_at']).strftime('%d/%m %H:%M')}"
-                            + (
-                                f" · catálogo local {datetime.fromisoformat(result['metadata_updated_at']).strftime('%d/%m %H:%M')}"
-                                + (" (pode estar desatualizado)" if result["metadata_stale"] else "")
-                                if result["metadata_updated_at"] else ""
+                        if sources:
+                            source_check_times = " · ".join(
+                                f"{source}: {datetime.fromisoformat(result['checked_at']).strftime('%d/%m %H:%M')}"
+                                + (
+                                    f" · catálogo local {datetime.fromisoformat(result['metadata_updated_at']).strftime('%d/%m %H:%M')}"
+                                    + (" (pode estar desatualizado)" if result["metadata_stale"] else "")
+                                    if result["metadata_updated_at"] else ""
+                                )
+                                for source, result in sources["source_results"].items()
+                                if result["checked_at"]
                             )
-                            for source, result in sources["source_results"].items()
-                            if result["checked_at"]
-                        )
-                        if source_check_times:
-                            verified_at["value"] = source_check_times
+                            if source_check_times:
+                                verified_at["value"] = source_check_times
                         inventory_sort.update(column="name", reverse=False)
                     render_installed_apps()
 
