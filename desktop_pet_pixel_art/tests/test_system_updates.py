@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -29,10 +30,17 @@ from system_updates import (
     run_inventory_query,
     query_installed_app_sources,
     snap_upgrade_command,
+    merge_inventory_after_partial_failure,
 )
 
 
 class AptUpdateParsingTests(unittest.TestCase):
+    def fresh_apt_lists(self, directory):
+        apt_lists = Path(directory) / "apt-lists"
+        apt_lists.mkdir()
+        (apt_lists / "index").touch()
+        return apt_lists
+
     def test_inventory_query_failures_do_not_require_a_shell(self):
         output, error = run_inventory_query(
             [sys.executable, "-c", "print('available')"],
@@ -169,7 +177,11 @@ All packages are up to date.
                 "name": "Visual Studio Code",
                 "desktop_file": "/usr/share/applications/code.desktop",
             },
-            {"name": "Manual Tool", "desktop_file": "/home/user/.local/share/applications/manual.desktop"},
+            {
+                "name": "Manual Tool",
+                "command": "/bin/true",
+                "desktop_file": "/home/user/.local/share/applications/manual.desktop",
+            },
         ]
         inventory = build_installed_app_inventory(
             applications, {"code": "1.0"}, {
@@ -188,15 +200,18 @@ All packages are up to date.
         self.assertEqual(manual["update_status"], "Atualização não gerenciada")
 
     def test_inventory_marks_appimage_updates_as_unmanaged(self):
-        inventory = build_installed_app_inventory(
-            [{
-                "name": "Portable Editor",
-                "command": "/home/user/Applications/PortableEditor.AppImage",
-                "desktop_file": "/home/user/.local/share/applications/editor.desktop",
-            }],
-            {},
-            {},
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            appimage = Path(tmpdir) / "PortableEditor.AppImage"
+            appimage.touch()
+            inventory = build_installed_app_inventory(
+                [{
+                    "name": "Portable Editor",
+                    "command": str(appimage),
+                    "desktop_file": "/home/user/.local/share/applications/editor.desktop",
+                }],
+                {},
+                {},
+            )
 
         self.assertEqual(inventory[0]["source"], "AppImage")
         self.assertEqual(
@@ -321,15 +336,242 @@ All packages are up to date.
         inventory = build_installed_app_inventory(
             [{
                 "name": "Editor",
+                "command": "editor",
                 "desktop_file": "/usr/share/applications/editor.desktop",
             }],
-            {},
-            {},
+            {"editor": "1.0"},
+            {"/usr/share/applications/editor.desktop": "editor"},
             checked_sources={"APT/DEB"},
             apt_owners_checked=False,
         )
 
         self.assertEqual(inventory[0]["update_status"], "Verificação necessária")
+
+    def test_discovers_apt_app_without_shortcut_from_installed_appstream_package(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            metadata = Path(tmpdir) / "metainfo"
+            metadata.mkdir()
+            (metadata / "editor.metainfo.xml").write_text(
+                "<component type='desktop-application'>"
+                "<id>org.example.Editor</id><name>Editor Pro</name>"
+                "<pkgname>editor</pkgname></component>",
+                encoding="utf-8",
+            )
+            apt_lists = self.fresh_apt_lists(tmpdir)
+            responses = {
+                ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
+                    ("editor\t1.0\tinstall ok installed\n"
+                     "internal-lib\t2.0\tinstall ok installed\n", None),
+                ("apt", "list", "--upgradable"):
+                    ("editor/stable 1.1 amd64 [upgradable from: 1.0]\n", None),
+                ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
+                    ("", None),
+                ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
+                    ("", None),
+                ("snap", "list"): ("Name Version Rev Tracking Publisher Notes\n", None),
+                ("snap", "refresh", "--list"): ("All snaps up to date.\n", None),
+            }
+
+            sources = query_installed_app_sources(
+                [],
+                query_runner=lambda command, **_kwargs: responses[tuple(command)],
+                apt_lists_directory=apt_lists,
+                apt_metadata_directories=(metadata,),
+                snap_root=Path(tmpdir) / "snap",
+            )
+
+        inventory = build_installed_app_inventory(
+            [], sources["package_versions"], sources["package_owners"],
+            apt_upgradable=sources["apt_upgradable"],
+            checked_sources=sources["checked_sources"],
+            apt_applications=sources["apt_applications"],
+        )
+        self.assertEqual(len(inventory), 1)
+        self.assertEqual(inventory[0]["name"], "Editor Pro")
+        self.assertEqual(inventory[0]["version"], "1.0")
+        self.assertEqual(inventory[0]["candidate_version"], "1.1")
+        self.assertEqual(inventory[0]["update_status"], "Atualização disponível")
+        self.assertNotIn("internal-lib", {app["package"] for app in inventory})
+
+    def test_discovers_snap_app_without_exported_shortcut(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gui = Path(tmpdir) / "snap" / "demo" / "current" / "meta" / "gui"
+            gui.mkdir(parents=True)
+            (gui / "editor.desktop").write_text(
+                "[Desktop Entry]\nType=Application\nName=Snap Editor\n"
+                "Exec=demo-editor\n",
+                encoding="utf-8",
+            )
+            responses = {
+                ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
+                    ("", None),
+                ("apt", "list", "--upgradable"): ("", None),
+                ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
+                    ("", None),
+                ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
+                    ("", None),
+                ("snap", "list"): (
+                    "Name Version Rev Tracking Publisher Notes\ndemo 3.2 42 stable pub -\n",
+                    None,
+                ),
+                ("snap", "refresh", "--list"): (
+                    "Name Version Rev Publisher Notes\ndemo 3.3 43 pub -\n",
+                    None,
+                ),
+            }
+            sources = query_installed_app_sources(
+                [],
+                query_runner=lambda command, **_kwargs: responses[tuple(command)],
+                apt_lists_directory=self.fresh_apt_lists(tmpdir),
+                apt_metadata_directories=(),
+                snap_root=Path(tmpdir) / "snap",
+            )
+
+        inventory = build_installed_app_inventory(
+            [], {}, {}, snap_output=sources["snap_output"],
+            snap_update_output=sources["snap_update_output"],
+            checked_sources=sources["checked_sources"],
+            snap_applications=sources["snap_applications"],
+        )
+        self.assertEqual(len(inventory), 1)
+        self.assertEqual(inventory[0]["name"], "Snap Editor")
+        self.assertEqual(inventory[0]["version"], "3.2")
+        self.assertEqual(inventory[0]["candidate_version"], "3.3")
+        self.assertEqual(inventory[0]["update_status"], "Atualização disponível")
+
+    def test_manual_shortcut_requires_existing_command_target(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            executable = Path(tmpdir) / "manual-editor"
+            executable.touch()
+            inventory = build_installed_app_inventory(
+                [
+                    {
+                        "name": "Manual Editor",
+                        "command": str(executable),
+                        "desktop_file": "/home/user/.local/share/applications/editor.desktop",
+                    },
+                    {
+                        "name": "Removed Editor",
+                        "command": str(Path(tmpdir) / "removed-editor"),
+                        "desktop_file": "/home/user/.local/share/applications/removed.desktop",
+                    },
+                ],
+                {}, {}, apt_owners_checked=True,
+            )
+
+        self.assertEqual([app["name"] for app in inventory], ["Manual Editor"])
+        self.assertEqual(inventory[0]["update_status"], "Atualização não gerenciada")
+
+    def test_unowned_desktop_entries_do_not_make_dpkg_owner_query_incomplete(self):
+        apt_launcher = "/usr/share/applications/editor.desktop"
+        manual_launcher = "/home/user/.local/share/applications/manual.desktop"
+        responses = {
+            ("dpkg-query", "-S", "--", manual_launcher, apt_launcher):
+                (
+                    f"editor: {apt_launcher}\n",
+                    f"dpkg-query: no path found matching pattern {manual_launcher}",
+                ),
+            ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
+                ("editor\t1.0\tinstall ok installed\n", None),
+            ("apt", "list", "--upgradable"): ("", None),
+            ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
+                ("", None),
+            ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
+                ("", None),
+            ("snap", "list"): ("Name Version Rev Tracking Publisher Notes\n", None),
+            ("snap", "refresh", "--list"): ("All snaps up to date.\n", None),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sources = query_installed_app_sources(
+                [
+                    {"name": "Editor", "desktop_file": apt_launcher},
+                    {"name": "Manual", "desktop_file": manual_launcher},
+                ],
+                query_runner=lambda command, **_kwargs: responses[tuple(command)],
+                apt_lists_directory=self.fresh_apt_lists(tmpdir),
+                apt_metadata_directories=(),
+            )
+
+        self.assertTrue(sources["apt_owners_checked"])
+        self.assertEqual(
+            sources["package_owners"], {apt_launcher: "editor"},
+        )
+        self.assertFalse(any("dpkg (atalhos)" in error for error in sources["errors"]))
+
+    def test_inventory_queries_force_stable_command_locale(self):
+        seen_environments = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            def runner(_command, *, env, **_kwargs):
+                seen_environments.append(env)
+                return "", "manager absent"
+
+            query_installed_app_sources(
+                [], env={"PATH": "/usr/bin"}, query_runner=runner,
+                apt_lists_directory=self.fresh_apt_lists(tmpdir),
+                apt_metadata_directories=(),
+            )
+
+        self.assertTrue(seen_environments)
+        self.assertTrue(all(environment["LC_ALL"] == "C" for environment in seen_environments))
+        self.assertTrue(all(environment["PATH"] == "/usr/bin" for environment in seen_environments))
+
+    def test_failed_apt_update_query_never_marks_installed_app_as_updated(self):
+        apt_launcher = "/usr/share/applications/editor.desktop"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            responses = {
+                ("dpkg-query", "-S", "--", apt_launcher):
+                    (f"editor: {apt_launcher}\n", None),
+                ("dpkg-query", "-W", "-f=${binary:Package}\\t${Version}\\t${Status}\\n"):
+                    ("editor\t1.0\tinstall ok installed\n", None),
+                ("apt", "list", "--upgradable"): ("", "sem rede"),
+                ("flatpak", "list", "--app", "--columns=application,name,version,origin"):
+                    ("", "flatpak ausente"),
+                ("flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"):
+                    ("", "flatpak ausente"),
+                ("snap", "list"): ("", "snap ausente"),
+                ("snap", "refresh", "--list"): ("", "snap ausente"),
+            }
+            sources = query_installed_app_sources(
+                [{"name": "Editor", "desktop_file": apt_launcher}],
+                query_runner=lambda command, **_kwargs: responses[tuple(command)],
+                apt_lists_directory=self.fresh_apt_lists(tmpdir),
+                apt_metadata_directories=(),
+            )
+
+        inventory = build_installed_app_inventory(
+            [{"name": "Editor", "desktop_file": apt_launcher}],
+            sources["package_versions"], sources["package_owners"],
+            apt_upgradable=sources["apt_upgradable"],
+            checked_sources=sources["checked_sources"],
+            apt_owners_checked=sources["apt_owners_checked"],
+        )
+        self.assertNotIn("APT/DEB", sources["checked_sources"])
+        self.assertEqual(inventory[0]["update_status"], "Verificação necessária")
+
+    def test_merge_preserves_failed_sources_but_marks_them_unverified(self):
+        previous = [{
+            "name": "Prior App",
+            "package": "prior",
+            "source": "Flatpak",
+            "candidate_version": "2.0",
+            "update_status": "Atualizado",
+        }]
+        current = [{
+            "name": "New App",
+            "package": "new",
+            "source": "APT/DEB",
+            "candidate_version": "—",
+            "update_status": "Atualizado",
+        }]
+
+        inventory = merge_inventory_after_partial_failure(
+            previous, current, {"Flatpak"},
+        )
+
+        retained = next(app for app in inventory if app["name"] == "Prior App")
+        self.assertEqual(retained["update_status"], "Verificação necessária")
+        self.assertEqual(retained["candidate_version"], "—")
+        self.assertEqual([app["name"] for app in inventory], ["New App", "Prior App"])
 
     def test_query_failures_are_independent_and_reported(self):
         apt_launcher = "/usr/share/applications/editor.desktop"
@@ -354,13 +596,17 @@ All packages are up to date.
         def runner(command, **_kwargs):
             return responses[tuple(command)]
 
-        sources = query_installed_app_sources(
-            [
-                {"name": "Editor", "desktop_file": apt_launcher},
-                {"name": "Code", "desktop_file": snap_launcher},
-            ],
-            query_runner=runner,
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sources = query_installed_app_sources(
+                [
+                    {"name": "Editor", "desktop_file": apt_launcher},
+                    {"name": "Code", "desktop_file": snap_launcher},
+                ],
+                query_runner=runner,
+                apt_lists_directory=self.fresh_apt_lists(tmpdir),
+                apt_metadata_directories=(),
+                snap_root=Path(tmpdir) / "snap",
+            )
         inventory = build_installed_app_inventory(
             [
                 {"name": "Editor", "desktop_file": apt_launcher},
@@ -375,6 +621,8 @@ All packages are up to date.
             snap_update_output=sources["snap_update_output"],
             checked_sources=sources["checked_sources"],
             apt_owners_checked=sources["apt_owners_checked"],
+            apt_applications=sources["apt_applications"],
+            snap_applications=sources["snap_applications"],
         )
 
         self.assertEqual(sources["checked_sources"], {"APT/DEB", "Snap"})
@@ -388,12 +636,23 @@ All packages are up to date.
         def runner(_command, **_kwargs):
             return "", "sem conexão ou gerenciador ausente"
 
-        sources = query_installed_app_sources(
-            [{"name": "Editor", "desktop_file": "/usr/share/applications/editor.desktop"}],
-            query_runner=runner,
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sources = query_installed_app_sources(
+                [{
+                    "name": "Editor",
+                    "command": "/bin/true",
+                    "desktop_file": "/usr/share/applications/editor.desktop",
+                }],
+                query_runner=runner,
+                apt_lists_directory=self.fresh_apt_lists(tmpdir),
+                apt_metadata_directories=(),
+            )
         inventory = build_installed_app_inventory(
-            [{"name": "Editor", "desktop_file": "/usr/share/applications/editor.desktop"}],
+            [{
+                "name": "Editor",
+                "command": "/bin/true",
+                "desktop_file": "/usr/share/applications/editor.desktop",
+            }],
             sources["package_versions"],
             sources["package_owners"],
             sources["flatpak_output"],

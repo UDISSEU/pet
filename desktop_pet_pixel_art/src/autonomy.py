@@ -392,6 +392,39 @@ def resolve_app_command(command):
     return argv
 
 
+def application_command_target_exists(command):
+    """Check that a launch target exists without requiring it to be executable."""
+    try:
+        argv = shlex.split(command)
+    except (TypeError, ValueError):
+        return False
+    if not argv or any("\x00" in argument for argument in argv):
+        return False
+
+    executable_index = 0
+    if Path(argv[0]).name == "env":
+        executable_index = 1
+        while executable_index < len(argv):
+            argument = argv[executable_index]
+            if argument == "--":
+                executable_index += 1
+                break
+            if argument.startswith("-") or "=" in argument:
+                executable_index += 1
+                continue
+            break
+    if executable_index >= len(argv):
+        return False
+
+    executable = os.path.expanduser(argv[executable_index])
+    if os.path.dirname(executable):
+        return os.path.isfile(executable)
+    return any(
+        (Path(directory or os.curdir) / executable).is_file()
+        for directory in os.environ.get("PATH", "").split(os.pathsep)
+    )
+
+
 def find_installed_apps(search="", directories=None):
     """Return searchable Linux desktop apps from XDG application folders."""
     if directories is None:

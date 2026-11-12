@@ -49,6 +49,8 @@ class InstalledAppsUITests(unittest.TestCase):
         try:
             root = tk.Tk()
         except tk.TclError as exc:
+            if os.environ.get("NOVA_REQUIRE_TK") == "1":
+                self.fail(f"Tk display unavailable in CI: {exc}")
             self.skipTest(f"Tk display unavailable: {exc}")
 
         class Harness(ComputerPreferencesTabMixin):
@@ -67,12 +69,19 @@ class InstalledAppsUITests(unittest.TestCase):
                 callback(*args, **kwargs)
                 return True
 
-        class ImmediateThread:
+        pending_workers = []
+        launched_workers = {"count": 0}
+
+        class ControlledThread:
             def __init__(self, *, target, daemon):
                 self.target = target
 
             def start(self):
-                self.target()
+                launched_workers["count"] += 1
+                if launched_workers["count"] == 1:
+                    pending_workers.append(self.target)
+                else:
+                    self.target()
 
         def make_card(parent, title, hint=None):
             frame = ttk.Frame(parent, style="Card.TFrame", padding=14)
@@ -110,6 +119,32 @@ class InstalledAppsUITests(unittest.TestCase):
             "snap_output": "",
             "snap_update_output": "",
             "checked_sources": {"APT/DEB"},
+            "inventory_complete_sources": {"APT/DEB"},
+            "source_results": {
+                "APT/DEB": {
+                    "inventory_complete": True,
+                    "updates_complete": True,
+                    "checked_at": "2025-01-01T10:00:00+00:00",
+                    "metadata_updated_at": "",
+                    "metadata_stale": False,
+                },
+                "Flatpak": {
+                    "inventory_complete": True,
+                    "updates_complete": True,
+                    "checked_at": "2025-01-01T10:00:00+00:00",
+                    "metadata_updated_at": "",
+                    "metadata_stale": False,
+                },
+                "Snap": {
+                    "inventory_complete": True,
+                    "updates_complete": True,
+                    "checked_at": "2025-01-01T10:00:00+00:00",
+                    "metadata_updated_at": "",
+                    "metadata_stale": False,
+                },
+            },
+            "apt_applications": [],
+            "snap_applications": [],
             "errors": [],
         }
         try:
@@ -119,13 +154,15 @@ class InstalledAppsUITests(unittest.TestCase):
             ) as discover, mock.patch(
                 "preferences_computer_ui.query_installed_app_sources",
                 return_value=sources,
-            ), mock.patch(
+            ) as query_sources, mock.patch(
                 "preferences_computer_ui.threading.Thread",
-                side_effect=lambda **kwargs: ImmediateThread(**kwargs),
+                side_effect=lambda **kwargs: ControlledThread(**kwargs),
             ):
                 pet._build_computer_preferences_tab(context)
                 context.refresh_computer_inventory()
                 context.refresh_computer_inventory()
+                self.assertEqual(len(pending_workers), 1)
+                pending_workers.pop()()
 
                 def descendants(widget):
                     for child in widget.winfo_children():
@@ -153,6 +190,38 @@ class InstalledAppsUITests(unittest.TestCase):
                 refresh_button.invoke()
                 self.assertEqual(len(inventory.get_children()), 1)
                 self.assertEqual(discover.call_count, 2)
+
+                sources.update(
+                    package_versions={},
+                    package_owners={},
+                    apt_owners_checked=False,
+                    apt_upgradable=[],
+                    flatpak_output="",
+                    flatpak_update_output="",
+                    snap_output="",
+                    snap_update_output="",
+                    checked_sources=set(),
+                    inventory_complete_sources=set(),
+                    errors=["dpkg-query indisponível"],
+                )
+                for source_result in sources["source_results"].values():
+                    source_result.update(
+                        inventory_complete=False,
+                        updates_complete=False,
+                        checked_at="",
+                    )
+                refresh_button.invoke()
+                self.assertEqual(len(inventory.get_children()), 1)
+                self.assertEqual(
+                    inventory.item(inventory.get_children()[0], "values")[0],
+                    "Demo Editor",
+                )
+                self.assertEqual(
+                    inventory.item(inventory.get_children()[0], "values")[3],
+                    "Verificação necessária",
+                )
+                self.assertTrue(refresh_button.instate(["!disabled"]))
+                self.assertEqual(query_sources.call_count, 3)
         finally:
             root.destroy()
 

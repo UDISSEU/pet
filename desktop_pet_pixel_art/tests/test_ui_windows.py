@@ -47,6 +47,8 @@ class TkWindowSmokeTests(unittest.TestCase):
         try:
             root = tk.Tk()
         except tk.TclError as exc:
+            if os.environ.get("NOVA_REQUIRE_TK") == "1":
+                self.fail(f"Tk display unavailable in CI: {exc}")
             self.skipTest(f"Tk display unavailable: {exc}")
         with tempfile.TemporaryDirectory() as directory:
             pet = WindowHarness(root, directory)

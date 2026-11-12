@@ -21,6 +21,7 @@ from system_updates import (
     parse_snap_installed,
     parse_snap_upgradable,
     query_installed_app_sources,
+    merge_inventory_after_partial_failure,
     snap_upgrade_command,
     run_streaming_command,
 )
@@ -1134,7 +1135,12 @@ class ComputerPreferencesTabMixin:
                 f"{len(installed_apps_inventory)} instalado(s)"
                 + (f" · verificado em {verified_at['value']}" if verified_at["value"] else "")
             )
-            if not rows:
+            if not rows and inventory_error.get():
+                app_inventory_status.set(
+                    "Nenhum resultado novo; consulte os detalhes da falha. "
+                    "Os dados anteriores foram preservados."
+                )
+            elif not rows:
                 app_inventory_status.set(
                     "Nenhum aplicativo corresponde aos filtros atuais. "
                     "Ajuste a busca ou clique em Atualizar lista para consultar novamente."
@@ -1286,15 +1292,20 @@ class ComputerPreferencesTabMixin:
                 inventory = []
                 error = None
                 completed = False
+                commit_inventory = False
+                previous_inventory = list(installed_apps_inventory)
+                sources = None
                 try:
                     self.permission_manager.require(
                         "nova.core", "system.maintenance.read",
                     )
                     source_errors = []
+                    launcher_discovery_complete = True
                     try:
                         apps = find_installed_apps()
                     except OSError as exc:
                         apps = []
+                        launcher_discovery_complete = False
                         source_errors.append(f"Atalhos do sistema: {exc}")
                     sources = query_installed_app_sources(
                         apps,
@@ -1302,6 +1313,11 @@ class ComputerPreferencesTabMixin:
                         cancel_event=inventory_state.cancel_event,
                     )
                     source_errors.extend(sources["errors"])
+                    if not launcher_discovery_complete:
+                        sources["inventory_complete_sources"].discard("APT/DEB")
+                        sources["source_results"]["APT/DEB"][
+                            "inventory_complete"
+                        ] = False
                     inventory = build_installed_app_inventory(
                         apps,
                         sources["package_versions"],
@@ -1313,6 +1329,26 @@ class ComputerPreferencesTabMixin:
                         snap_update_output=sources["snap_update_output"],
                         checked_sources=sources["checked_sources"],
                         apt_owners_checked=sources["apt_owners_checked"],
+                        apt_applications=sources["apt_applications"],
+                        snap_applications=sources["snap_applications"],
+                    )
+                    failed_sources = (
+                        set(sources["source_results"])
+                        - sources["inventory_complete_sources"]
+                    )
+                    inventory = merge_inventory_after_partial_failure(
+                        previous_inventory, inventory, failed_sources,
+                    )
+                    commit_inventory = bool(
+                        sources["inventory_complete_sources"]
+                        or any(
+                            app["source"] in failed_sources
+                            for app in previous_inventory
+                        )
+                        or any(
+                            app["source"] in ("AppImage", "Manual/outro")
+                            for app in inventory
+                        )
                     )
                     error = "\n".join(source_errors) or None
                     completed = True
@@ -1348,16 +1384,33 @@ class ComputerPreferencesTabMixin:
                         inventory_error.set("Detalhes das falhas:\n" + error)
                         maintenance_details["text"] = error
                         details_button.configure(state="normal")
+                        if (
+                            sources
+                            and not sources["inventory_complete_sources"]
+                            and not commit_inventory
+                        ):
+                            inventory_status_banner.set(
+                                "Falha nas fontes de pacotes; inventário anterior preservado.",
+                            )
                     else:
                         inventory_status_banner.set(
                             f"Consulta concluída · última atualização em {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M')}"
                         )
                         inventory_error.set("")
-                    if completed:
+                    if commit_inventory:
                         installed_apps_inventory[:] = inventory
-                        verified_at["value"] = datetime.now().astimezone().strftime(
-                            "%d/%m/%Y %H:%M",
+                        source_check_times = " · ".join(
+                            f"{source}: {datetime.fromisoformat(result['checked_at']).strftime('%d/%m %H:%M')}"
+                            + (
+                                f" · catálogo local {datetime.fromisoformat(result['metadata_updated_at']).strftime('%d/%m %H:%M')}"
+                                + (" (pode estar desatualizado)" if result["metadata_stale"] else "")
+                                if result["metadata_updated_at"] else ""
+                            )
+                            for source, result in sources["source_results"].items()
+                            if result["checked_at"]
                         )
+                        if source_check_times:
+                            verified_at["value"] = source_check_times
                         inventory_sort.update(column="name", reverse=False)
                     render_installed_apps()
 

@@ -2,7 +2,7 @@ name: Testes
 
 on:
   push:
-    branches: [main]
+    branches: [main, Nova-IA]
   pull_request:
 
 jobs:
@@ -68,8 +68,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb xauth
       - name: Install Python dependencies
         run: python -m pip install -r desktop_pet_pixel_art/requirements.txt
+      - name: Run installed-app inventory GUI tests
+        run: NOVA_REQUIRE_TK=1 PYTHONPATH="$PWD/src" xvfb-run -a python -m unittest discover -s tests -t . -p test_installed_apps.py -v
+        working-directory: desktop_pet_pixel_art
       - name: Run graphical window tests
-        run: PYTHONPATH="$PWD/src" xvfb-run -a python -m unittest discover -s tests -t . -p test_ui_windows.py -v
+        run: NOVA_REQUIRE_TK=1 PYTHONPATH="$PWD/src" xvfb-run -a python -m unittest discover -s tests -t . -p test_ui_windows.py -v
         working-directory: desktop_pet_pixel_art
 
   clean-install:
