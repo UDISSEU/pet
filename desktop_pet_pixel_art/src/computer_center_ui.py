@@ -65,6 +65,7 @@ class ComputerCenterUIMixin:
         state = {"closed": False, "busy": False, "job": None, "token": 0}
         results = queue.Queue()
         nav_buttons = []
+        nav_button_sections = []
         startup_items = {}
         startup_sort = {"column": "name", "reverse": False}
         storage_scan = {"directory": str(Path.home()),
@@ -126,26 +127,52 @@ class ComputerCenterUIMixin:
                 ttk.Label(card, text=detail, style="Hint.TLabel", wraplength=630).pack(anchor="w", pady=(2, 0))
             return card
 
+        def add_metric_grid(items, *, columns=2, parent=result):
+            """Arrange related values as a compact overview instead of a long stack."""
+            grid = ttk.Frame(parent)
+            grid.pack(fill="x", pady=(0, 8))
+            for column in range(columns):
+                grid.columnconfigure(column, weight=1, uniform="computer_metric")
+            for index, (label, value, detail) in enumerate(items):
+                row, column = divmod(index, columns)
+                card = ttk.Frame(grid, style="Card.TFrame", padding=(13, 11))
+                card.grid(row=row, column=column, sticky="nsew",
+                          padx=(0, 5) if column == 0 else (5, 0), pady=4)
+                ttk.Label(card, text=label.upper(), style="Hint.TLabel").pack(anchor="w")
+                ttk.Label(card, text=value, style="CardTitle.TLabel", wraplength=300,
+                          justify="left").pack(anchor="w", pady=(4, 1))
+                if detail:
+                    ttk.Label(card, text=detail, style="Hint.TLabel", wraplength=300,
+                              justify="left").pack(anchor="w")
+            return grid
+
         def render_overview(data):
-            add_metric("Processador", data["cpu_name"], f"Uso atual: {data['cpu_percent']:.0f}%")
-            add_metric("Memória RAM", f"{format_bytes(data['memory_used'])} de {format_bytes(data['memory_total'])}",
-                       f"{data['memory_percent']:.0f}% em uso")
-            add_metric("Armazenamento da pasta pessoal", f"{format_bytes(data['disk_free'])} disponíveis",
-                       f"{format_bytes(data['disk_used'])} usados de {format_bytes(data['disk_total'])} · {data['disk_percent']:.0f}%")
-            add_metric("Sistema", data["system"], f"Computador: {data['hostname']}")
             temp = "Não disponível neste sistema" if data["temperature_c"] is None else f"{data['temperature_c']:.1f} °C"
-            add_metric("Temperatura", temp, "Leitura dos sensores do sistema operacional")
             health = "Recursos em níveis usuais" if data["memory_percent"] < 85 and data["disk_percent"] < 90 else "Atenção: memória ou armazenamento próximos do limite"
-            add_metric("Resumo", health, "Indicador baseado somente no uso atual de RAM e armazenamento.")
+            add_metric_grid((
+                ("Processador", data["cpu_name"], f"Uso atual: {data['cpu_percent']:.0f}%"),
+                ("Memória RAM", f"{format_bytes(data['memory_used'])} de {format_bytes(data['memory_total'])}",
+                 f"{data['memory_percent']:.0f}% em uso"),
+                ("Espaço disponível", f"{format_bytes(data['disk_free'])}",
+                 f"{format_bytes(data['disk_used'])} de {format_bytes(data['disk_total'])} usados · {data['disk_percent']:.0f}%"),
+                ("Temperatura", temp, "Leitura dos sensores do sistema operacional"),
+                ("Sistema", data["system"], f"Computador: {data['hostname']}"),
+                ("Resumo atual", health, "Indicador calculado a partir do uso de RAM e armazenamento."),
+            ))
 
         def render_network(snapshot):
             snapshots["network"] = snapshot
+            interfaces = []
             for item in snapshot["interfaces"]:
                 address = ", ".join(item["addresses"]) or "Sem endereço IP"
                 state_text = "Conectada" if item["connected"] else ("Ativa" if item["is_up"] else "Inativa")
-                add_metric(f"{item['name']} · {item['type']}", state_text,
-                           f"{address} · Gateway: {item['gateway'] or 'não identificado'} · "
-                           f"{item['speed_mbps'] or '—'} Mbps")
+                interfaces.append((
+                    f"{item['name']} · {item['type']}", state_text,
+                    f"{address} · Gateway: {item['gateway'] or 'não identificado'} · "
+                    f"{item['speed_mbps'] or '—'} Mbps",
+                ))
+            if interfaces:
+                add_metric_grid(interfaces)
             if not snapshot["interfaces"]:
                 add_metric("Interfaces", "Nenhuma interface de rede encontrada")
             sent = snapshot["upload_bytes_per_second"]
@@ -161,7 +188,7 @@ class ComputerCenterUIMixin:
             history = snapshot["history"][-30:]
             peak = max([1.0] + [p[k] for p in history for k in ("upload", "download")])
             width = max(100, chart.winfo_width())
-            for key, color in (("download", COLORS.get("accent", "#53c7b5")), ("upload", COLORS.get("primary", "#8b7cf6"))):
+            for key, color in (("download", COLORS["cyan"]), ("upload", COLORS["purple"])):
                 points = []
                 for i, point in enumerate(history):
                     x = 8 + i * max(1, (width - 16) / max(1, len(history) - 1))
@@ -178,10 +205,12 @@ class ComputerCenterUIMixin:
         def render_health(snapshot):
             snapshots["health"] = snapshot
             clear_result()
-            add_metric("Processador", f"{snapshot['cpu_percent']:.0f}%", "Uso na amostra atual")
-            add_metric("Memória", f"{snapshot['memory_percent']:.1f}% · {format_bytes(snapshot['memory_available'])} disponíveis", f"{format_bytes(snapshot['memory_used'])} de {format_bytes(snapshot['memory_total'])}")
-            add_metric("Armazenamento", f"{snapshot['disk_percent']:.1f}% ocupado", f"{format_bytes(snapshot['disk_free'])} livres no volume pessoal")
-            add_metric("Temperatura", "Não disponível" if snapshot["temperature_c"] is None else f"{snapshot['temperature_c']:.1f} °C", "Leitura mais alta entre sensores disponíveis")
+            add_metric_grid((
+                ("Processador", f"{snapshot['cpu_percent']:.0f}%", "Uso na amostra atual"),
+                ("Memória", f"{snapshot['memory_percent']:.1f}%", f"{format_bytes(snapshot['memory_available'])} disponíveis · {format_bytes(snapshot['memory_used'])} de {format_bytes(snapshot['memory_total'])}"),
+                ("Armazenamento", f"{snapshot['disk_percent']:.1f}% ocupado", f"{format_bytes(snapshot['disk_free'])} livres no volume pessoal"),
+                ("Temperatura", "Não disponível" if snapshot["temperature_c"] is None else f"{snapshot['temperature_c']:.1f} °C", "Leitura mais alta entre sensores disponíveis"),
+            ))
             ttk.Label(result, text="Diagnósticos observados", style="CardTitle.TLabel").pack(anchor="w", pady=4)
             if snapshot["issues"]:
                 for issue in snapshot["issues"]:
@@ -194,8 +223,8 @@ class ComputerCenterUIMixin:
             chart.pack(fill="x")
             width = max(100, chart.winfo_width())
             for key, color in (("cpu_percent", COLORS["accent"]),
-                               ("memory_percent", "#8B6FE8"),
-                               ("disk_percent", "#D18B3C")):
+                               ("memory_percent", COLORS["purple"]),
+                               ("disk_percent", COLORS["gold"])):
                 points = []
                 for i, point in enumerate(history):
                     x = 8 + i * max(1, (width - 16) / max(1, len(history) - 1))
@@ -224,14 +253,29 @@ class ComputerCenterUIMixin:
                 add_metric("Saúde dos discos", data["state"], data["reason"])
             for disk in data["devices"]:
                 state_text = disk["smart_state"].capitalize()
-                detail = (f"{disk['vendor'] or ''} {disk['model'] or disk['name']} · "
-                          f"{format_bytes(disk['capacity_bytes'] or 0)} · "
-                          f"Temperatura: {disk['temperature_c'] if disk['temperature_c'] is not None else 'não disponível'} °C")
+                state_style = {
+                    "saudável": "Status.Success.TLabel",
+                    "atenção": "Status.Warning.TLabel",
+                    "crítico": "Status.Error.TLabel",
+                }.get(disk["smart_state"], "PageHint.TLabel")
+                card = ttk.Frame(result, style="Card.TFrame", padding=14)
+                card.pack(fill="x", pady=(0, 8))
+                heading = ttk.Frame(card, style="Card.TFrame")
+                heading.pack(fill="x")
+                ttk.Label(heading, text=disk["path"], style="CardTitle.TLabel").pack(side="left", fill="x", expand=True)
+                ttk.Label(heading, text=state_text, style=state_style, padding=(8, 4)).pack(side="right", padx=(8, 0))
+                identity = " ".join(item for item in (disk["vendor"], disk["model"] or disk["name"]) if item)
+                ttk.Label(card, text=identity or disk["name"], style="Hint.TLabel").pack(anchor="w", pady=(5, 2))
+                metrics = ttk.Frame(card, style="Card.TFrame")
+                metrics.pack(fill="x", pady=(3, 0))
+                ttk.Label(metrics, text=f"Capacidade  {format_bytes(disk['capacity_bytes'] or 0)}", style="Hint.TLabel").pack(side="left", padx=(0, 16))
+                temperature = "não disponível" if disk["temperature_c"] is None else f"{disk['temperature_c']} °C"
+                ttk.Label(metrics, text=f"Temperatura  {temperature}", style="Hint.TLabel").pack(side="left")
                 if disk["wear"]:
-                    detail += f" · Desgaste ({disk['wear']['attribute']}): {disk['wear']['value']}"
-                add_metric(f"{state_text} · {disk['path']}", detail.strip(), disk["detail"])
+                    ttk.Label(card, text=f"Desgaste · {disk['wear']['attribute']}: {disk['wear']['value']}", style="Hint.TLabel").pack(anchor="w", pady=(5, 0))
+                ttk.Label(card, text=disk["detail"], style="PageHint.TLabel", wraplength=650).pack(anchor="w", pady=(6, 0))
                 for indicator in disk["indicators"]:
-                    ttk.Label(result, text=f"• {indicator}", style="PageHint.TLabel").pack(anchor="w", padx=10)
+                    ttk.Label(card, text=f"• {indicator}", style=state_style, wraplength=640).pack(anchor="w", pady=(3, 0))
             ttk.Button(result, text="Atualizar SMART", command=load_disks).pack(anchor="e", pady=6)
             ttk.Label(result, text="Consulta somente leitura. SMART pode exigir permissões adicionais; a Nova não as solicita nem executa reparos.", style="PageHint.TLabel", wraplength=640).pack(anchor="w")
 
@@ -245,6 +289,8 @@ class ComputerCenterUIMixin:
             ttk.Combobox(controls, textvariable=severity, values=("Todas", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"), state="readonly", width=12).pack(side="left", padx=2)
             ttk.Button(controls, text="Atualizar", command=load_logs).pack(side="left", padx=2)
             table = ttk.Treeview(result, columns=("date", "severity", "category", "source", "message"), show="headings", height=12, style="Maintenance.Treeview")
+            table.tag_configure("critical", foreground=COLORS["error"])
+            table.tag_configure("warning", foreground=COLORS["warning"])
             for col, title, width in (("date", "Data", 145), ("severity", "Gravidade", 90), ("category", "Origem", 75), ("source", "Componente", 130), ("message", "Evento", 330)):
                 table.heading(col, text=title, command=lambda c=col: sort_logs(table, c))
                 table.column(col, width=width, minwidth=65, anchor="w")
@@ -258,7 +304,8 @@ class ComputerCenterUIMixin:
                 filtered = [r for r in rows if (severity.get() == "Todas" or r["severity"] == severity.get()) and (category.get() == "Todas" or r["category"] == category.get()) and (not needle or needle in " ".join(str(v) for v in r.values()).casefold())]
                 for i, row in enumerate(filtered):
                     iid = str(i); visible[iid] = row
-                    table.insert("", "end", iid=iid, values=(row["date"], row["severity"], row["category"], row["source"], row["message"][:180]))
+                    severity_tag = "critical" if row["severity"] in ("ERROR", "CRITICAL") else "warning" if row["severity"] == "WARNING" else ""
+                    table.insert("", "end", iid=iid, values=(row["date"], row["severity"], row["category"], row["source"], row["message"][:180]), tags=(severity_tag,))
                 detail.set(f"{len(filtered)} registro(s) · conteúdo sensível conhecido é ocultado · limite de 500.")
             def selected(_event=None):
                 sel = table.selection()
@@ -435,17 +482,20 @@ class ComputerCenterUIMixin:
                 add_metric("Histórico vazio", "Ainda não há amostras para este período.",
                            f"A coleta é feita a cada {performance_monitor.settings['interval_seconds']} segundos quando está ativa.")
                 return
+            metric_cards = []
             for metric, label, column, suffix in (("cpu", "CPU", "cpu", "%"), ("memory", "RAM", "memory", "%"), ("storage", "Armazenamento", "storage", "%"), ("temperature", "Temperatura", "temperature", " °C")):
                 vals = [row[column] for row in samples if row[column] is not None]
                 old = [row[column] for row in previous if row[column] is not None]
                 latest = f"{vals[-1]:.1f}{suffix}" if vals else "Indisponível"
                 peak = f" · pico {max(vals):.1f}{suffix}" if vals else ""
                 comparison = f" · período anterior {sum(old)/len(old):.1f}{suffix}" if old else " · sem período anterior"
-                add_metric(label, latest + peak, f"Média atual {sum(vals)/len(vals):.1f}{suffix}{comparison}" if vals else "Nenhuma leitura disponível.")
+                metric_cards.append((label, latest + peak,
+                                     f"Média atual {sum(vals)/len(vals):.1f}{suffix}{comparison}" if vals else "Nenhuma leitura disponível."))
+            add_metric_grid(metric_cards)
             chart = tk.Canvas(result, height=120, bg=COLORS["surface"], highlightthickness=0)
             chart.pack(fill="x", pady=4)
             width = max(100, chart.winfo_width()); plot = samples[-300:]
-            for key, color in (("cpu", COLORS["accent"]), ("memory", "#8B6FE8"), ("storage", "#D18B3C"), ("temperature", "#D84B65")):
+            for key, color in (("cpu", COLORS["cyan"]), ("memory", COLORS["purple"]), ("storage", COLORS["gold"]), ("temperature", COLORS["error"])):
                 pts = []
                 for index, row in enumerate(plot):
                     if row[key] is None: continue
@@ -591,20 +641,33 @@ class ComputerCenterUIMixin:
             ttk.Checkbutton(controls, text="Silenciar categoria", variable=mute,
                             command=lambda: toggle_alert_mute(category, mute)).pack(side="right")
             thresholds = performance_monitor.settings["thresholds"]
-            limits = ttk.Frame(result); limits.pack(fill="x", pady=(0, 5))
+            limits = ttk.Frame(result, style="Card.TFrame", padding=12)
+            limits.pack(fill="x", pady=(0, 8))
+            ttk.Label(limits, text="Limites e repetição", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 8))
+            fields = ttk.Frame(limits, style="Card.TFrame")
+            fields.pack(fill="x")
+            for column in range(3):
+                fields.columnconfigure(column, weight=1, uniform="alert_limit")
             values = {}
-            for name, caption in (("memory", "RAM %"), ("cpu", "CPU %"),
-                                  ("storage", "Disco %"), ("temperature", "Temp °C")):
-                ttk.Label(limits, text=caption).pack(side="left", padx=(2, 1))
+            limit_specs = []
+            for name, caption in (("memory", "RAM (%)"), ("cpu", "CPU (%)"),
+                                  ("storage", "Disco (%)"), ("temperature", "Temperatura (°C)")):
                 variable = tk.StringVar(value=str(round(thresholds[name])))
-                ttk.Spinbox(limits, from_=1, to=100, width=4, textvariable=variable).pack(side="left", padx=(0, 4))
                 values[name] = variable
-            ttk.Label(limits, text="Confirmar (s)").pack(side="left", padx=(4, 1))
+                limit_specs.append((caption, variable, 1, 100, 1, 6))
             confirmation = tk.StringVar(value=str(max(performance_monitor.settings["confirm_seconds"], performance_monitor.settings["cpu_confirm_seconds"])))
-            ttk.Spinbox(limits, from_=60, to=86400, increment=60, width=6, textvariable=confirmation).pack(side="left", padx=(0, 4))
-            ttk.Label(limits, text="Repetir (min)").pack(side="left", padx=(3, 1))
             repeat = tk.StringVar(value=str(performance_monitor.settings["repeat_minutes"]))
-            ttk.Spinbox(limits, from_=1, to=1440, width=5, textvariable=repeat).pack(side="left", padx=(0, 4))
+            limit_specs.extend((
+                ("Confirmar por (s)", confirmation, 60, 86400, 60, 8),
+                ("Repetir (min)", repeat, 1, 1440, 1, 8),
+            ))
+            for index, (caption, variable, lower, upper, step, width) in enumerate(limit_specs):
+                row, column = divmod(index, 3)
+                field = ttk.Frame(fields, style="Card.TFrame")
+                field.grid(row=row, column=column, sticky="ew", padx=(0, 8), pady=3)
+                ttk.Label(field, text=caption, style="Hint.TLabel").pack(anchor="w")
+                ttk.Spinbox(field, from_=lower, to=upper, increment=step,
+                            width=width, textvariable=variable).pack(anchor="w", pady=(3, 0))
             def save_alert_limits():
                 try:
                     threshold_values = {key: float(variable.get()) for key, variable in values.items()}
@@ -615,10 +678,13 @@ class ComputerCenterUIMixin:
                                       repeat_minutes=repeat_minutes)
                 except ValueError as exc:
                     messagebox.showerror("Limites inválidos", str(exc), parent=window)
-            ttk.Button(limits, text="Aplicar", command=save_alert_limits).pack(side="right", padx=2)
+            ttk.Button(limits, text="Aplicar limites", style="Primary.TButton",
+                       command=save_alert_limits).pack(anchor="e", pady=(8, 0))
             current = tk.StringVar(value="Selecione uma categoria para consultar os controles de silêncio.")
             ttk.Label(result, textvariable=current, style="PageHint.TLabel").pack(anchor="w", pady=(0, 5))
             table = ttk.Treeview(result, columns=("date", "category", "severity", "title"), show="headings", height=11, style="Maintenance.Treeview")
+            table.tag_configure("critical", foreground=COLORS["error"])
+            table.tag_configure("warning", foreground=COLORS["warning"])
             for col, title, width in (("date", "Data", 165), ("category", "Categoria", 120), ("severity", "Gravidade", 90), ("title", "Alerta", 330)):
                 table.heading(col, text=title); table.column(col, width=width, anchor="w")
             table.pack(fill="both", expand=True)
@@ -634,7 +700,8 @@ class ComputerCenterUIMixin:
                 for i, row in enumerate(filtered):
                     iid = str(i); visible[iid] = row
                     date = datetime.fromtimestamp(row["created_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
-                    table.insert("", "end", iid=iid, values=(date, row["category"], row["severity"], row["title"]))
+                    severity_tag = "critical" if row["severity"] == "Crítico" else "warning" if row["severity"] == "Atenção" else ""
+                    table.insert("", "end", iid=iid, values=(date, row["category"], row["severity"], row["title"]), tags=(severity_tag,))
                 details.set(f"{len(filtered)} alerta(s) · ordenados do mais recente.")
             def show_detail(_event=None):
                 sel = table.selection()
@@ -960,10 +1027,11 @@ class ComputerCenterUIMixin:
                        f"{format_bytes(data['free'])} disponíveis de {format_bytes(data['total'])}",
                        f"{format_bytes(data['used'])} usados · {data['used'] / max(1, data['total']) * 100:.1f}%")
             ttk.Label(result, text="Volumes montados", style="CardTitle.TLabel").pack(anchor="w", pady=(4, 6))
-            for volume in data["volumes"]:
-                add_metric(volume["mountpoint"],
-                           f"{format_bytes(volume['free'])} livres de {format_bytes(volume['total'])}",
-                           f"{volume['device']} · {volume['filesystem']} · {volume['percent']:.1f}% usados")
+            add_metric_grid((
+                (volume["mountpoint"], f"{format_bytes(volume['free'])} livres de {format_bytes(volume['total'])}",
+                 f"{volume['device']} · {volume['filesystem']} · {volume['percent']:.1f}% usados")
+                for volume in data["volumes"]
+            ))
             actions = ttk.Frame(result)
             actions.pack(fill="x", pady=(6, 8))
             ttk.Button(actions, text="Escolher pasta…", command=choose_storage_directory).pack(side="left")
@@ -1142,7 +1210,7 @@ class ComputerCenterUIMixin:
 
         def load_disks():
             page_title.set("Saúde dos Discos"); clear_result()
-            start_worker("Saúde dos Discos", lambda _progress: inspect_disks())
+            start_worker("Saúde dos Discos", lambda _progress: inspect_disks(cancel_event=cancel_event))
 
         def load_logs():
             try: self._authorize_core_action("system.maintenance.read")
@@ -1183,6 +1251,10 @@ class ComputerCenterUIMixin:
                 except (PermissionError, OSError) as exc:
                     status.set(f"Permissão necessária para consultar a inicialização: {exc}")
                     return
+            for button, button_section in zip(nav_buttons, nav_button_sections):
+                button.configure(
+                    style="Nav.Active.TButton" if button_section == section else "Nav.TButton",
+                )
             if section == "Armazenamento":
                 load_storage_home()
             elif section == "Inicialização":
@@ -1223,7 +1295,8 @@ class ComputerCenterUIMixin:
                 start_worker(section, lambda _progress: function())
 
         apps_button = ttk.Button(
-            nav, text="Biblioteca de Aplicativos · abrir inventário",
+            nav, text="✦  Biblioteca de Aplicativos · abrir inventário",
+            style="Primary.TButton",
             command=lambda: self.open_autonomy_settings("computer"),
         )
         apps_button.grid(row=0, column=0, columnspan=3, sticky="ew", padx=2, pady=(0, 5))
@@ -1232,6 +1305,7 @@ class ComputerCenterUIMixin:
                                 command=lambda name=section: open_page(name))
             button.grid(row=1 + index // 3, column=index % 3, sticky="ew", padx=2, pady=2)
             nav_buttons.append(button)
+            nav_button_sections.append(section)
         for column in range(3): nav.columnconfigure(column, weight=1)
 
         def on_close():

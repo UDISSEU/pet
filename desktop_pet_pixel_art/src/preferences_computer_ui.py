@@ -9,6 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 from autonomy import find_installed_apps, save_settings
+from app_manager import (
+    build_uninstall_command, build_update_all_commands, display_location,
+    open_installed_application, preview_uninstall, resolve_icon_path,
+)
+from computer_services import format_bytes
 from system_updates import (
     apt_upgrade_command,
     build_installed_app_inventory,
@@ -27,6 +32,7 @@ from system_updates import (
     snap_upgrade_command,
     run_streaming_command,
 )
+from ui_theme import COLORS
 from ui_theme import fit_window_to_screen
 from computer_center_ui import ComputerCenterUIMixin
 
@@ -252,11 +258,11 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             details_window.title("Detalhes da operação")
             details_window.transient(window)
             fit_window_to_screen(details_window, 620, 380, min_width=500, min_height=300)
-            details_window.configure(bg="#E3E8F0")
+            details_window.configure(bg=COLORS["background"])
             frame = ttk.Frame(details_window, style="Autonomy.TFrame", padding=14)
             frame.pack(fill="both", expand=True)
             output = tk.Text(frame, wrap="word", height=18, relief="flat", bd=0,
-                             bg="#F5F7FA", fg="#344054", font=("TkFixedFont", 9))
+                             bg=COLORS["surface"], fg=COLORS["ink"], font=("TkFixedFont", 9))
             scrollbar = ttk.Scrollbar(frame, orient="vertical", command=output.yview)
             output.configure(yscrollcommand=scrollbar.set)
             output.pack(side="left", fill="both", expand=True)
@@ -274,7 +280,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             dialog = self._set_nova_window_icon(tk.Toplevel(window))
             dialog.title(title)
             dialog.transient(window)
-            dialog.configure(bg="#E3E8F0")
+            dialog.configure(bg=COLORS["background"])
             frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=20)
             frame.pack(fill="both", expand=True)
             ttk.Label(frame, text=title, style="Title.TLabel").pack(anchor="w")
@@ -302,7 +308,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             dialog.title(title)
             dialog.transient(window)
             fit_window_to_screen(dialog, 620, 440, min_width=500, min_height=350)
-            dialog.configure(bg="#E3E8F0")
+            dialog.configure(bg=COLORS["background"])
             frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=16)
             frame.pack(fill="both", expand=True)
             ttk.Label(frame, text=title, style="Title.TLabel").pack(anchor="w")
@@ -467,9 +473,15 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             update_operations = (
                 "Atualizar sistema", "Atualizar aplicativos selecionados",
             )
-            if title in update_operations and not record_update_history(
-                expected_packages, error,
-            ):
+            application_operation_titles = (*update_operations, "Desinstalar aplicativo")
+            history_saved = True
+            if title in update_operations:
+                history_saved = record_update_history(expected_packages, error)
+            elif title == "Desinstalar aplicativo":
+                history_saved = record_application_operation(
+                    "Desinstalação", expected_packages, error,
+                )
+            if not history_saved:
                 history_error = "Não foi possível salvar esta operação no histórico."
                 maintenance_details["text"] = (
                     f"{maintenance_details['text']}\n\n{history_error}"
@@ -482,6 +494,8 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             ):
                 computer_status_label.configure(style="ComputerStatusError.TLabel")
                 computer_status.set(f"{title}: não foi concluído. Veja os detalhes para entender o erro.")
+                if title in application_operation_titles:
+                    load_installed_apps(force=True)
                 return
 
             packages = updates_from_results() if title in (
@@ -590,6 +604,8 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                     f"Operação concluída; {len(packages)} atualização(ões) ainda pendente(s)."
                     if packages else "Aplicativos selecionados atualizados."
                 )
+            elif title == "Desinstalar aplicativo":
+                summary = "Desinstalação concluída pelo gerenciador responsável."
             elif title == "Limpar cache do APT":
                 summary = "Cache de pacotes limpo."
             else:
@@ -617,7 +633,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 )
             elif on_success:
                 on_success()
-            if title in update_operations:
+            if title in application_operation_titles:
                 load_installed_apps(force=True)
 
         def run_maintenance(
@@ -960,8 +976,8 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
         inventory_error_label = ttk.Label(
             apps_card,
             textvariable=inventory_error,
-            foreground="#B42318",
-            background="#F5F7FA",
+            foreground=COLORS["error"],
+            background=COLORS["surface"],
             wraplength=460,
             justify="left",
         )
@@ -984,6 +1000,12 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 "Não gerenciados",
             ), width=22,
         ).pack(side="left")
+        category_filter = tk.StringVar(value="Todas as categorias")
+        category_picker = ttk.Combobox(
+            app_filters, textvariable=category_filter, state="readonly",
+            values=("Todas as categorias", "Sem categoria"), width=19,
+        )
+        category_picker.pack(side="left", padx=(8, 0))
         clear_filters_button = ttk.Button(
             app_filters,
             text="Limpar filtros",
@@ -992,6 +1014,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 app_search.set(""),
                 source_filter.set("Todas as origens"),
                 update_filter.set("Todos os estados"),
+                category_filter.set("Todas as categorias"),
             ),
         )
         clear_filters_button.pack(side="left", padx=(8, 0))
@@ -1009,9 +1032,11 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
         inventory_table = ttk.Treeview(
             inventory_table_frame,
             columns=("name", "version", "candidate", "status", "origin", "package"),
-            show="headings", height=12, style="Maintenance.Treeview",
+            show="tree headings", height=12, style="Maintenance.Treeview",
             selectmode="extended",
         )
+        inventory_table.heading("#0", text="Ícone")
+        inventory_table.column("#0", width=42, minwidth=34, stretch=False, anchor="center")
         for column, heading, width, minimum in (
             ("name", "Aplicativo", 190, 140),
             ("version", "Instalada", 120, 90),
@@ -1055,6 +1080,21 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
         inventory_store = InstalledAppInventoryStore(inventory_cache_path)
         cached_snapshot = inventory_store.load()
         installed_apps_inventory.extend(cached_snapshot["apps"])
+        category_value_options = ["Todas as categorias", "Sem categoria"]
+
+        def refresh_category_values():
+            categories = sorted({
+                category.strip()
+                for app in installed_apps_inventory
+                for category in str(app.get("categories", "")).replace(";", ",").split(",")
+                if category.strip()
+            }, key=str.casefold)
+            category_value_options[:] = ["Todas as categorias", "Sem categoria", *categories]
+            category_picker.configure(values=tuple(category_value_options))
+            if category_filter.get() not in category_value_options:
+                category_filter.set("Todas as categorias")
+
+        refresh_category_values()
         source_metadata = {"value": cached_snapshot["sources"]}
 
         def format_source_check_times(sources):
@@ -1094,11 +1134,48 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             style="Primary.TButton", state="disabled",
         )
         update_selected_button.pack(side="right")
+        update_all_apps_button = ttk.Button(
+            inventory_actions, text="Atualizar todos disponíveis",
+            style="Secondary.TButton", state="disabled",
+        )
+        update_all_apps_button.pack(side="right", padx=(0, 8))
+        open_selected_button = ttk.Button(
+            inventory_actions, text="Abrir", style="Secondary.TButton", state="disabled",
+        )
+        open_selected_button.pack(side="left", padx=(0, 6))
+        uninstall_selected_button = ttk.Button(
+            inventory_actions, text="Desinstalar…", style="Secondary.TButton", state="disabled",
+        )
+        uninstall_selected_button.pack(side="left")
+        app_icon_cache = {}
+        checked_icon_names = set()
+
+        def app_icon_image(app):
+            icon_name = app.get("icon", "")
+            if not icon_name or icon_name in checked_icon_names:
+                return app_icon_cache.get(icon_name)
+            if len(checked_icon_names) >= 128:
+                return None
+            checked_icon_names.add(icon_name)
+            path = resolve_icon_path(app)
+            if path is None:
+                return None
+            try:
+                from PIL import Image, ImageTk
+                with Image.open(path) as image:
+                    image = image.convert("RGBA")
+                    image.thumbnail((24, 24), Image.Resampling.LANCZOS)
+                    icon = ImageTk.PhotoImage(image, master=inventory_table)
+                app_icon_cache[icon_name] = icon
+                return icon
+            except (OSError, ValueError, tk.TclError):
+                return None
 
         def render_installed_apps(*_args):
             query = app_search.get().strip().casefold()
             selected_source = source_filter.get()
             selected_status = update_filter.get()
+            selected_category = category_filter.get()
             for item_id in inventory_table.get_children():
                 inventory_table.delete(item_id)
             app_by_item.clear()
@@ -1109,6 +1186,10 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                         (
                             app["name"], app["version"], app["candidate_version"],
                             app["update_status"], app["origin"], app["package"],
+                            app.get("description", ""),
+                            app.get("categories", ""),
+                            app.get("location", ""),
+                            app.get("desktop_file", ""),
                         )
                     ).casefold())
                     and (
@@ -1126,6 +1207,14 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                         or (selected_status == "Não gerenciados"
                             and app["update_status"] == "Atualização não gerenciada")
                     )
+                    and (
+                        selected_category == "Todas as categorias"
+                        or (selected_category == "Sem categoria" and not app.get("categories"))
+                        or selected_category in {
+                            category.strip()
+                            for category in str(app.get("categories", "")).replace(";", ",").split(",")
+                        }
+                    )
                 )
             ]
             column = inventory_sort["column"]
@@ -1140,6 +1229,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             for app in rows:
                 item_id = inventory_table.insert(
                     "", "end",
+                    image=app_icon_image(app),
                     values=(
                         app["name"], app["version"], app["candidate_version"],
                         app["update_status"], app["origin"], app["package"],
@@ -1218,17 +1308,68 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 state="normal" if eligible else "disabled",
                 text=f"Atualizar selecionados ({len(eligible)})",
             )
+            available = [
+                app for app in installed_apps_inventory
+                if app["update_status"] == "Atualização disponível"
+                and app["source"] in ("APT/DEB", "Flatpak", "Snap")
+                and app["package"] != "—"
+            ]
+            update_all_apps_button.configure(
+                state="normal" if available and not self.system_maintenance_active else "disabled",
+                text=f"Atualizar todos disponíveis ({len(available)})",
+            )
+            can_open = len(selected_apps) == 1 and (
+                selected_apps[0]["source"] == "AppImage"
+                or selected_apps[0].get("shortcut_state") == "available"
+            )
+            open_selected_button.configure(state="normal" if can_open else "disabled")
+            managed = len(selected_apps) == 1 and selected_apps[0]["source"] in (
+                "APT/DEB", "Flatpak", "Snap",
+            ) and selected_apps[0]["package"] != "—"
+            can_review_manual = len(selected_apps) == 1 and selected_apps[0]["source"] in (
+                "AppImage", "Manual/outro",
+            )
+            uninstall_selected_button.configure(
+                state="normal" if (managed or can_review_manual) and not self.system_maintenance_active else "disabled",
+                text="Desinstalar…" if managed else "Revisar remoção",
+            )
             if not selected_apps:
                 selected_app_details.set(
                     "Selecione um aplicativo para ver suas versões e detalhes."
                 )
             elif len(selected_apps) == 1:
                 app = selected_apps[0]
-                selected_app_details.set(
-                    f"{app['name']}  ·  instalada: {app['version']}  ·  "
-                    f"disponível: {app['candidate_version']}  ·  "
-                    f"{app['origin']}  ·  {app['update_status']}"
+                location = display_location(app)
+                categories = app.get("categories", "") or "Não informada"
+                description = app.get("description") or "Sem descrição fornecida pelo aplicativo."
+                shortcut = {
+                    "available": "disponível", "broken": "quebrado", "absent": "ausente",
+                }.get(app.get("shortcut_state"), "não identificado")
+                details = (
+                    f"{app['name']}\n{description}\n"
+                    f"Instalada: {app['version']} · disponível: {app['candidate_version']}\n"
+                    f"Origem: {app['origin']} · categoria: {categories}\n"
+                    f"Estado: {app['update_status']} · atalho: {shortcut}"
                 )
+                if app.get("desktop_file") and not app["desktop_file"].startswith("appstream:"):
+                    details += f" · arquivo: {app['desktop_file']}"
+                details += f"\nExecutável/localização: {location}"
+                if app["source"] == "AppImage":
+                    try:
+                        path = Path(app["package"])
+                        if path.is_file() and not path.is_symlink():
+                            details += f" · arquivo {format_bytes(path.stat().st_size)}"
+                    except OSError:
+                        pass
+                duplicate_sources = sorted({
+                    other["origin"] for other in installed_apps_inventory
+                    if other is not app and other["name"].casefold() == app["name"].casefold()
+                }, key=str.casefold)
+                if duplicate_sources:
+                    details += "\nPossível duplicata com: " + ", ".join(duplicate_sources)
+                if app["source"] in ("APT/DEB", "Flatpak", "Snap"):
+                    details += "\nTamanho instalado: não consultado nesta versão."
+                selected_app_details.set(details)
             else:
                 selected_app_details.set(
                     f"{len(selected_apps)} aplicativos selecionados; "
@@ -1238,6 +1379,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
         app_search.trace_add("write", render_installed_apps)
         source_filter.trace_add("write", render_installed_apps)
         update_filter.trace_add("write", render_installed_apps)
+        category_filter.trace_add("write", render_installed_apps)
         inventory_table.bind("<<TreeviewSelect>>", update_selection_details)
         refresh_apps_button = ttk.Button(
             apps_controls, text="Recarregar lista", style="Secondary.TButton",
@@ -1249,8 +1391,8 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
         inventory_horizontal_scroll.pack(side="bottom", fill="x")
 
         history_card = card(
-            computer_content, "Histórico de atualizações",
-            "Registro local das últimas operações iniciadas pela Nova.",
+            computer_content, "Histórico de operações",
+            "Atualizações e remoções iniciadas pela Nova; dados pessoais não são registrados.",
         )
         history_table = ttk.Treeview(
             history_card, columns=("when", "apps", "result"),
@@ -1295,6 +1437,29 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 "when": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M"),
                 "apps": ", ".join(names)[:240],
                 "result": "Concluída" if not error else "Com pendências",
+            }
+            history = self.settings.get("application_update_history", [])
+            if not isinstance(history, list):
+                history = []
+            updated = dict(self.settings)
+            updated["application_update_history"] = [event, *history[:19]]
+            if not save_settings(updated, getattr(self, "settings_path", None)):
+                return False
+            self.settings = updated
+            render_update_history()
+            return True
+
+        def record_application_operation(operation, expected_packages, error):
+            names = sorted({
+                str(package[0]).removeprefix("Flatpak · ").removeprefix("Snap · ")
+                for package in expected_packages if package
+            }, key=str.casefold)
+            if not names:
+                names = ["Aplicativos selecionados"]
+            event = {
+                "when": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M"),
+                "apps": f"{operation}: {', '.join(names)}"[:240],
+                "result": "Concluída" if not error else "Com falhas",
             }
             history = self.settings.get("application_update_history", [])
             if not isinstance(history, list):
@@ -1494,6 +1659,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                         installed_apps_inventory[:] = (
                             saved_snapshot["apps"] if saved_snapshot else inventory
                         )
+                        refresh_category_values()
                         if saved_snapshot:
                             source_metadata["value"] = saved_snapshot["sources"]
                             verified_at["value"] = format_source_check_times(
@@ -1546,25 +1712,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             ]
 
             def start_selected_updates():
-                apt_packages = [
-                    app["package"] for app in selected_apps
-                    if app["source"] == "APT/DEB"
-                ]
-                flatpak_apps = [
-                    app["package"] for app in selected_apps
-                    if app["source"] == "Flatpak"
-                ]
-                snap_packages = [
-                    app["package"] for app in selected_apps
-                    if app["source"] == "Snap"
-                ]
-                commands = []
-                if apt_packages:
-                    commands.append(apt_upgrade_command(apt_packages))
-                if flatpak_apps:
-                    commands.append(flatpak_upgrade_command(flatpak_apps))
-                if snap_packages:
-                    commands.append(snap_upgrade_command(snap_packages))
+                commands = build_update_all_commands(selected_apps)
                 commands.append(["apt", "list", "--upgradable"])
                 if shutil.which("flatpak"):
                     commands.extend([
@@ -1592,6 +1740,197 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             )
 
         update_selected_button.configure(command=update_inventory_selection)
+
+        def update_all_available_apps():
+            apps = [
+                app for app in installed_apps_inventory
+                if app["update_status"] == "Atualização disponível"
+                and app["source"] in ("APT/DEB", "Flatpak", "Snap")
+                and app["package"] != "—"
+            ]
+            if not apps or self.system_maintenance_active:
+                return
+            packages = [
+                (app["package"], app["version"], app["candidate_version"])
+                for app in apps
+            ]
+
+            def start_updates():
+                try:
+                    commands = build_update_all_commands(apps)
+                except ValueError as exc:
+                    messagebox.showerror("Atualização indisponível", str(exc), parent=window)
+                    return
+                commands.append(["apt", "list", "--upgradable"])
+                if shutil.which("flatpak"):
+                    commands.extend([
+                        ["flatpak", "remote-ls", "--updates", "--columns=ref,version,commit"],
+                        ["flatpak", "list", "--columns=ref,version,active"],
+                    ])
+                if shutil.which("snap"):
+                    commands.extend([["snap", "refresh", "--list"], ["snap", "list"]])
+                run_maintenance(
+                    "Atualizar aplicativos selecionados", commands,
+                    expected_packages=packages,
+                )
+
+            show_package_review(
+                "Confirmar atualização dos aplicativos",
+                "A Nova atualizará somente estes aplicativos pelos gerenciadores de origem. "
+                "Dependências necessárias podem ser atualizadas pelo próprio gerenciador.",
+                packages, "Atualizar todos", start_updates,
+            )
+
+        update_all_apps_button.configure(command=update_all_available_apps)
+
+        def open_selected_application():
+            selected = [
+                app_by_item[item_id] for item_id in inventory_table.selection()
+                if item_id in app_by_item
+            ]
+            if len(selected) != 1:
+                return
+            app = selected[0]
+            try:
+                self._authorize_core_action("system.app.launch", confirmed=True)
+                self.permission_manager.require(
+                    "nova.core", "system.app.launch", confirmed=True,
+                )
+            except (PermissionError, OSError) as exc:
+                messagebox.showerror("Permissão necessária", str(exc), parent=window)
+                return
+            computer_status.set(f"Abrindo {app['name']}…")
+
+            def worker():
+                try:
+                    self.permission_manager.require(
+                        "nova.core", "system.app.launch", confirmed=True,
+                    )
+                    open_installed_application(
+                        app, env=self._child_process_env(),
+                    )
+                    result = None
+                except Exception as exc:
+                    result = f"Não foi possível abrir {app['name']}: {type(exc).__name__}."
+
+                def finish_open():
+                    try:
+                        if not window.winfo_exists():
+                            return
+                    except tk.TclError:
+                        return
+                    if result:
+                        computer_status_label.configure(style="ComputerStatusError.TLabel")
+                        computer_status.set(result)
+                    else:
+                        computer_status_label.configure(style="ComputerStatus.TLabel")
+                        computer_status.set(f"Abertura de {app['name']} solicitada.")
+
+                self.post_ui_callback(finish_open)
+
+            try:
+                threading.Thread(target=worker, name="nova-open-installed-app", daemon=True).start()
+            except (OSError, RuntimeError) as exc:
+                computer_status.set(f"Não foi possível iniciar a abertura: {exc}")
+
+        open_selected_button.configure(command=open_selected_application)
+
+        def request_uninstall_selected():
+            selected = [
+                app_by_item[item_id] for item_id in inventory_table.selection()
+                if item_id in app_by_item
+            ]
+            if len(selected) != 1:
+                return
+            app = selected[0]
+            if app["source"] not in ("APT/DEB", "Flatpak", "Snap"):
+                shortcut = app.get("desktop_file") or "Nenhum atalho identificado"
+                location = display_location(app)
+                messagebox.showinfo(
+                    "Revisar remoção manual",
+                    f"Origem: {app['source']}\nLocalização: {location}\nAtalho: {shortcut}\n\n"
+                    "Os dados associados não podem ser identificados com segurança. "
+                    "A Nova não apagará o executável, atalho nem configurações automaticamente. "
+                    "Faça a remoção manual após revisar esses locais; nenhum arquivo será alterado agora.",
+                    parent=window,
+                )
+                return
+            try:
+                self._authorize_core_action("system.maintenance.read")
+                self.permission_manager.require("nova.core", "system.maintenance.read")
+            except (PermissionError, OSError) as exc:
+                messagebox.showerror("Permissão necessária", str(exc), parent=window)
+                return
+            if self.system_maintenance_active:
+                messagebox.showinfo("Manutenção em andamento", "Aguarde a ação atual terminar.", parent=window)
+                return
+            self.system_maintenance_active = True
+            computer_status.set(f"Preparando prévia de remoção para {app['name']}…")
+            for button in maintenance_buttons:
+                button.configure(state="disabled")
+
+            def worker():
+                try:
+                    self.permission_manager.require("nova.core", "system.maintenance.read")
+                    preview = preview_uninstall(
+                        app, env={**self._child_process_env(), "LC_ALL": "C"},
+                    )
+                    error = None
+                except Exception as exc:
+                    preview = None
+                    error = f"Não foi possível simular a remoção ({type(exc).__name__}): {exc}"
+                finally:
+                    self.system_maintenance_active = False
+
+                def finish_preview():
+                    try:
+                        if not window.winfo_exists():
+                            return
+                    except tk.TclError:
+                        return
+                    for button in maintenance_buttons:
+                        button.configure(state="normal")
+                    if error:
+                        computer_status_label.configure(style="ComputerStatusError.TLabel")
+                        computer_status.set(error)
+                        return
+                    removal_rows = [
+                        (name, "Instalado", "Será removido")
+                        for name in preview["packages"]
+                    ]
+                    if not removal_rows:
+                        removal_rows = [(app["package"], app["version"], "Será removido")]
+                    expected = [(app["package"], app["version"], app["candidate_version"])]
+
+                    def confirm_removal():
+                        try:
+                            command = build_uninstall_command(app)
+                        except ValueError as exc:
+                            messagebox.showerror("Remoção indisponível", str(exc), parent=window)
+                            return
+                        run_maintenance(
+                            "Desinstalar aplicativo", [command],
+                            expected_packages=expected,
+                        )
+
+                    show_package_review(
+                        f"Confirmar remoção · {app['name']}",
+                        f"Origem: {preview['manager']}. {preview['personal_data']} "
+                        f"{preview['details'][:500]}",
+                        removal_rows, "Desinstalar aplicativo", confirm_removal,
+                    )
+
+                self.post_ui_callback(finish_preview)
+
+            try:
+                threading.Thread(target=worker, name="nova-preview-app-removal", daemon=True).start()
+            except (OSError, RuntimeError) as exc:
+                self.system_maintenance_active = False
+                for button in maintenance_buttons:
+                    button.configure(state="normal")
+                computer_status.set(f"Não foi possível iniciar a prévia: {exc}")
+
+        uninstall_selected_button.configure(command=request_uninstall_selected)
 
         def preview_autoremove():
             try:

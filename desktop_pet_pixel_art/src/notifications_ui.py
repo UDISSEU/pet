@@ -59,7 +59,7 @@ class NotificationsUIMixin:
         list_card = tk.Frame(body, bg=COLORS["surface"], padx=7, pady=7,
                              highlightbackground=COLORS["border"], highlightthickness=1)
         listing = tk.Listbox(list_card, activestyle="none", bg=COLORS["surface"], fg=COLORS["ink"],
-                             selectbackground="#DCE9FA", selectforeground=COLORS["ink"],
+                             selectbackground=COLORS["surface_elevated"], selectforeground=COLORS["ink"],
                              relief="flat", borderwidth=0, font=("TkDefaultFont", 10),
                              highlightthickness=0, selectmode="browse")
         listing.pack(fill="both", expand=True)

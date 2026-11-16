@@ -2,6 +2,8 @@
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -11,7 +13,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 from computer_maintenance import (
-    analyze_cleanup, collect_logs, delete_cleanup_items, inspect_disks,
+    _QueryCancelled, _run_cancellable_command, analyze_cleanup, collect_logs,
+    delete_cleanup_items, inspect_disks,
 )
 
 
@@ -33,6 +36,61 @@ class DiskHealthTests(unittest.TestCase):
         self.assertEqual(result["devices"][0]["smart_state"], "indisponível")
         self.assertIn("Permissão adicional necessária", result["devices"][0]["detail"])
         self.assertIsNone(result["devices"][0]["temperature_c"])
+
+    def test_smartctl_exit_bits_distinguish_failure_from_query_errors(self):
+        inventory = json.dumps({"blockdevices": [{
+            "name": "sda", "path": "/dev/sda", "type": "disk", "size": 1000,
+        }]})
+        expected = {
+            0: "saudável", 0x01: "indisponível", 0x02: "indisponível",
+            0x04: "indisponível", 0x08: "crítico", 0x10: "crítico",
+            0x20: "atenção", 0x40: "atenção", 0x80: "atenção",
+        }
+        for code, state in expected.items():
+            with self.subTest(exit_status=code):
+                responses = [
+                    SimpleNamespace(returncode=0, stdout=inventory, stderr=""),
+                    SimpleNamespace(returncode=code,
+                                    stdout=json.dumps({"smart_status": {"passed": True}}),
+                                    stderr=""),
+                ]
+                with mock.patch("computer_maintenance._valid_block_path", return_value=True):
+                    result = inspect_disks(
+                        run=mock.Mock(side_effect=responses),
+                        which=lambda name: "/usr/bin/" + name,
+                    )
+                self.assertEqual(result["devices"][0]["smart_state"], state)
+
+    def test_cancellable_smart_command_terminates_its_child(self):
+        cancellation = threading.Event()
+        spawned = []
+        started = threading.Event()
+        actual_popen = subprocess.Popen
+
+        def capture(*args, **kwargs):
+            process = actual_popen(*args, **kwargs)
+            spawned.append(process)
+            started.set()
+            return process
+
+        outcome = []
+        def run_query():
+            try:
+                _run_cancellable_command(
+                    [sys.executable, "-c", "import time; time.sleep(10)"],
+                    timeout=15, cancel_event=cancellation, popen=capture,
+                )
+            except Exception as exc:
+                outcome.append(exc)
+
+        worker = threading.Thread(target=run_query)
+        worker.start()
+        self.assertTrue(started.wait(2))
+        cancellation.set()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertIsInstance(outcome[0], _QueryCancelled)
+        self.assertIsNotNone(spawned[0].poll())
 
 
 class LogCenterTests(unittest.TestCase):

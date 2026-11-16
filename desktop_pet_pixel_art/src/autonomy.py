@@ -476,6 +476,12 @@ def find_installed_apps(search="", directories=None):
                 continue
             command = shlex.join(argv)
             generic_name = entry.get("GenericName", "").strip()
+            description = entry.get("Comment", "").strip()
+            icon = entry.get("Icon", "").strip()
+            categories = [
+                value for value in entry.get("Categories", "").split(";")
+                if value
+            ]
             searchable = f"{name} {generic_name}".casefold()
             if needle and needle not in searchable:
                 continue
@@ -483,6 +489,9 @@ def find_installed_apps(search="", directories=None):
                 "name": name,
                 "command": command,
                 "generic_name": generic_name,
+                "description": description,
+                "icon": icon,
+                "categories": categories,
                 "desktop_file": str(desktop_file),
                 "shortcut_state": (
                     "available" if _command_executable(command) else "broken"
@@ -529,6 +538,9 @@ def find_installed_appimages(directories=None):
                     "name": name,
                     "command": resolved,
                     "generic_name": "AppImage",
+                    "description": "AppImage local; a origem e atualizações dependem do fornecedor.",
+                    "icon": "",
+                    "categories": [],
                     "desktop_file": "",
                     "package": resolved,
                     "source": "AppImage",

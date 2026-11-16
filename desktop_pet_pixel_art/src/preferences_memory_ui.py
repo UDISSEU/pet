@@ -12,6 +12,7 @@ from nova_ai.memory.errors import (
 )
 from ollama_client import save_history
 from preferences_common_ui import setup_list
+from ui_theme import COLORS
 
 
 class MemoryPreferencesTabMixin:
@@ -172,6 +173,12 @@ class MemoryPreferencesTabMixin:
             ),
         ).pack(anchor="w", pady=(0, 8))
         memory_entry = tk.StringVar()
+        memory_search = tk.StringVar()
+        memory_search_row = ttk.Frame(memory_content, style="Autonomy.TFrame")
+        memory_search_row.pack(fill="x", pady=(0, 7))
+        ttk.Label(memory_search_row, text="Explorar memórias", style="Hint.TLabel").pack(side="left", padx=(0, 8))
+        memory_search_entry = ttk.Entry(memory_search_row, textvariable=memory_search, style="Autonomy.TEntry")
+        memory_search_entry.pack(side="left", fill="x", expand=True, ipady=4)
         memory_form = ttk.Frame(memory_card, style="Card.TFrame")
         memory_form.pack(fill="x")
         memory_input = ttk.Entry(memory_form, textvariable=memory_entry, style="Autonomy.TEntry")
@@ -180,6 +187,29 @@ class MemoryPreferencesTabMixin:
             memory_content, memory_items, lambda item: item,
             "Suas memórias ficam neste computador e você pode removê-las quando quiser.",
         )
+        visible_memory_indices = []
+
+        def render_memories(*_args):
+            needle = memory_search.get().casefold().strip()
+            memory_list.delete(0, "end")
+            visible_memory_indices.clear()
+            for source_index, memory in enumerate(memory_items):
+                text = str(memory)
+                if needle and needle not in text.casefold():
+                    continue
+                visible_memory_indices.append(source_index)
+                memory_list.insert("end", text)
+
+        def remove_visible_memory():
+            selection = memory_list.curselection()
+            if not selection:
+                return
+            del memory_items[visible_memory_indices[selection[0]]]
+            render_memories()
+
+        memory_search.trace_add("write", render_memories)
+        render_memories()
+        memory_list.bind("<<ListboxSelect>>", lambda _event: None)
         memory_add_button = None
         memory_remove_button = None
 
@@ -188,7 +218,7 @@ class MemoryPreferencesTabMixin:
             if value:
                 memory_items.append(value)
                 memory_entry.set("")
-                refresh_memories()
+                render_memories()
 
         def set_memory_controls(enabled):
             state = "normal" if enabled else "disabled"
@@ -209,7 +239,7 @@ class MemoryPreferencesTabMixin:
         memory_input.bind("<Return>", lambda _event: add_memory())
         memory_remove_button = ttk.Button(
             memory_content, text="Remover selecionada", style="Secondary.TButton",
-            command=remove_memory,
+            command=remove_visible_memory,
         )
         memory_remove_button.pack(anchor="e", pady=(10, 0))
         if profile_manager is not None:
@@ -224,20 +254,40 @@ class MemoryPreferencesTabMixin:
                 "quando você confirmar ao clicar em Guardar.",
             )
             structured_memories = []
+            visible_structured_memories = []
+            structured_filter = tk.StringVar(value="Todas as categorias")
+            structured_search = tk.StringVar()
             structured_status = tk.StringVar(value="")
             ttk.Label(
                 structured_card, textvariable=structured_status, style="Hint.TLabel",
             ).pack(anchor="w", pady=(6, 0))
 
-            def refresh_structured_memories():
+            structured_toolbar = ttk.Frame(structured_card, style="Card.TFrame")
+            structured_toolbar.pack(fill="x", pady=(8, 0))
+            ttk.Entry(structured_toolbar, textvariable=structured_search, style="Autonomy.TEntry").pack(side="left", fill="x", expand=True, ipady=4)
+            structured_category_filter = ttk.Combobox(
+                structured_toolbar, textvariable=structured_filter, state="readonly",
+                values=("Todas as categorias", "profile", "preference", "project", "episodic", "semantic", "procedural", "conversation", "learning"),
+                width=19,
+            )
+            structured_category_filter.pack(side="left", padx=(8, 0))
+
+            def refresh_structured_memories(*, reload=True):
                 structured_list.delete(0, "end")
-                try:
-                    structured_memories[:] = integration.memory.search("", limit=100)
-                except MemoryStorageError as exc:
-                    structured_memories.clear()
-                    structured_status.set(f"Erro ao ler memórias: {exc}")
-                    return
-                for memory in structured_memories:
+                if reload:
+                    try:
+                        structured_memories[:] = integration.memory.search("", limit=100)
+                    except MemoryStorageError as exc:
+                        structured_memories.clear()
+                        structured_status.set(f"Erro ao ler memórias: {exc}")
+                        return
+                needle = structured_search.get().casefold().strip()
+                category = structured_filter.get()
+                visible = [memory for memory in structured_memories
+                           if (category == "Todas as categorias" or memory.kind.value == category)
+                           and (not needle or needle in memory.content.casefold())]
+                visible_structured_memories[:] = visible
+                for memory in visible:
                     provenance_label = {
                         "user_provided": "confirmada pelo usuário",
                         "inference": "inferência",
@@ -250,8 +300,11 @@ class MemoryPreferencesTabMixin:
                         f"confiança {memory.confidence:.0%}] {memory.content}",
                     )
                 structured_status.set(
-                    f"{len(structured_memories)} memória(s) neste perfil."
+                    f"{len(visible)} de {len(structured_memories)} memória(s) neste perfil."
                 )
+
+            structured_search.trace_add("write", lambda *_args: refresh_structured_memories(reload=False))
+            structured_category_filter.bind("<<ComboboxSelected>>", lambda _event: refresh_structured_memories(reload=False))
 
             kind_row = ttk.Frame(structured_card, style="Card.TFrame")
             kind_row.pack(fill="x", pady=(8, 4))
@@ -323,7 +376,7 @@ class MemoryPreferencesTabMixin:
 
             def selected_structured_memory():
                 selected = structured_list.curselection()
-                return structured_memories[selected[0]] if selected else None
+                return visible_structured_memories[selected[0]] if selected else None
 
             def edit_structured_memory():
                 memory = selected_structured_memory()
@@ -418,12 +471,22 @@ class MemoryPreferencesTabMixin:
         ).pack(anchor="w", pady=(0, 8))
         history_status = tk.StringVar(value="")
         ttk.Label(history_card, textvariable=history_status, style="Hint.TLabel").pack(anchor="w")
+        history_filters = ttk.Frame(history_card, style="Card.TFrame")
+        history_filters.pack(fill="x", pady=(8, 4))
+        history_query = tk.StringVar()
+        history_role = tk.StringVar(value="Todas as pessoas")
+        ttk.Entry(history_filters, textvariable=history_query, style="Autonomy.TEntry").pack(side="left", fill="x", expand=True, ipady=4)
+        history_role_picker = ttk.Combobox(
+            history_filters, textvariable=history_role, state="readonly",
+            values=("Todas as pessoas", "Você", "Nova"), width=18,
+        )
+        history_role_picker.pack(side="left", padx=(8, 0))
         history_list_frame = ttk.Frame(history_content, style="Card.TFrame", padding=4)
         history_list_frame.pack(fill="both", expand=True, pady=(0, 10))
         history_view = tk.Text(
             history_list_frame, height=10, wrap="word", relief="flat", bd=0,
             padx=10, pady=8, spacing1=2, spacing3=5,
-            bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 9),
+            bg=COLORS["surface"], fg=COLORS["ink"], font=("TkDefaultFont", 9),
             cursor="arrow", takefocus=True,
         )
         history_scrollbar = ttk.Scrollbar(
@@ -433,9 +496,9 @@ class MemoryPreferencesTabMixin:
         history_view.pack(side="left", fill="both", expand=True)
         history_scrollbar.pack(side="right", fill="y")
         history_view.tag_configure(
-            "history_header", foreground="#26344A", font=("TkDefaultFont", 9, "bold"),
+            "history_header", foreground=COLORS["cyan"], font=("TkDefaultFont", 9, "bold"),
         )
-        history_view.tag_configure("history_selected", background="#DFE6FA")
+        history_view.tag_configure("history_selected", background=COLORS["surface_elevated"])
         history_entries = []
         selected_history = {"index": None}
 
@@ -459,7 +522,7 @@ class MemoryPreferencesTabMixin:
         history_detail_frame.pack(fill="x", pady=(0, 10))
         history_detail = tk.Text(
             history_detail_frame, height=5, wrap="word", relief="flat", bd=0,
-            bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 9),
+            bg=COLORS["surface"], fg=COLORS["ink"], font=("TkDefaultFont", 9),
         )
         history_detail_scrollbar = ttk.Scrollbar(
             history_detail_frame, orient="vertical", command=history_detail.yview,
@@ -522,10 +585,14 @@ class MemoryPreferencesTabMixin:
                 except (TypeError, ValueError):
                     when = "Sem data/hora"
                 who = "Você" if item.get("role") == "user" else "Nova"
+                if history_role.get() != "Todas as pessoas" and who != history_role.get():
+                    continue
                 message = item.get("content", "")
                 if not isinstance(message, str):
                     message = str(message)
                 message = message.strip() or "(mensagem vazia)"
+                if history_query.get().casefold().strip() not in f"{who} {when} {message}".casefold():
+                    continue
                 start = history_view.index("end-1c")
                 first_line = int(start.split(".")[0])
                 history_view.insert("end", f"{who} · {when}\n", "history_header")
@@ -538,7 +605,7 @@ class MemoryPreferencesTabMixin:
             profile = getattr(self, "profile_manager", None)
             profile_name = profile.active_profile.name if profile else "principal"
             history_status.set(
-                f"{len(self.history)} mensagem(ns) no perfil {profile_name}; "
+                f"{len(history_entries)} de {len(self.history)} mensagem(ns) · perfil {profile_name}; "
                 + (
                     "salvamento ativado."
                     if history_enabled.get() else "novas mensagens não serão salvas."
@@ -592,4 +659,6 @@ class MemoryPreferencesTabMixin:
             command=clear_conversation_history,
         ).pack(side="right")
         history_refresh_callback["callback"] = refresh_history
+        history_query.trace_add("write", lambda *_args: refresh_history())
+        history_role_picker.bind("<<ComboboxSelected>>", lambda _event: refresh_history())
         refresh_history()

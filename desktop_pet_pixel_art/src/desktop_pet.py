@@ -128,6 +128,7 @@ from device_controller import DeviceControllerMixin
 from speech_controller import SpeechControllerMixin
 from window_controller import WindowControllerMixin
 from desktop_pet_ui import DesktopPetUIMixin
+from ui_theme import COLORS, apply_theme, make_aurora_mark
 from event_bus import Event, EventBus, EventType
 from state_manager import StateManager
 from plugin_manager import PluginManager
@@ -237,6 +238,7 @@ class DesktopPet(
         self.shape_supported = None
 
         self.root = tk.Tk()
+        apply_theme(self.root)
         self._window_icon = None
         try:
             with Image.open(PROJECT_ROOT / "launchers" / "nova-icon.png") as icon:
@@ -865,6 +867,7 @@ class DesktopPet(
     def _confirm_automation_plan(self, operations, *, title="Prévia · Organizar Downloads"):
         dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
         dialog.title(title)
+        dialog.configure(bg=COLORS["background"])
         dialog.transient(self.root)
         dialog.attributes("-topmost", True)
         dialog.resizable(True, True)
@@ -880,7 +883,7 @@ class DesktopPet(
         ttk.Label(outer, text=description, style="Subtitle.TLabel", wraplength=max(240, width - 40)).pack(anchor="w", pady=(4, 9))
         list_card = ttk.Frame(outer, style="Card.TFrame", padding=5)
         list_card.pack(fill="both", expand=True)
-        listing = tk.Text(list_card, height=12, wrap="word", relief="flat", bd=0, padx=8, pady=7, bg="#F5F7FA", fg="#26344A", insertbackground="#26344A", font="TkDefaultFont", state="normal")
+        listing = tk.Text(list_card, height=12, wrap="word", relief="flat", bd=0, padx=8, pady=7, bg=COLORS["surface"], fg=COLORS["ink"], insertbackground=COLORS["ink"], font="TkDefaultFont", state="normal")
         scrollbar = ttk.Scrollbar(list_card, orient="vertical", command=listing.yview)
         listing.configure(yscrollcommand=scrollbar.set)
         listing.pack(side="left", fill="both", expand=True)
@@ -1397,6 +1400,7 @@ class DesktopPet(
         dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
         self._automation_detail_window = dialog
         dialog.title(result.get("title", "Resultado da automação"))
+        dialog.configure(bg=COLORS["background"])
         dialog.transient(self.root)
         dialog.attributes("-topmost", True)
         dialog.resizable(True, True)
@@ -1407,7 +1411,7 @@ class DesktopPet(
         ttk.Label(outer, text=result.get("title", "Resultado"), style="Title.TLabel", wraplength=max(240, width - 36)).pack(anchor="w", pady=(0, 8))
         card = ttk.Frame(outer, style="Card.TFrame", padding=5)
         card.pack(fill="both", expand=True)
-        content = tk.Text(card, height=12, wrap="word", relief="flat", bd=0, padx=8, pady=7, bg="#F5F7FA", fg="#26344A", font="TkDefaultFont")
+        content = tk.Text(card, height=12, wrap="word", relief="flat", bd=0, padx=8, pady=7, bg=COLORS["surface"], fg=COLORS["ink"], font="TkDefaultFont")
         scrollbar = ttk.Scrollbar(card, orient="vertical", command=content.yview)
         content.configure(yscrollcommand=scrollbar.set)
         content.pack(side="left", fill="both", expand=True)
@@ -1590,14 +1594,12 @@ class DesktopPet(
         dialog.transient(self.root)
         dialog.attributes("-topmost", True)
         dialog.resizable(False, False)
-        dialog.configure(bg="#E3E8F0")
+        dialog.configure(bg=COLORS["background"])
         style = ttk.Style(dialog)
-        style.configure("Autonomy.TFrame", background="#E3E8F0")
-        style.configure("Title.TLabel", background="#E3E8F0", foreground="#202B45", font=("TkDefaultFont", 14, "bold"))
-        style.configure("Subtitle.TLabel", background="#E3E8F0", foreground="#58667C", font=("TkDefaultFont", 9))
-        style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
-        style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
-        style.configure("Secondary.TButton", padding=(12, 8))
+        style.configure("Autonomy.TFrame", background=COLORS["background"])
+        style.configure("Title.TLabel", background=COLORS["background"], foreground=COLORS["ink"], font=("TkDefaultFont", 14, "bold"))
+        style.configure("Subtitle.TLabel", background=COLORS["background"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
+        style.configure("Autonomy.TEntry", fieldbackground=COLORS["surface_elevated"], foreground=COLORS["ink"], padding=4)
         frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=20)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Oi! Eu sou a Nova", style="Title.TLabel").pack(anchor="w")
@@ -1609,7 +1611,7 @@ class DesktopPet(
         name_entry = ttk.Entry(frame, textvariable=name, style="Autonomy.TEntry", width=36)
         name_entry.pack(fill="x", ipady=5)
         error = tk.StringVar()
-        ttk.Label(frame, textvariable=error, style="Hint.TLabel", foreground="#B42318").pack(anchor="w", pady=(5, 0))
+        ttk.Label(frame, textvariable=error, style="Hint.TLabel", foreground=COLORS["error"]).pack(anchor="w", pady=(5, 0))
         buttons = ttk.Frame(frame, style="Autonomy.TFrame")
         buttons.pack(fill="x", pady=(14, 0))
 
@@ -1923,6 +1925,7 @@ class DesktopPet(
     def _ask_question(self):
         dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
         dialog.title("Perguntar à Nova")
+        dialog.configure(bg=COLORS["background"])
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.attributes("-topmost", True)
@@ -1930,25 +1933,26 @@ class DesktopPet(
         dialog.geometry(f"{width}x{height}+{x}+{y}")
 
         result = {"question": None}
-        background = "#F3F5F9"
+        background = COLORS["background"]
         content = tk.Frame(dialog, bg=background, padx=18, pady=16)
         content.pack(fill="both", expand=True)
+        prompt_heading = tk.Frame(content, bg=background)
+        prompt_heading.pack(fill="x")
+        make_aurora_mark(prompt_heading, size=32, background=background).pack(
+            side="left", padx=(0, 10),
+        )
+        prompt_copy = tk.Frame(prompt_heading, bg=background)
+        prompt_copy.pack(side="left", fill="x", expand=True)
         tk.Label(
-            content,
-            text="Converse com a Nova",
-            font=("TkDefaultFont", 13, "bold"),
-            fg="#202B45",
-            bg=background,
+            prompt_copy, text="Converse com a Nova",
+            font=("TkDefaultFont", 13, "bold"), fg=COLORS["ink"], bg=background,
         ).pack(anchor="w")
         tk.Label(
-            content,
-            text="Escreva sua pergunta abaixo",
-            font=("TkDefaultFont", 9),
-            fg="#68738A",
-            bg=background,
+            prompt_copy, text="Escreva sua pergunta abaixo",
+            font=("TkDefaultFont", 9), fg=COLORS["muted"], bg=background,
         ).pack(anchor="w", pady=(3, 10))
 
-        editor_border = tk.Frame(content, bg="#D8DEEA", padx=1, pady=1)
+        editor_border = tk.Frame(content, bg=COLORS["border"], padx=1, pady=1)
         editor_border.pack(fill="both", expand=True)
         answer = tk.Text(
             editor_border,
@@ -1960,9 +1964,9 @@ class DesktopPet(
             padx=10,
             pady=8,
             font=("TkDefaultFont", 10),
-            fg="#202B45",
-            bg="#FFFFFF",
-            insertbackground="#5269C8",
+            fg=COLORS["ink"],
+            bg=COLORS["surface"],
+            insertbackground=COLORS["cyan"],
         )
         answer.pack(fill="both", expand=True)
 
@@ -1988,9 +1992,9 @@ class DesktopPet(
             bd=0,
             padx=12,
             pady=7,
-            fg="#536078",
+            fg=COLORS["muted"],
             bg=background,
-            activebackground="#E6EAF2",
+            activebackground=COLORS["surface_elevated"],
             cursor="hand2",
         ).pack(side="right")
         tk.Button(
@@ -2001,10 +2005,10 @@ class DesktopPet(
             bd=0,
             padx=16,
             pady=7,
-            fg="#FFFFFF",
-            bg="#5269C8",
-            activebackground="#4056B2",
-            activeforeground="#FFFFFF",
+            fg=COLORS["background"],
+            bg=COLORS["purple"],
+            activebackground=COLORS["focus"],
+            activeforeground=COLORS["background"],
             cursor="hand2",
         ).pack(side="right", padx=(0, 6))
         dialog.protocol("WM_DELETE_WINDOW", cancel)

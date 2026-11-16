@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from environment_check import check_environment, format_disk_space, format_memory
-from ui_theme import fit_window_to_screen, make_header
+from ui_theme import COLORS, fit_window_to_screen, make_header
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,7 @@ def open_diagnostics_window(
     window.title("Diagnóstico da Nova")
     window.transient(parent)
     fit_window_to_screen(window, 600, 570, min_width=500, min_height=420)
+    window.configure(bg=COLORS["background"])
     if on_open is not None:
         on_open(window)
 
@@ -113,6 +114,8 @@ def open_diagnostics_window(
     guidance.pack(fill="both", expand=True, pady=(12, 0))
     guidance_text_widget = tk.Text(
         guidance, wrap="word", height=12, relief="flat", state="disabled",
+        bg=COLORS["surface"], fg=COLORS["ink"], insertbackground=COLORS["cyan"],
+        padx=10, pady=8, borderwidth=0,
     )
     guidance_scrollbar = ttk.Scrollbar(
         guidance, orient="vertical", command=guidance_text_widget.yview,

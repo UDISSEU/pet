@@ -14,23 +14,67 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def inspect_disks(*, run=subprocess.run, which=shutil.which, timeout=8):
+class _QueryCancelled(Exception):
+    pass
+
+
+def _run_cancellable_command(args, *, timeout, cancel_event, popen=subprocess.Popen):
+    process = popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + timeout
+    while True:
+        if cancel_event.is_set():
+            process.terminate()
+            try:
+                process.communicate(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+            raise _QueryCancelled
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            process.kill()
+            process.communicate()
+            raise subprocess.TimeoutExpired(args, timeout)
+        try:
+            stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+            return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def inspect_disks(*, run=subprocess.run, which=shutil.which, timeout=8,
+                  cancel_event=None, popen=subprocess.Popen):
     """Read disk inventory with lsblk and SMART data when smartctl is available."""
+    if cancel_event is not None and cancel_event.is_set():
+        return {"state": "indisponível", "reason": "Consulta cancelada.",
+                "devices": [], "cancelled": True}
     lsblk = which("lsblk")
     if not lsblk:
         return {"state": "indisponível", "reason": "lsblk não está instalado.", "devices": []}
     try:
-        response = run([lsblk, "--json", "--bytes", "--nodeps", "-o",
-                        "NAME,PATH,TYPE,SIZE,MODEL,VENDOR,ROTA,TRAN"],
-                       capture_output=True, text=True, timeout=timeout, check=False)
+        args = [lsblk, "--json", "--bytes", "--nodeps", "-o",
+                "NAME,PATH,TYPE,SIZE,MODEL,VENDOR,ROTA,TRAN"]
+        if cancel_event is None:
+            response = run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        else:
+            response = _run_cancellable_command(
+                args, timeout=timeout, cancel_event=cancel_event, popen=popen,
+            )
         if response.returncode:
             return {"state": "indisponível", "reason": "Não foi possível listar os dispositivos.", "devices": []}
         raw = json.loads(response.stdout or "{}")
+    except _QueryCancelled:
+        return {"state": "indisponível", "reason": "Consulta cancelada.",
+                "devices": [], "cancelled": True}
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         return {"state": "indisponível", "reason": f"Inventário indisponível ({type(exc).__name__}).", "devices": []}
     smartctl = which("smartctl")
     devices = []
     for item in raw.get("blockdevices", ()):
+        if cancel_event is not None and cancel_event.is_set():
+            return {"state": "parcial" if devices else "indisponível",
+                    "reason": "Consulta cancelada.", "devices": devices,
+                    "cancelled": True}
         path = item.get("path")
         if item.get("type") not in ("disk", "rom") or not path or not _valid_block_path(path):
             continue
@@ -43,22 +87,33 @@ def inspect_disks(*, run=subprocess.run, which=shutil.which, timeout=8):
             device["detail"] = "smartctl não está instalado; estado SMART indisponível."
         else:
             try:
-                result = run([smartctl, "--json", "--all", path], capture_output=True,
-                             text=True, timeout=timeout, check=False)
+                args = [smartctl, "--json", "--all", path]
+                if cancel_event is None:
+                    result = run(args, capture_output=True, text=True, timeout=timeout, check=False)
+                else:
+                    result = _run_cancellable_command(
+                        args, timeout=timeout, cancel_event=cancel_event, popen=popen,
+                    )
                 payload = json.loads(result.stdout or "{}")
-                if result.returncode & 0x04:
-                    device["smart_state"] = "crítico"
-                    device["detail"] = "smartctl informou falha no estado geral SMART."
-                elif result.returncode & ~0x01:
-                    device["smart_state"] = "atenção"
-                    device["detail"] = "smartctl informou alertas; verifique permissões e atributos do dispositivo."
+                exit_status = int(result.returncode)
+                passed = payload.get("smart_status", {}).get("passed")
                 if payload.get("smart_support", {}).get("available") is False:
                     device["smart_state"] = "indisponível"
                     device["detail"] = "Este dispositivo não informa suporte SMART."
-                elif payload.get("smart_status", {}).get("passed") is False:
+                elif passed is False or exit_status & 0x18:
                     device["smart_state"] = "crítico"
                     device["indicators"].append("Autoteste/estado SMART reportou falha")
-                elif payload.get("smart_status", {}).get("passed") is True and device["smart_state"] == "indisponível":
+                    device["detail"] = "smartctl informou falha SMART ou atributo pré-falha."
+                elif exit_status & 0xE0:
+                    device["smart_state"] = "atenção"
+                    device["detail"] = "smartctl encontrou erros em atributos históricos ou nos logs SMART."
+                elif exit_status & 0x07:
+                    device["smart_state"] = "indisponível"
+                    if "permission" in (result.stderr or "").casefold():
+                        device["detail"] = "Permissão adicional necessária para ler SMART; nenhuma elevação foi solicitada."
+                    else:
+                        device["detail"] = "A consulta SMART falhou; não foi possível confirmar o estado do disco."
+                elif passed is True:
                     device["smart_state"] = "saudável"
                     device["detail"] = "SMART disponível; verificação geral aprovada."
                 temps = payload.get("temperature", {})
@@ -78,11 +133,13 @@ def inspect_disks(*, run=subprocess.run, which=shutil.which, timeout=8):
                     if nvme.get("critical_warning"):
                         device["indicators"].append(f"Aviso crítico NVMe: {nvme['critical_warning']}")
                         device["smart_state"] = "crítico"
-                if result.returncode and "permission" in (result.stderr or "").casefold():
-                    device["smart_state"] = "indisponível"
-                    device["detail"] = "Permissão adicional necessária para ler SMART; nenhuma elevação foi solicitada."
-                elif device["smart_state"] == "indisponível" and payload:
+                if device["smart_state"] == "indisponível" and payload and not (exit_status & 0x07):
                     device["detail"] = "SMART não confirmou estado geral."
+            except _QueryCancelled:
+                device["detail"] = "Consulta SMART cancelada."
+                devices.append(device)
+                return {"state": "parcial", "reason": "Consulta cancelada.",
+                        "devices": devices, "cancelled": True}
             except subprocess.TimeoutExpired:
                 device["detail"] = "Consulta SMART excedeu o tempo limite."
             except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:

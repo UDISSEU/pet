@@ -3,6 +3,7 @@
 import calendar
 from datetime import date
 import tkinter as tk
+from tkinter import ttk
 from ui_theme import COLORS, fit_window_to_screen, make_header
 
 MONTH_NAMES = (
@@ -50,8 +51,10 @@ def open_calendar_window(parent, *, on_back=None, on_open=None):
         shown_month.update(year=year, month=month)
         draw_month()
 
-    tk.Button(header, text="‹", width=3, command=lambda: shift_month(-1)).grid(row=0, column=0)
-    tk.Button(header, text="›", width=3, command=lambda: shift_month(1)).grid(row=0, column=2)
+    ttk.Button(header, text="‹", width=3, style="Nav.TButton",
+               command=lambda: shift_month(-1)).grid(row=0, column=0, padx=4)
+    ttk.Button(header, text="›", width=3, style="Nav.TButton",
+               command=lambda: shift_month(1)).grid(row=0, column=2, padx=4)
 
     def draw_month():
         month_title.configure(

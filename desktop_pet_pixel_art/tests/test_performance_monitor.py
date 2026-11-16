@@ -157,6 +157,26 @@ class MonitorLifecycleTests(unittest.TestCase):
             self.assertEqual(context["schema"], "nova-performance-context.v1")
             self.assertEqual(context["samples"], 1)
 
+    def test_stop_cancels_an_in_progress_smart_collection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            started = threading.Event()
+
+            def smart_collector(cancel_event):
+                started.set()
+                cancel_event.wait(5)
+                return {"devices": []}
+
+            monitor = PerformanceMonitor(
+                store=PerformanceStore(Path(temporary) / "history.sqlite3"),
+                settings_path=Path(temporary) / "settings.json",
+                smart_collector=smart_collector,
+            )
+            monitor._smart_checked_at = time.monotonic() - 6 * 3600 - 1
+            monitor.start()
+            self.assertTrue(started.wait(2))
+            monitor.stop(timeout=1)
+            self.assertFalse(monitor._thread.is_alive())
+
     def test_configurable_threshold_and_repeat_ranges_are_saved(self):
         with tempfile.TemporaryDirectory() as temporary:
             monitor = PerformanceMonitor(store=PerformanceStore(Path(temporary) / "db.sqlite3"),

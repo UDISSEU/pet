@@ -2,10 +2,11 @@
 
 import subprocess
 import tkinter as tk
+from datetime import datetime
 from tkinter import messagebox, ttk
 from autonomy import find_installed_apps, resolve_app_command, save_settings, valid_reminder_time
 from preferences_common_ui import setup_list
-from ui_theme import fit_window_to_screen
+from ui_theme import COLORS, fit_window_to_screen
 
 
 class AppsPreferencesTabMixin:
@@ -26,6 +27,7 @@ class AppsPreferencesTabMixin:
         reminder_date = tk.StringVar()
         reminder_time = tk.StringVar()
         reminder_text = tk.StringVar()
+        editing_reminder = {"index": None}
         ttk.Label(reminder_form, text="Data").grid(row=0, column=0, sticky="w")
         ttk.Entry(reminder_form, textvariable=reminder_date, width=14, style="Autonomy.TEntry").grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(3, 8), ipady=4)
         ttk.Label(reminder_form, text="Hora").grid(row=0, column=1, sticky="w")
@@ -33,11 +35,77 @@ class AppsPreferencesTabMixin:
         ttk.Label(reminder_form, text="Lembrete").grid(row=0, column=2, sticky="w")
         ttk.Entry(reminder_form, textvariable=reminder_text, style="Autonomy.TEntry").grid(row=1, column=2, sticky="ew", pady=(3, 8), ipady=4)
         reminder_form.columnconfigure(2, weight=1)
-        reminder_list, refresh_reminders, remove_reminder = setup_list(
-            reminder_content, reminder_items,
-            lambda item: f"{item.get('at', '')[:16].replace('T', ' ')}   ·   {item.get('text', '')}",
+        reminder_status_filter = tk.StringVar(value="Todos")
+        reminder_toolbar = ttk.Frame(reminder_content, style="Autonomy.TFrame")
+        reminder_toolbar.pack(fill="x", pady=(0, 7))
+        ttk.Label(reminder_toolbar, text="Exibir", style="Hint.TLabel").pack(side="left", padx=(0, 8))
+        reminder_filter = ttk.Combobox(
+            reminder_toolbar, textvariable=reminder_status_filter, state="readonly",
+            values=("Todos", "Próximos", "Atrasados", "Concluídos"), width=16,
+        )
+        reminder_filter.pack(side="left")
+        visible_reminders = []
+
+        def reminder_is_overdue(reminder, now=None):
+            due = valid_reminder_time(reminder.get("at", ""))
+            if due is None:
+                return False
+            now = now or datetime.now().astimezone()
+            if due.tzinfo is None:
+                now = now.replace(tzinfo=None)
+            return due < now
+
+        def reminder_is_upcoming(reminder, now=None):
+            due = valid_reminder_time(reminder.get("at", ""))
+            if due is None:
+                return False
+            now = now or datetime.now().astimezone()
+            if due.tzinfo is None:
+                now = now.replace(tzinfo=None)
+            return due >= now
+
+        def format_reminder(reminder):
+            if reminder.get("done"):
+                state = "✓ Concluído"
+            elif reminder_is_overdue(reminder):
+                state = "◷ Atrasado"
+            else:
+                state = "◷ Programado"
+            return f"{state}   ·   {reminder.get('at', '')[:16].replace('T', ' ')}   ·   {reminder.get('text', '')}"
+
+        reminder_list, _refresh_reminders_list, _remove_visible_reminder = setup_list(
+            reminder_content, visible_reminders,
+            format_reminder,
             "Nenhum lembrete cadastrado. Adicione um lembrete para receber a notificação no momento certo.",
         )
+        def refresh_reminders():
+            now = datetime.now().astimezone()
+            status = reminder_status_filter.get()
+            visible_reminders[:] = [item for item in reminder_items if (
+                status == "Todos"
+                or (status == "Concluídos" and item.get("done"))
+                or (status == "Próximos" and not item.get("done") and reminder_is_upcoming(item, now))
+                or (status == "Atrasados" and not item.get("done") and reminder_is_overdue(item, now))
+            )]
+            visible_reminders.sort(key=lambda item: (bool(item.get("done")), item.get("at", "")))
+            _refresh_reminders_list()
+
+        reminder_filter.bind("<<ComboboxSelected>>", lambda _event: refresh_reminders())
+        reminder_list.bind("<<ListboxSelect>>", lambda _event: load_selected_reminder())
+
+        def load_selected_reminder():
+            selected = reminder_list.curselection()
+            if not selected:
+                return
+            reminder = visible_reminders[selected[0]]
+            editing_reminder["index"] = next(
+                index for index, item in enumerate(reminder_items) if item is reminder
+            )
+            reminder_date.set(reminder.get("at", "")[:10])
+            reminder_time.set(reminder.get("at", "")[11:16])
+            reminder_text.set(reminder.get("text", ""))
+            reminder_submit.configure(text="Salvar edição")
+
         def add_reminder():
             value = f"{reminder_date.get().strip()}T{reminder_time.get().strip()}"
             parsed = valid_reminder_time(value)
@@ -45,13 +113,41 @@ class AppsPreferencesTabMixin:
             if not parsed or not text:
                 messagebox.showerror("Confira o lembrete", "Informe uma data AAAA-MM-DD, horário HH:MM e texto.", parent=window)
                 return
-            reminder_items.append({"at": parsed.isoformat(timespec="minutes"), "text": text, "done": False})
+            saved = {"at": parsed.isoformat(timespec="minutes"), "text": text, "done": False}
+            if editing_reminder["index"] is None:
+                reminder_items.append(saved)
+            else:
+                previous = reminder_items[editing_reminder["index"]]
+                saved["done"] = previous.get("done", False)
+                reminder_items[editing_reminder["index"]] = saved
+                editing_reminder["index"] = None
             reminder_date.set("")
             reminder_time.set("")
             reminder_text.set("")
+            reminder_submit.configure(text="Adicionar")
             refresh_reminders()
-        ttk.Button(reminder_form, text="Adicionar", style="Primary.TButton", command=add_reminder).grid(row=2, column=0, columnspan=3, sticky="e")
-        ttk.Button(reminder_content, text="Remover selecionado", style="Secondary.TButton", command=remove_reminder).pack(anchor="e", pady=(10, 0))
+        reminder_submit = ttk.Button(reminder_form, text="Adicionar", style="Primary.TButton", command=add_reminder)
+        reminder_submit.grid(row=2, column=0, columnspan=3, sticky="e")
+
+        def delete_selected_reminder():
+            selected = reminder_list.curselection()
+            if selected:
+                reminder_items.remove(visible_reminders[selected[0]])
+                editing_reminder["index"] = None
+                refresh_reminders()
+
+        def toggle_selected_reminder():
+            selected = reminder_list.curselection()
+            if selected:
+                reminder = visible_reminders[selected[0]]
+                reminder["done"] = not reminder.get("done", False)
+                refresh_reminders()
+
+        reminder_actions = ttk.Frame(reminder_content, style="Autonomy.TFrame")
+        reminder_actions.pack(fill="x", pady=(8, 0))
+        ttk.Button(reminder_actions, text="Concluir / reativar", style="Secondary.TButton", command=toggle_selected_reminder).pack(side="left")
+        ttk.Button(reminder_actions, text="Remover selecionado", style="Secondary.TButton", command=delete_selected_reminder).pack(side="right")
+        refresh_reminders()
 
         app_card = card(
             apps_content,
@@ -92,8 +188,8 @@ class AppsPreferencesTabMixin:
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 6))
         app_error = tk.StringVar()
         app_error_label = ttk.Label(
-            app_form, textvariable=app_error, foreground="#B42318",
-            background="#F5F7FA", wraplength=360,
+            app_form, textvariable=app_error, foreground=COLORS["error"],
+            background=COLORS["surface"], wraplength=360,
         )
         app_error_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 5))
         app_buttons = ttk.Frame(app_form, style="Card.TFrame")
@@ -110,7 +206,7 @@ class AppsPreferencesTabMixin:
             app_command.set("")
             app_desktop_file.set("")
             app_error.set("")
-            app_error_label.configure(foreground="#B42318")
+            app_error_label.configure(foreground=COLORS["error"])
             save_app_button.configure(text="Adicionar app")
             remove_app_button.configure(state="disabled")
             app_list.selection_clear(0, "end")
@@ -134,7 +230,7 @@ class AppsPreferencesTabMixin:
             picker.transient(window)
             picker.attributes("-topmost", True)
             fit_window_to_screen(picker, 460, 500, min_width=380, min_height=360)
-            picker.configure(bg="#E3E8F0")
+            picker.configure(bg=COLORS["background"])
             content = ttk.Frame(picker, style="Autonomy.TFrame", padding=18)
             content.pack(fill="both", expand=True)
             ttk.Label(content, text="Selecionar aplicativo", style="Title.TLabel").pack(anchor="w")
@@ -149,9 +245,9 @@ class AppsPreferencesTabMixin:
             result_frame = ttk.Frame(content, style="Card.TFrame", padding=1)
             result_list = tk.Listbox(
                 result_frame, activestyle="none", relief="flat", bd=0,
-                highlightthickness=0, selectforeground="#202B45",
-                bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 10),
-                selectbackground="#C7D2EE", selectmode="browse",
+                highlightthickness=0, selectforeground=COLORS["ink"],
+                bg=COLORS["surface"], fg=COLORS["ink"], font=("TkDefaultFont", 10),
+                selectbackground=COLORS["surface_elevated"], selectmode="browse",
             )
             scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=result_list.yview)
             horizontal_scrollbar = ttk.Scrollbar(
@@ -221,19 +317,19 @@ class AppsPreferencesTabMixin:
             try:
                 argv = resolve_app_command(command)
             except ValueError as exc:
-                app_error_label.configure(foreground="#B42318")
+                app_error_label.configure(foreground=COLORS["error"])
                 app_error.set(str(exc))
                 return None
             if not name:
-                app_error_label.configure(foreground="#B42318")
+                app_error_label.configure(foreground=COLORS["error"])
                 app_error.set("Informe um nome para identificar este aplicativo.")
                 return None
             for index, item in enumerate(app_items):
                 if index != editing_app["index"] and item["name"].casefold() == name.casefold():
-                    app_error_label.configure(foreground="#B42318")
+                    app_error_label.configure(foreground=COLORS["error"])
                     app_error.set("Já existe um app com esse nome. Escolha outro nome.")
                     return None
-            app_error_label.configure(foreground="#B42318")
+            app_error_label.configure(foreground=COLORS["error"])
             app_error.set("")
             return name, command, argv, app_desktop_file.get().strip()
 
@@ -241,7 +337,7 @@ class AppsPreferencesTabMixin:
             updated = dict(self.settings)
             updated["apps"] = [dict(item) for item in app_items]
             if not save_settings(updated, getattr(self, "settings_path", None)):
-                app_error_label.configure(foreground="#B42318")
+                app_error_label.configure(foreground=COLORS["error"])
                 app_error.set("Não consegui salvar os apps. Confira as permissões e tente novamente.")
                 return False
             self.settings = updated
@@ -280,11 +376,11 @@ class AppsPreferencesTabMixin:
                     question="",
                 )
             except (OSError, ValueError, subprocess.SubprocessError):
-                app_error_label.configure(foreground="#B42318")
+                app_error_label.configure(foreground=COLORS["error"])
                 app_error.set("Não consegui iniciar esse aplicativo agora.")
                 self._show_oops()
                 return
-            app_error_label.configure(foreground="#287247")
+            app_error_label.configure(foreground=COLORS["success"])
             app_error.set(f"Comando enviado ao sistema para abrir {name}.")
 
         def remove_selected_app():

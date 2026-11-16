@@ -90,6 +90,42 @@ class StartupManagerTests(unittest.TestCase):
             self.assertEqual(effective[0]["kind"], "Usuário")
             self.assertEqual(effective[0]["state"], "Desabilitado")
 
+    def test_dangling_config_symlink_is_rejected_before_creating_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "home"
+            home.mkdir()
+            system = Path(temporary) / "system"
+            system.mkdir()
+            source = system / "service.desktop"
+            source.write_text("[Desktop Entry]\nName=Service\nExec=service\n", encoding="utf-8")
+            outside = Path(temporary) / "outside" / "not-created"
+            config = home / ".config"
+            try:
+                config.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                self.skipTest("Symlinks unavailable")
+            with mock.patch("startup_manager.Path.home", return_value=home):
+                entry = discover_startup_entries(system_dirs=(system,))[0]
+                with self.assertRaises(OSError):
+                    set_startup_enabled(entry, False, system_dirs=(system,))
+            self.assertFalse(outside.exists())
+
+    def test_unapproved_autostart_directory_is_rejected_before_mkdir(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "home"
+            home.mkdir()
+            system = root / "system"
+            system.mkdir()
+            source = system / "service.desktop"
+            source.write_text("[Desktop Entry]\nName=Service\nExec=service\n", encoding="utf-8")
+            outside = root / "outside" / "autostart"
+            with mock.patch("startup_manager.Path.home", return_value=home):
+                entry = discover_startup_entries(system_dirs=(system,))[0]
+                with self.assertRaises(ValueError):
+                    set_startup_enabled(entry, False, user_dir=outside, system_dirs=(system,))
+            self.assertFalse(outside.exists())
+
 
 class StorageAnalysisTests(unittest.TestCase):
     def test_scans_files_and_directory_totals_without_following_symlinks(self):

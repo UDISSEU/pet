@@ -20,6 +20,28 @@ from preferences_computer_ui import ComputerPreferencesTabMixin
 
 
 class InstalledAppDiscoveryTests(unittest.TestCase):
+    def test_inventory_retains_details_needed_by_the_manager(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            applications = Path(tmpdir) / "applications"
+            applications.mkdir()
+            desktop_file = applications / "editor.desktop"
+            desktop_file.write_text(
+                "[Desktop Entry]\nType=Application\nName=Demo Editor\n"
+                "Comment=Edits documents\nIcon=demo-editor\nCategories=Office;Utility;\n"
+                "Exec=demo-editor\n",
+                encoding="utf-8",
+            )
+            discovered = autonomy.find_installed_apps(directories=[applications])
+            inventory = build_installed_app_inventory(
+                discovered, {"demo-editor": "1.0"},
+                {str(desktop_file): "demo-editor"}, checked_sources={"APT/DEB"},
+            )
+        app = inventory[0]
+        self.assertEqual(app["description"], "Edits documents")
+        self.assertEqual(app["icon"], "demo-editor")
+        self.assertEqual(app["categories"], "Office; Utility")
+        self.assertEqual(app["desktop_file"], str(desktop_file))
+
     def test_discovers_appimage_without_desktop_entry(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             applications = Path(tmpdir) / "Applications"

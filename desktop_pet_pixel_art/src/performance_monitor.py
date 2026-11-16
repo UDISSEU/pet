@@ -372,7 +372,7 @@ class PerformanceMonitor:
                 self.sample_once(sample)
                 if self.smart_collector and time.monotonic() - self._smart_checked_at >= 6 * 3600:
                     self._smart_checked_at = time.monotonic()
-                    smart_result = self.smart_collector()
+                    smart_result = self.smart_collector(cancel_event=self._stop)
                     if self._stop.is_set(): break
                     self._evaluate_smart(smart_result)
             except Exception:

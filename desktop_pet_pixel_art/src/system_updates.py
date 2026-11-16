@@ -30,7 +30,8 @@ _INVENTORY_CACHE_VERSION = 1
 _INVENTORY_SOURCES = ("APT/DEB", "Flatpak", "Snap")
 _INVENTORY_APP_FIELDS = (
     "name", "version", "origin", "package", "source",
-    "candidate_version", "update_status",
+    "candidate_version", "update_status", "description", "categories",
+    "icon", "desktop_file", "command", "location", "shortcut_state",
 )
 _INVENTORY_UPDATE_STATES = {
     "Atualizado",
@@ -503,6 +504,15 @@ def build_installed_app_inventory(
             "source": source,
             "candidate_version": candidate or "—",
             "update_status": update_status,
+            "description": application.get("description") or application.get("generic_name", ""),
+            "categories": "; ".join(application.get("categories", ()))
+            if isinstance(application.get("categories", ()), (list, tuple))
+            else str(application.get("categories", "")),
+            "icon": application.get("icon", ""),
+            "desktop_file": desktop_file,
+            "command": application.get("command", ""),
+            "location": application.get("location", ""),
+            "shortcut_state": shortcut_state,
         })
 
     for application_id, (name, version, remote) in flatpak_apps.items():
@@ -523,6 +533,13 @@ def build_installed_app_inventory(
             "source": "Flatpak",
             "candidate_version": candidate or "—",
             "update_status": update_status,
+            "description": "",
+            "categories": [],
+            "icon": "",
+            "desktop_file": "",
+            "command": "",
+            "location": "",
+            "shortcut_state": "absent",
         })
 
     return sorted(inventory, key=lambda item: (item["name"].casefold(), item["package"].casefold()))
@@ -765,9 +782,13 @@ class InstalledAppInventoryStore:
         if not isinstance(application, dict):
             return None
         normalized = {
-            field: application.get(field)
+            field: application.get(field, "")
             for field in _INVENTORY_APP_FIELDS
         }
+        for field in ("name", "version", "origin", "package", "source",
+                      "candidate_version", "update_status"):
+            if field not in application:
+                return None
         if any(not isinstance(value, str) for value in normalized.values()):
             return None
         if (

@@ -3,7 +3,10 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
-from ui_theme import fit_window_to_screen
+from ui_theme import (
+    COLORS, fit_window_to_screen, make_card, make_header, make_metric_card,
+    make_section_heading, make_status_badge,
+)
 
 
 class DashboardUIMixin:
@@ -32,60 +35,29 @@ class DashboardUIMixin:
         self._activate_panel(window)
         window.title("Painel da Nova")
         fit_window_to_screen(window, 580, 570, min_width=520, min_height=440)
-        window.configure(bg="#F2F5F9")
-
-        colors = {
-            "ink": "#18263A",
-            "muted": "#718096",
-            "surface": "#FFFFFF",
-            "border": "#E2E8F0",
-            "track": "#E9EEF4",
-            "teal": "#18A999",
-            "blue": "#4386E8",
-            "violet": "#8A6FE8",
-            "amber": "#E6A23C",
-        }
+        colors = COLORS
+        window.configure(bg=colors["background"])
         small_font = ("TkDefaultFont", 8)
-
-        header = tk.Frame(window, bg="#17263B", padx=18, pady=11)
-        header.pack(fill="x")
-        title_stack = tk.Frame(header, bg="#17263B")
-        title_stack.pack(side="left", fill="x", expand=True)
-        tk.Label(
-            title_stack, text="NOVA  /  MONITORAMENTO", bg="#17263B", fg="#75D8CC",
-            font=("TkDefaultFont", 8, "bold"), anchor="w",
-        ).pack(anchor="w")
-        tk.Label(
-            title_stack, text="Painel da Nova", bg="#17263B", fg="#F7FAFC",
-            font=("TkDefaultFont", 16, "bold"), anchor="w",
-        ).pack(anchor="w", pady=(3, 0))
-        tk.Label(
-            title_stack, text="Recursos e atividade em tempo real", bg="#17263B",
-            fg="#B8C5D6", font=small_font, anchor="w",
-        ).pack(anchor="w", pady=(1, 0))
+        header = make_header(
+            window, "Painel da Nova", "Recursos e atividade em tempo real",
+            eyebrow="NOVA  /  MONITORAMENTO",
+            back_command=lambda: self._panel_back(window),
+        )
 
         badge_var = tk.StringVar(value="●  AO VIVO")
-        badge = tk.Label(
-            header, textvariable=badge_var, bg="#21423F", fg="#8DE1D4",
-            font=("TkDefaultFont", 8, "bold"), padx=10, pady=6,
+        badge = make_status_badge(
+            header.winfo_children()[0], badge_var, background=colors["surface_elevated"],
+            foreground=colors["success"],
         )
         badge.pack(side="right", anchor="n", padx=(8, 0), pady=3)
-        back_button = tk.Button(
-            header, text="← Voltar", command=lambda: self._panel_back(window),
-            relief="flat", bd=0, padx=9, pady=5, cursor="hand2",
-            bg="#263B56", fg="#F7FAFC", activebackground="#344D6B",
-            activeforeground="#FFFFFF", font=("TkDefaultFont", 9, "bold"),
-        )
-        back_button.pack(side="right", anchor="n", padx=(0, 6), pady=3)
-
-        body = tk.Frame(window, bg="#F2F5F9")
+        body = tk.Frame(window, bg=colors["background"])
         body.pack(fill="both", expand=True)
-        canvas = tk.Canvas(body, bg="#F2F5F9", bd=0, highlightthickness=0)
+        canvas = tk.Canvas(body, bg=colors["background"], bd=0, highlightthickness=0)
         scrollbar = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        content = tk.Frame(canvas, bg="#F2F5F9", padx=14, pady=8)
+        content = tk.Frame(canvas, bg=colors["background"], padx=14, pady=8)
         content_window = canvas.create_window((0, 0), window=content, anchor="nw")
         content.bind(
             "<Configure>",
@@ -97,16 +69,11 @@ class DashboardUIMixin:
         )
 
         def section_title(parent, text):
-            tk.Label(
-                parent, text=text.upper(), bg="#F2F5F9", fg=colors["muted"],
-                font=("TkDefaultFont", 8, "bold"), anchor="w",
-            ).pack(fill="x", pady=(0, 4))
+            heading = make_section_heading(parent, text)
+            heading.pack(fill="x", pady=(0, 4))
 
         def make_surface(parent, padding=11):
-            return tk.Frame(
-                parent, bg=colors["surface"], padx=padding, pady=padding,
-                highlightbackground=colors["border"], highlightthickness=1,
-            )
+            return make_card(parent, padding=padding, tk_widget=True)
 
         state_card = make_surface(content, padding=7)
         state_card.pack(fill="x", pady=(0, 8))
@@ -127,35 +94,18 @@ class DashboardUIMixin:
         ).pack(side="right", padx=(8, 2))
 
         section_title(content, "Resumo do sistema")
-        metrics_grid = tk.Frame(content, bg="#F2F5F9")
+        metrics_grid = tk.Frame(content, bg=colors["background"])
         metrics_grid.pack(fill="x", pady=(0, 8))
         metrics_grid.columnconfigure(0, weight=1, uniform="metric")
         metrics_grid.columnconfigure(1, weight=1, uniform="metric")
 
         def metric_card(row, column, title, accent, with_bar=True):
-            card = make_surface(metrics_grid, padding=8)
+            card, value, detail, bar, accent = make_metric_card(
+                metrics_grid, title, accent, padding=10, with_bar=with_bar,
+            )
             card.grid(row=row, column=column, sticky="nsew",
                       padx=(0, 6) if column == 0 else (6, 0),
                       pady=(0, 8) if row == 0 else (0, 0))
-            tk.Label(
-                card, text=title.upper(), bg=colors["surface"], fg=colors["muted"],
-                font=("TkDefaultFont", 8, "bold"), anchor="w",
-            ).pack(fill="x")
-            value = tk.StringVar(value="—")
-            tk.Label(
-                card, textvariable=value, bg=colors["surface"], fg=colors["ink"],
-                font=("TkDefaultFont", 18, "bold"), anchor="w",
-            ).pack(fill="x", pady=(1, 0))
-            detail = tk.StringVar(value="Coletando dados")
-            tk.Label(
-                card, textvariable=detail, bg=colors["surface"], fg=colors["muted"],
-                font=small_font, anchor="w",
-            ).pack(fill="x")
-            bar = None
-            if with_bar:
-                bar = tk.Canvas(card, height=5, bg=colors["surface"],
-                                highlightthickness=0, bd=0)
-                bar.pack(fill="x", pady=(5, 0))
             return value, detail, bar, accent
 
         cpu = metric_card(0, 0, "Processador", colors["teal"])
@@ -186,7 +136,7 @@ class DashboardUIMixin:
                 ),
             )
 
-        details_row = tk.Frame(content, bg="#F2F5F9")
+        details_row = tk.Frame(content, bg=colors["background"])
         details_row.pack(fill="x", pady=(0, 6))
         details_row.columnconfigure(0, weight=1, uniform="details")
         details_row.columnconfigure(1, weight=1, uniform="details")
@@ -217,9 +167,9 @@ class DashboardUIMixin:
                  bg=colors["surface"], fg=colors["muted"], font=small_font,
                  anchor="w").pack(fill="x")
 
-        controls = tk.Frame(window, bg="#F2F5F9", padx=14, pady=8)
+        controls = tk.Frame(window, bg=colors["background"], padx=14, pady=8)
         controls.pack(fill="x", side="bottom")
-        tk.Label(controls, text="Atualizar a cada", bg="#F2F5F9",
+        tk.Label(controls, text="Atualizar a cada", bg=colors["background"],
                  fg=colors["muted"], font=small_font).pack(side="left")
         interval = tk.StringVar(value=str(self.settings.get("dashboard_interval", 5)))
         chooser = ttk.Combobox(
@@ -227,7 +177,7 @@ class DashboardUIMixin:
             state="readonly", width=4,
         )
         chooser.pack(side="left", padx=(7, 4))
-        tk.Label(controls, text="seg", bg="#F2F5F9", fg=colors["muted"],
+        tk.Label(controls, text="seg", bg=colors["background"], fg=colors["muted"],
                  font=small_font).pack(side="left")
         paused = tk.BooleanVar(value=False)
         ttk.Checkbutton(controls, text="Pausar", variable=paused).pack(side="right")
@@ -313,8 +263,8 @@ class DashboardUIMixin:
             is_paused = paused.get()
             badge_var.set("Ⅱ  PAUSADO" if is_paused else "●  AO VIVO")
             badge.configure(
-                bg="#39485C" if is_paused else "#21423F",
-                fg="#D2D9E2" if is_paused else "#8DE1D4",
+                bg=colors["surface_elevated"] if is_paused else colors["surface"],
+                fg=colors["muted"] if is_paused else colors["success"],
             )
             try:
                 delay = max(2, min(30, int(interval.get()))) * 1000

@@ -2,18 +2,19 @@
 
 import tkinter as tk
 from tkinter import ttk
+from ui_theme import COLORS, make_empty_state
 
 
 def setup_list(parent, items, format_item, empty_text):
-    empty_label = ttk.Label(parent, text=empty_text, style="PageHint.TLabel")
-    empty_label.pack(anchor="w", pady=(0, 8))
+    empty_state = make_empty_state(parent, empty_text)
+    empty_state.pack(fill="x", pady=(0, 8))
     list_frame = ttk.Frame(parent, style="Card.TFrame", padding=1)
     list_frame.pack(fill="both", expand=True)
     listing = tk.Listbox(
         list_frame, height=10, activestyle="none", relief="flat", bd=0,
-        highlightthickness=0, selectforeground="#202B45",
-        bg="#F5F7FA", fg="#344054", font=("TkDefaultFont", 10),
-        selectbackground="#C7D2EE", selectmode="browse",
+        highlightthickness=0, selectforeground=COLORS["ink"],
+        bg=COLORS["surface"], fg=COLORS["ink"], font=("TkDefaultFont", 10),
+        selectbackground=COLORS["surface_elevated"], selectmode="browse",
     )
     list_scrollbar = ttk.Scrollbar(
         list_frame, orient="horizontal", command=listing.xview,
@@ -25,11 +26,10 @@ def setup_list(parent, items, format_item, empty_text):
     def refresh():
         listing.delete(0, "end")
         if not items:
-            empty_label.configure(text=empty_text)
-            empty_label.pack(anchor="w", pady=(0, 8))
+            empty_state.pack(fill="x", pady=(0, 8))
             list_frame.pack_forget()
             return
-        empty_label.pack_forget()
+        empty_state.pack_forget()
         list_frame.pack(fill="both", expand=True)
         for item in items:
             listing.insert("end", format_item(item))

@@ -4,7 +4,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 from autonomy import save_settings
-from ui_theme import COLORS, fit_window_to_screen, make_header
+from ui_theme import COLORS, apply_theme, fit_window_to_screen, make_header
 from types import SimpleNamespace
 from preferences_automation_ui import AutomationPreferencesTabMixin
 from preferences_ai_ui import AIPreferencesTabMixin
@@ -33,19 +33,18 @@ class PreferencesUIMixin(
             back_command=lambda: self._panel_back(window),
         )
 
-        style = ttk.Style(window)
+        style = apply_theme(window)
         style.configure("Autonomy.TFrame", background=COLORS["background"])
-        style.configure("Card.TFrame", background=COLORS["surface"])
         style.configure("Title.TLabel", background=COLORS["background"], foreground=COLORS["ink"], font=("TkDefaultFont", 14, "bold"))
         style.configure("Subtitle.TLabel", background=COLORS["background"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
         style.configure("CardTitle.TLabel", background=COLORS["surface"], foreground=COLORS["ink"], font=("TkDefaultFont", 10, "bold"))
         style.configure("Hint.TLabel", background=COLORS["surface"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
         style.configure("PageHint.TLabel", background=COLORS["background"], foreground=COLORS["muted"], font=("TkDefaultFont", 9))
-        style.configure("StatusBanner.TLabel", background="#E7F0FF", foreground="#1D4ED8", font=("TkDefaultFont", 9, "bold"))
-        style.configure("StatusBannerError.TLabel", background="#FEE2E2", foreground="#B42318", font=("TkDefaultFont", 9, "bold"))
-        style.configure("StatusBannerSuccess.TLabel", background="#E8F7E8", foreground="#1F7A3D", font=("TkDefaultFont", 9, "bold"))
+        style.configure("StatusBanner.TLabel", background=COLORS["surface_elevated"], foreground=COLORS["info"], font=("TkDefaultFont", 9, "bold"))
+        style.configure("StatusBannerError.TLabel", background=COLORS["surface_elevated"], foreground=COLORS["error"], font=("TkDefaultFont", 9, "bold"))
+        style.configure("StatusBannerSuccess.TLabel", background=COLORS["surface_elevated"], foreground=COLORS["success"], font=("TkDefaultFont", 9, "bold"))
         style.configure("ComputerStatus.TLabel", background=COLORS["surface"], foreground=COLORS["ink"], font=("TkDefaultFont", 10, "bold"))
-        style.configure("ComputerStatusError.TLabel", background=COLORS["surface"], foreground="#B42318", font=("TkDefaultFont", 10, "bold"))
+        style.configure("ComputerStatusError.TLabel", background=COLORS["surface"], foreground=COLORS["error"], font=("TkDefaultFont", 10, "bold"))
         style.configure("ModeHint.TLabel", background=COLORS["surface"], foreground=COLORS["muted"], font=("TkDefaultFont", 8))
         style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
         style.configure("Secondary.TButton", padding=(12, 8))
@@ -70,7 +69,7 @@ class PreferencesUIMixin(
             "History.Treeview.Heading", background=COLORS["background"],
             foreground=COLORS["ink"], font=("TkDefaultFont", 9, "bold"),
         )
-        style.configure("Autonomy.TEntry", fieldbackground="#EDF0F5", foreground="#26344A", padding=4)
+        style.configure("Autonomy.TEntry", fieldbackground=COLORS["surface_elevated"], foreground=COLORS["ink"], padding=4)
 
         outer = ttk.Frame(window, style="Autonomy.TFrame", padding=(16, 12, 16, 12))
         outer.pack(fill="both", expand=True)
@@ -111,13 +110,26 @@ class PreferencesUIMixin(
         def move_tab(direction):
             select_tab(active_tab_index + direction)
 
+        def select_tab_name(_event=None):
+            selected = active_tab_name.get()
+            for index, (name, _page) in enumerate(tab_pages):
+                if name == selected:
+                    select_tab(index)
+                    break
+
         ttk.Button(
             tab_navigation, text="◀", width=2, style="Nav.TButton",
             command=lambda: move_tab(-1),
         ).pack(side="left")
-        ttk.Label(
-            tab_navigation, textvariable=active_tab_name, style="TabNav.TLabel",
-        ).pack(side="left", expand=True, padx=8)
+        tab_selector = ttk.Combobox(
+            tab_navigation, textvariable=active_tab_name, state="readonly", width=27,
+            style="TabNav.TCombobox",
+            values=("Comportamento", "Foco e rotina", "Memórias", "Histórico",
+                    "Lembretes", "Aplicativos", "Meu Computador", "Automações",
+                    "Inteligência artificial"),
+        )
+        tab_selector.pack(side="left", fill="x", expand=True, padx=8)
+        tab_selector.bind("<<ComboboxSelected>>", select_tab_name)
         ttk.Button(
             tab_navigation, text="▶", width=2, style="Nav.TButton",
             command=lambda: move_tab(1),

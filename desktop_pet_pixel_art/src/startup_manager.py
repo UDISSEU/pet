@@ -106,19 +106,30 @@ def set_startup_enabled(entry, enabled, *, user_dir=None, system_dirs=None):
     system_dirs = tuple(Path(item) for item in (
         system_dirs if system_dirs is not None else ("/etc/xdg/autostart",)
     ))
+    home = Path.home().resolve()
+    expected_dir = home / ".config" / "autostart"
+    requested_dir = Path(os.path.abspath(os.path.expanduser(os.fspath(user_dir))))
+    allowed_dirs = {
+        Path(os.path.abspath(os.path.expanduser(str(Path.home() / ".config" / "autostart")))),
+        expected_dir,
+    }
+    if requested_dir not in allowed_dirs:
+        raise ValueError("O destino precisa ser o autostart do usuário atual.")
+    user_dir = requested_dir
     name = Path(str(entry.get("path", ""))).name
     if not name.endswith(".desktop") or name in (".desktop", ""):
         raise ValueError("Nome de entrada de inicialização inválido.")
 
-    home = Path.home().resolve()
     config_dir = home / ".config"
-    if config_dir.exists() and config_dir.is_symlink():
+    # is_symlink() also catches dangling links; exists() follows the link and
+    # would miss one before mkdir(parents=True) can create paths at its target.
+    if config_dir.is_symlink():
         raise OSError("O diretório ~/.config é um link simbólico; alteração recusada.")
-    if user_dir.exists() and user_dir.is_symlink():
+    if user_dir.is_symlink():
         raise OSError("O diretório autostart é um link simbólico; alteração recusada.")
     user_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     user_dir = user_dir.resolve()
-    expected_dir = (home / ".config" / "autostart").resolve()
+    expected_dir = expected_dir.resolve()
     if user_dir != expected_dir:
         raise ValueError("O destino precisa ser o autostart do usuário atual.")
 

@@ -9,7 +9,7 @@ from dashboard_ui import DashboardUIMixin
 from notifications_ui import NotificationsUIMixin
 from permissions_ui import PermissionsUIMixin
 from preferences_ui import PreferencesUIMixin
-from ui_theme import COLORS, PanelNavigationMixin, make_header
+from ui_theme import COLORS, PanelNavigationMixin, make_aurora_mark, make_header
 
 
 class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMixin, NotificationsUIMixin, PermissionsUIMixin):
@@ -34,16 +34,19 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
         panel.pack(fill="both", expand=True)
         title_bar = tk.Frame(panel, bg=COLORS["navy"], padx=9, pady=7)
         title_bar.pack(fill="x", padx=1, pady=(0, 6))
+        make_aurora_mark(title_bar, size=24, background=COLORS["navy"]).pack(
+            side="left", padx=(0, 7),
+        )
         title_label = tk.Label(
             title_bar, text="Painel Principal da Nova", font=("TkDefaultFont", 10, "bold"),
-            fg="#F7FAFC", bg=COLORS["navy"], anchor="w", cursor="fleur",
+            fg=COLORS["ink"], bg=COLORS["navy"], anchor="w", cursor="fleur",
         )
         title_label.pack(side="left", fill="x", expand=True, padx=2, pady=2)
         tk.Button(
             title_bar, text="×", command=lambda: close_popup(),
             relief="flat", bd=0, padx=5, pady=0, cursor="hand2",
             font=("TkDefaultFont", 11, "bold"), fg=COLORS["header_muted"],
-            bg=COLORS["navy"], activebackground="#263B56",
+            bg=COLORS["navy"], activebackground=COLORS["surface_elevated"],
         ).pack(side="right")
 
         drag_offset = {"x": 0, "y": 0}
@@ -84,8 +87,8 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
 
         def action_button(label, command, row, column, primary=False):
             bg = COLORS["accent"] if primary else COLORS["surface"]
-            fg = "#FFFFFF" if primary else COLORS["ink"]
-            hover = "#3473CF" if primary else "#E6EDF5"
+            fg = COLORS["background"] if primary else COLORS["ink"]
+            hover = COLORS["focus"] if primary else COLORS["border"]
             button = tk.Button(
                 action_grid, text=label, anchor="w", command=lambda: (hide_popup(), command()),
                 relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
@@ -117,7 +120,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
         more_button = tk.Button(
             panel, text="Mostrar mais  ▾", command=toggle_more, anchor="w",
             relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
-            bg="#E5EBF3", fg=COLORS["muted"], activebackground="#D9E2EE",
+            bg=COLORS["surface_elevated"], fg=COLORS["muted"], activebackground=COLORS["border"],
         )
         more_button.pack(fill="x", pady=(4, 0))
 
@@ -133,7 +136,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
                 more, text=label, anchor="w",
                 command=lambda: (hide_popup(), command()), relief="flat", bd=0,
                 padx=8, pady=4, cursor="hand2", bg=COLORS["surface"], fg=COLORS["ink"],
-                activebackground="#E6EDF5",
+                activebackground=COLORS["border"],
             ).pack(fill="x", pady=1)
 
         section_label(more, "Interação")
@@ -157,7 +160,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
         behavior_button = tk.Button(
             behavior_group, text="Comportamento  ▾", command=toggle_behavior, anchor="w",
             relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
-            bg="#E5EBF3", fg=COLORS["muted"], activebackground="#D9E2EE",
+            bg=COLORS["surface_elevated"], fg=COLORS["muted"], activebackground=COLORS["border"],
         )
         behavior_button.pack(fill="x")
 
