@@ -1,5 +1,6 @@
 """Compact Nova dashboard with background metric collection."""
 import queue
+import logging
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -7,6 +8,8 @@ from ui_theme import (
     COLORS, fit_window_to_screen, make_card, make_header, make_metric_card,
     make_section_heading, make_status_badge,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DashboardUIMixin:
@@ -194,6 +197,7 @@ class DashboardUIMixin:
                 try:
                     result = self.system_monitor.collect(extra=self._dashboard_snapshot())
                 except Exception:
+                    logger.exception("Falha ao coletar métricas do Painel da Nova")
                     result = {"error": "metrics_unavailable"}
                 try:
                     results.put_nowait(result)

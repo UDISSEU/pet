@@ -12,6 +12,7 @@ from notifications import NotificationManager
 from permissions import PermissionManager
 from plugin_manager import PluginManager
 from system_monitor import SystemMonitor
+from preferences_common_ui import render_filtered_list, setup_list
 
 
 class WindowHarness(DesktopPetUIMixin):
@@ -42,7 +43,129 @@ class WindowHarness(DesktopPetUIMixin):
         return True
 
 
+class PreferencesHarness(WindowHarness):
+    """Isolate preference window construction and tab routing from services."""
+
+    def __init__(self, root, directory):
+        super().__init__(root, directory)
+        self.settings.update({"memories": [], "reminders": [], "apps": []})
+        self.auto_speech_var = tk.BooleanVar(value=False)
+        self.observe_apps_var = tk.BooleanVar(value=False)
+        self.auto_sit_var = tk.BooleanVar(value=False)
+        self.peekaboo_var = tk.BooleanVar(value=False)
+        self._routine_greeted = True
+
+    def _build_ai_preferences_tab(self, _context):
+        pass
+
+    def _build_automation_preferences_tab(self, _context):
+        pass
+
+    def _build_behavior_preferences_tabs(self, _context):
+        pass
+
+    def _build_computer_preferences_tab(self, _context):
+        pass
+
+    def _build_memory_preferences_tabs(self, _context):
+        pass
+
+    def _build_reminders_and_apps_preferences_tabs(self, _context):
+        pass
+
+    def switch_user_profile(self, _profile_id):
+        raise AssertionError("No profile service is configured in this test")
+
+
 class TkWindowSmokeTests(unittest.TestCase):
+    def test_preferences_open_and_navigate_all_nine_tabs(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            if os.environ.get("NOVA_REQUIRE_TK") == "1":
+                self.fail(f"Tk display unavailable in CI: {exc}")
+            self.skipTest(f"Tk display unavailable: {exc}")
+        with tempfile.TemporaryDirectory() as directory:
+            pet = PreferencesHarness(root, directory)
+            window = pet.open_autonomy_settings()
+            try:
+                root.update_idletasks()
+                root.update()
+                def descendants(widget):
+                    for child in widget.winfo_children():
+                        yield child
+                        yield from descendants(child)
+
+                selector = next(
+                    widget for widget in descendants(window)
+                    if isinstance(widget, ttk.Combobox)
+                )
+                navigation = selector.master
+                self.assertEqual(len(selector.cget("values")), 9)
+                self.assertEqual(selector.get(), "Comportamento")
+                selector.current(2)
+                selector.event_generate("<<ComboboxSelected>>")
+                root.update()
+                self.assertEqual(selector.get(), "Memórias")
+                next_button = next(
+                    widget for widget in navigation.winfo_children()
+                    if isinstance(widget, ttk.Button) and widget.cget("text") == "▶"
+                )
+                next_button.invoke()
+                self.assertEqual(selector.get(), "Histórico")
+                previous_button = next(
+                    widget for widget in navigation.winfo_children()
+                    if isinstance(widget, ttk.Button) and widget.cget("text") == "◀"
+                )
+                previous_button.invoke()
+                self.assertEqual(selector.get(), "Memórias")
+                window.destroy()
+                root.update_idletasks()
+                self.assertFalse(window.winfo_exists())
+            finally:
+                if window.winfo_exists():
+                    window.destroy()
+                root.destroy()
+    def test_filtered_memory_list_transitions_between_empty_and_populated(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            if os.environ.get("NOVA_REQUIRE_TK") == "1":
+                self.fail(f"Tk display unavailable in CI: {exc}")
+            self.skipTest(f"Tk display unavailable: {exc}")
+        try:
+            root.geometry("480x360")
+            content = ttk.Frame(root)
+            content.pack(fill="both", expand=True)
+            memories = []
+            listing, _refresh, _remove = setup_list(
+                content, memories, str, "Suas memórias ficam neste computador."
+            )
+            render_filtered_list(listing, memories, str, lambda _item: True)
+            root.update_idletasks()
+            self.assertFalse(listing._nova_list_frame.winfo_ismapped())
+            self.assertTrue(listing._nova_empty_state.winfo_ismapped())
+
+            memories.append("Prefere chá")
+            memories.append("Trabalha com design")
+            render_filtered_list(listing, memories, str, lambda _item: True)
+            root.update_idletasks()
+            self.assertTrue(listing._nova_list_frame.winfo_ismapped())
+            self.assertFalse(listing._nova_empty_state.winfo_ismapped())
+            self.assertEqual(listing.get(0), "Prefere chá")
+            render_filtered_list(
+                listing, memories, str, lambda item: "design" in item.casefold()
+            )
+            self.assertEqual(listing.size(), 1)
+            self.assertEqual(listing.get(0), "Trabalha com design")
+
+            render_filtered_list(listing, memories, str, lambda _item: False)
+            root.update_idletasks()
+            self.assertFalse(listing._nova_list_frame.winfo_ismapped())
+            self.assertTrue(listing._nova_empty_state.winfo_ismapped())
+        finally:
+            root.destroy()
+
     def test_dashboard_notifications_and_permissions_open_and_close(self):
         try:
             root = tk.Tk()

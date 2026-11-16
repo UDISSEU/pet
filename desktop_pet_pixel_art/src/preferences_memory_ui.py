@@ -11,7 +11,7 @@ from nova_ai.memory.errors import (
     SensitiveInformationError,
 )
 from ollama_client import save_history
-from preferences_common_ui import setup_list
+from preferences_common_ui import render_filtered_list, setup_list
 from ui_theme import COLORS
 
 
@@ -191,14 +191,15 @@ class MemoryPreferencesTabMixin:
 
         def render_memories(*_args):
             needle = memory_search.get().casefold().strip()
-            memory_list.delete(0, "end")
             visible_memory_indices.clear()
             for source_index, memory in enumerate(memory_items):
-                text = str(memory)
-                if needle and needle not in text.casefold():
-                    continue
-                visible_memory_indices.append(source_index)
-                memory_list.insert("end", text)
+                if not needle or needle in str(memory).casefold():
+                    visible_memory_indices.append(source_index)
+            render_filtered_list(
+                memory_list, memory_items,
+                str,
+                lambda memory: not needle or needle in str(memory).casefold(),
+            )
 
         def remove_visible_memory():
             selection = memory_list.curselection()
@@ -273,7 +274,6 @@ class MemoryPreferencesTabMixin:
             structured_category_filter.pack(side="left", padx=(8, 0))
 
             def refresh_structured_memories(*, reload=True):
-                structured_list.delete(0, "end")
                 if reload:
                     try:
                         structured_memories[:] = integration.memory.search("", limit=100)
@@ -283,22 +283,30 @@ class MemoryPreferencesTabMixin:
                         return
                 needle = structured_search.get().casefold().strip()
                 category = structured_filter.get()
-                visible = [memory for memory in structured_memories
-                           if (category == "Todas as categorias" or memory.kind.value == category)
-                           and (not needle or needle in memory.content.casefold())]
+                def matches(memory):
+                    return (
+                        (category == "Todas as categorias" or memory.kind.value == category)
+                        and (not needle or needle in memory.content.casefold())
+                    )
+
+                visible = [memory for memory in structured_memories if matches(memory)]
                 visible_structured_memories[:] = visible
-                for memory in visible:
+
+                def format_structured_memory(memory):
                     provenance_label = {
                         "user_provided": "confirmada pelo usuário",
                         "inference": "inferência",
                         "uncertain": "incerta",
                         "system_observation": "observação do sistema",
                     }.get(memory.provenance, memory.provenance)
-                    structured_list.insert(
-                        "end",
+                    return (
                         f"[{memory.kind.value} · {provenance_label} · "
-                        f"confiança {memory.confidence:.0%}] {memory.content}",
+                        f"confiança {memory.confidence:.0%}] {memory.content}"
                     )
+
+                render_filtered_list(
+                    structured_list, structured_memories, format_structured_memory, matches,
+                )
                 structured_status.set(
                     f"{len(visible)} de {len(structured_memories)} memória(s) neste perfil."
                 )

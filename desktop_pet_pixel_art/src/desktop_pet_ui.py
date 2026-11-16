@@ -37,11 +37,17 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
         make_aurora_mark(title_bar, size=24, background=COLORS["navy"]).pack(
             side="left", padx=(0, 7),
         )
+        title_copy = tk.Frame(title_bar, bg=COLORS["navy"], cursor="fleur")
+        title_copy.pack(side="left", fill="x", expand=True, padx=2, pady=1)
         title_label = tk.Label(
-            title_bar, text="Painel Principal da Nova", font=("TkDefaultFont", 10, "bold"),
+            title_copy, text="Painel Principal da Nova", font=("TkDefaultFont", 10, "bold"),
             fg=COLORS["ink"], bg=COLORS["navy"], anchor="w", cursor="fleur",
         )
-        title_label.pack(side="left", fill="x", expand=True, padx=2, pady=2)
+        title_label.pack(anchor="w")
+        tk.Label(
+            title_copy, text="Atalhos, rotina e preferências", font=("TkDefaultFont", 8),
+            fg=COLORS["muted"], bg=COLORS["navy"], anchor="w", cursor="fleur",
+        ).pack(anchor="w", pady=(1, 0))
         tk.Button(
             title_bar, text="×", command=lambda: close_popup(),
             relief="flat", bd=0, padx=5, pady=0, cursor="hand2",
@@ -64,7 +70,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
             y = max(0, min(y, screen_height - popup.winfo_height()))
             popup.geometry(f"+{x}+{y}")
 
-        for drag_handle in (title_bar, title_label):
+        for drag_handle in (title_bar, title_copy, title_label):
             drag_handle.bind("<ButtonPress-1>", start_popup_drag)
             drag_handle.bind("<B1-Motion>", move_popup)
 
@@ -91,7 +97,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
             hover = COLORS["focus"] if primary else COLORS["border"]
             button = tk.Button(
                 action_grid, text=label, anchor="w", command=lambda: (hide_popup(), command()),
-                relief="flat", bd=0, padx=8, pady=5, cursor="hand2",
+                relief="flat", bd=0, padx=10, pady=7, cursor="hand2",
                 bg=bg, fg=fg, activebackground=hover, activeforeground=fg,
                 font=("TkDefaultFont", 9, "bold" if primary else "normal"),
             )

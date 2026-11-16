@@ -48,7 +48,7 @@ class PreferencesUIMixin(
         style.configure("ModeHint.TLabel", background=COLORS["surface"], foreground=COLORS["muted"], font=("TkDefaultFont", 8))
         style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
         style.configure("Secondary.TButton", padding=(12, 8))
-        style.configure("Nav.TButton", padding=(4, 2))
+        style.configure("Nav.TButton", padding=(2, 1))
         style.configure(
             "TabNav.TLabel", background=COLORS["background"], foreground=COLORS["ink"],
             font=("TkDefaultFont", 11, "bold"),
@@ -78,6 +78,8 @@ class PreferencesUIMixin(
         tab_navigation = ttk.Frame(outer, style="Autonomy.TFrame")
         tab_navigation.pack(fill="x", pady=(0, 6))
         tab_pages = []
+        scroll_canvases = set()
+        wheel_bindings = []
         history_refresh_callback = {"callback": None}
         active_tab_index = -1
         active_tab_name = tk.StringVar(value="Comportamento")
@@ -135,6 +137,23 @@ class PreferencesUIMixin(
             command=lambda: move_tab(1),
         ).pack(side="right")
         notebook.pack(fill="both", expand=True)
+
+        def scroll_wheel(event):
+            widget = event.widget
+            while widget is not None:
+                if widget in scroll_canvases:
+                    if getattr(event, "num", None) == 4:
+                        widget.yview_scroll(-3, "units")
+                    elif getattr(event, "num", None) == 5:
+                        widget.yview_scroll(3, "units")
+                    else:
+                        delta = int(-event.delta / 120) if abs(event.delta) >= 120 else int(-event.delta)
+                        if delta:
+                            widget.yview_scroll(delta * 3, "units")
+                    return "break"
+                widget = getattr(widget, "master", None)
+            return None
+
         def scrollable_tab():
             tab = ttk.Frame(notebook, style="Autonomy.TFrame")
             canvas = tk.Canvas(
@@ -143,6 +162,7 @@ class PreferencesUIMixin(
             )
             scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
             canvas.configure(yscrollcommand=scrollbar.set)
+            scroll_canvases.add(canvas)
             canvas.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
             content = ttk.Frame(canvas, style="Autonomy.TFrame", padding=14)
@@ -157,26 +177,18 @@ class PreferencesUIMixin(
                     target.itemconfigure(item, width=event.width),
             )
 
-            def scroll_wheel(event, target=canvas):
-                widget = event.widget
-                while widget is not None:
-                    if widget is target:
-                        if getattr(event, "num", None) == 4:
-                            target.yview_scroll(-3, "units")
-                        elif getattr(event, "num", None) == 5:
-                            target.yview_scroll(3, "units")
-                        else:
-                            delta = int(-event.delta / 120) if abs(event.delta) >= 120 else int(-event.delta)
-                            if delta:
-                                target.yview_scroll(delta * 3, "units")
-                        return "break"
-                    widget = getattr(widget, "master", None)
-                return None
-
-            canvas.bind_all("<MouseWheel>", scroll_wheel, add="+")
-            canvas.bind_all("<Button-4>", scroll_wheel, add="+")
-            canvas.bind_all("<Button-5>", scroll_wheel, add="+")
             return tab, content
+
+        def release_scroll_bindings(event=None):
+            if event is not None and event.widget is not window:
+                return
+            for sequence, binding_id in wheel_bindings:
+                try:
+                    window.unbind_class("all", sequence, binding_id)
+                except tk.TclError:
+                    break
+            wheel_bindings.clear()
+            scroll_canvases.clear()
 
         behavior_tab, behavior_content = scrollable_tab()
         routine_tab, routine_content = scrollable_tab()
@@ -187,6 +199,9 @@ class PreferencesUIMixin(
         computer_tab, computer_content = scrollable_tab()
         automation_tab, automation_content = scrollable_tab()
         ai_tab, ai_content = scrollable_tab()
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            wheel_bindings.append((sequence, window.bind_all(sequence, scroll_wheel, add="+")))
+        window.bind("<Destroy>", release_scroll_bindings, add="+")
         register_tab(behavior_tab, "Comportamento")
         register_tab(routine_tab, "Foco e rotina")
         register_tab(memory_tab, "Memórias")
