@@ -40,6 +40,7 @@
 - `notifications.py`: histórico limitado, persistido com permissões restritas, deduplicação, leitura e descarte.
 - `system_monitor.py`: coleta tolerante a indisponibilidade de CPU, RAM, disco, memória do processo e threads para o painel.
 - `dashboard_ui.py`, `notifications_ui.py` e `permissions_ui.py`: janelas separadas para métricas, histórico de notificações e revisão/revogação de permissões.
+- `computer_center_ui.py` e serviços `computer_*`, `startup_manager.py` e `performance_monitor.py`: páginas e serviços da área Meu Computador; veja [organização, dependências, permissões e validação](meu-computador.md).
 
 As dependências obrigatórias estão em `requirements.txt`. `python-xlib` é opcional e pode ser instalado separadamente para habilitar recursos que dependem de X11; sua ausência não impede os recursos gerais da mascote.
 

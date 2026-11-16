@@ -434,10 +434,6 @@ def build_installed_app_inventory(
             source = "Snap"
             candidate = snap_updates.get(package) if package else None
         elif ".appimage" in command or ".appimage" in desktop_file.casefold():
-            if not application_command_target_exists(
-                application.get("command", ""),
-            ):
-                continue
             version = ""
             origin = "AppImage / arquivo local"
             source = "AppImage"
@@ -466,6 +462,18 @@ def build_installed_app_inventory(
             version = ""
             origin = "Manual / origem não identificada"
             source = "Manual/outro"
+
+        shortcut_state = application.get("shortcut_state")
+        if shortcut_state == "available":
+            origin += " · atalho disponível"
+        elif shortcut_state == "broken":
+            origin += " · atalho quebrado"
+        elif shortcut_state == "absent":
+            origin += " · sem atalho"
+        if application.get("executable") is True:
+            origin += " · executável"
+        elif application.get("executable") is False:
+            origin += " · arquivo não executável"
 
         if candidate:
             update_status = "Atualização disponível"

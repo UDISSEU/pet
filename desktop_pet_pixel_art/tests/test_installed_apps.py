@@ -15,10 +15,50 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import autonomy
+from system_updates import build_installed_app_inventory
 from preferences_computer_ui import ComputerPreferencesTabMixin
 
 
 class InstalledAppDiscoveryTests(unittest.TestCase):
+    def test_discovers_appimage_without_desktop_entry(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            applications = Path(tmpdir) / "Applications"
+            applications.mkdir()
+            appimage = applications / "PortableEditor.AppImage"
+            appimage.write_bytes(b"not executed")
+            appimage.chmod(0o755)
+            with mock.patch.dict(os.environ, {
+                "XDG_DATA_HOME": str(Path(tmpdir) / "data"),
+                "XDG_DATA_DIRS": "",
+            }), mock.patch.object(autonomy.Path, "home", return_value=Path(tmpdir)):
+                results = autonomy.find_installed_apps()
+            inventory = build_installed_app_inventory(results, {}, {})
+
+        self.assertEqual(len(inventory), 1)
+        self.assertEqual(inventory[0]["name"], "PortableEditor")
+        self.assertEqual(inventory[0]["source"], "AppImage")
+        self.assertEqual(inventory[0]["update_status"], "Atualização não gerenciada")
+        self.assertIn("sem atalho", inventory[0]["origin"])
+
+    def test_broken_shortcut_is_retained_and_identified(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            applications = Path(tmpdir) / "applications"
+            applications.mkdir()
+            desktop_file = applications / "missing.desktop"
+            desktop_file.write_text(
+                "[Desktop Entry]\nType=Application\nName=Missing Editor\n"
+                "Exec=programa-ausente-123\n",
+                encoding="utf-8",
+            )
+            discovered = autonomy.find_installed_apps(directories=[applications])
+            inventory = build_installed_app_inventory(
+                discovered, {"missing-editor": "1.0"},
+                {str(desktop_file): "missing-editor"}, checked_sources={"APT/DEB"},
+            )
+
+        self.assertEqual(len(inventory), 1)
+        self.assertIn("atalho quebrado", inventory[0]["origin"])
+
     def test_keeps_shortcut_when_executable_validation_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             applications = Path(tmpdir) / "applications"

@@ -22,7 +22,7 @@ class DesktopNovaIntegration:
 
     def __init__(self, *, config=None, memory_manager=None, personality=None,
                  permission_manager=None, actions=None, cognitive_engine=None,
-                 profile_manager=None, profile_id=None):
+                 profile_manager=None, profile_id=None, action_log=None):
         self.core = NovaAI(config=config or NovaAIConfig()).initialize()
         self.profile_manager = profile_manager or UserProfileManager()
         if profile_id is not None:
@@ -43,6 +43,7 @@ class DesktopNovaIntegration:
             actions=self.actions,
             permissions=permission_manager,
             result_verifier=self._verify_organization,
+            action_log=action_log,
         )
         self._visual_behavior = None
         self.last_undo_mapping = None

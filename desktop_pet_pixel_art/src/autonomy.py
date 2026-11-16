@@ -427,6 +427,7 @@ def application_command_target_exists(command):
 
 def find_installed_apps(search="", directories=None):
     """Return searchable Linux desktop apps from XDG application folders."""
+    discover_appimages = directories is None
     if directories is None:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         data_dirs = os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(os.pathsep)
@@ -483,8 +484,84 @@ def find_installed_apps(search="", directories=None):
                 "command": command,
                 "generic_name": generic_name,
                 "desktop_file": str(desktop_file),
+                "shortcut_state": (
+                    "available" if _command_executable(command) else "broken"
+                ),
             })
+    if discover_appimages:
+        appimages = find_installed_appimages()
+        if needle:
+            appimages = [
+                app for app in appimages
+                if needle in f"{app['name']} {app['generic_name']}".casefold()
+            ]
+        results.extend(appimages)
     return sorted(results, key=lambda item: item["name"].casefold())
+
+
+def find_installed_appimages(directories=None):
+    """Find local AppImage bundles without requiring a desktop shortcut.
+
+    Only well-known per-user application directories are scanned, and only
+    their immediate children. This avoids searching large personal folders.
+    """
+    if directories is None:
+        directories = (
+            Path.home() / "Applications",
+            Path.home() / ".local" / "bin",
+        )
+    results = []
+    seen = set()
+    for directory in directories:
+        directory = Path(directory).expanduser()
+        try:
+            candidates = directory.iterdir()
+            for candidate in candidates:
+                if (candidate.suffix.casefold() != ".appimage"
+                        or not candidate.is_file()):
+                    continue
+                resolved = str(candidate.resolve())
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                name = candidate.stem
+                results.append({
+                    "name": name,
+                    "command": resolved,
+                    "generic_name": "AppImage",
+                    "desktop_file": "",
+                    "package": resolved,
+                    "source": "AppImage",
+                    "executable": os.access(candidate, os.X_OK),
+                    "shortcut_state": "absent",
+                })
+        except OSError:
+            continue
+    return results
+
+
+def _command_executable(command):
+    """Check a launch command without running it."""
+    try:
+        argv = shlex.split(command)
+    except (TypeError, ValueError):
+        return False
+    if not argv or any("\x00" in argument for argument in argv):
+        return False
+    executable_index = 0
+    if Path(argv[0]).name == "env":
+        executable_index = 1
+        while executable_index < len(argv) and (
+            argv[executable_index].startswith("-")
+            or "=" in argv[executable_index]
+        ):
+            executable_index += 1
+    if executable_index >= len(argv):
+        return False
+    executable = os.path.expanduser(argv[executable_index])
+    if os.path.dirname(executable):
+        return os.path.isfile(executable) and os.access(executable, os.X_OK)
+    return shutil.which(executable) is not None
 
 
 def _desktop_exec_argv(exec_value, app_name, desktop_file):

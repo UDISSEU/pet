@@ -28,9 +28,10 @@ from system_updates import (
     run_streaming_command,
 )
 from ui_theme import fit_window_to_screen
+from computer_center_ui import ComputerCenterUIMixin
 
 
-class ComputerPreferencesTabMixin:
+class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
     def _build_computer_preferences_tab(self, context):
         card = getattr(context, 'card', None)
         computer_content = getattr(context, 'computer_content', None)
@@ -38,6 +39,18 @@ class ComputerPreferencesTabMixin:
         item = getattr(context, 'item', None)
         memory_content = getattr(context, 'memory_content', None)
         window = getattr(context, 'window', None)
+        center_card = ttk.Frame(computer_content, style="Card.TFrame", padding=14)
+        center_card.pack(fill="x", pady=(0, 12))
+        ttk.Label(center_card, text="Central do computador", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            center_card,
+            text="Acompanhe processador, memória, armazenamento, temperatura e conexão em páginas organizadas.",
+            style="Hint.TLabel", wraplength=420,
+        ).pack(anchor="w", pady=(4, 10))
+        ttk.Button(
+            center_card, text="Abrir visão geral", style="Primary.TButton",
+            command=lambda: self.show_computer_center(window),
+        ).pack(anchor="e")
         computer_intro = card(
             computer_content, "Atualizações e manutenção",
             "Consulte versões e atualizações de APT/DEB, Flatpak e Snap. Nenhum pacote é alterado durante a consulta.",
@@ -1478,7 +1491,9 @@ class ComputerPreferencesTabMixin:
                         )
                         inventory_error.set("")
                     if commit_inventory:
-                        installed_apps_inventory[:] = inventory
+                        installed_apps_inventory[:] = (
+                            saved_snapshot["apps"] if saved_snapshot else inventory
+                        )
                         if saved_snapshot:
                             source_metadata["value"] = saved_snapshot["sources"]
                             verified_at["value"] = format_source_check_times(

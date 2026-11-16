@@ -36,6 +36,7 @@ import os
 import queue
 import random
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -133,6 +134,9 @@ from plugin_manager import PluginManager
 from permissions import PermissionManager
 from notifications import NotificationManager, NotificationCategory
 from system_monitor import SystemMonitor
+from computer_maintenance import inspect_disks
+from performance_monitor import PerformanceMonitor
+from computer_consultant import ActionHistoryStore
 from spotify_control import (
     SpotifyError,
     connect_spotify as spotify_connect,
@@ -185,15 +189,23 @@ class DesktopPet(
         self.event_bus = EventBus()
         self.state_manager = StateManager()
         self.permission_manager = PermissionManager()
+        try:
+            self.computer_action_history = ActionHistoryStore()
+        except (OSError, sqlite3.Error, PermissionError):
+            self.computer_action_history = None
+            logger.exception("Histórico de ações do computador indisponível")
+        self._pending_computer_action_id = None
         self.nova_integration = None
         try:
             self.nova_integration = DesktopNovaIntegration(
                 permission_manager=self.permission_manager,
                 profile_manager=self.profile_manager,
+                action_log=self.computer_action_history,
             )
         except Exception:
             logger.exception("Núcleo Nova indisponível; mantendo a aplicação legado")
         self._cognitive_cancel_token = None
+        self._pending_cognitive_action_id = None
         self.plugin_manager = PluginManager(context={"event_bus": self.event_bus,
                                                      "permissions": self.permission_manager},
                                             event_bus=self.event_bus)
@@ -235,6 +247,14 @@ class DesktopPet(
         except (tk.TclError, OSError, ValueError):
             pass
         self._closing = False
+        self.performance_monitor = None
+        try:
+            self.performance_monitor = PerformanceMonitor(
+                self.notification_manager, smart_collector=inspect_disks,
+            )
+            self.performance_monitor.start()
+        except (OSError, RuntimeError, sqlite3.Error):
+            logger.exception("Histórico de desempenho indisponível; Nova continuará sem monitoramento proativo")
         self._ai_results = queue.Queue()
         self._ai_cancel = threading.Event()
         self._ai_inference_lock = threading.Lock()
@@ -979,10 +999,32 @@ class DesktopPet(
                 return
             self._finish_automation(automation_id, result)
 
+    def _update_cognitive_action_history(self, status, result, error_code=None):
+        entry_id = getattr(self, "_pending_cognitive_action_id", None)
+        history = getattr(self, "computer_action_history", None)
+        if entry_id is None or history is None:
+            return
+        try:
+            history.update(entry_id, status, result=result, error_code=error_code)
+        except Exception:
+            logger.exception("Não foi possível atualizar o histórico da ação cognitiva")
+        if status in ("Concluída", "Cancelada", "Falhou"):
+            self._pending_cognitive_action_id = None
+
     def _start_cognitive_request(self, question):
         if self.automation_active or self.ai_request_active:
             self.show_bubble("Termino a tarefa atual antes de começar outra.", duration=3000)
             return
+        history = getattr(self, "computer_action_history", None)
+        self._pending_cognitive_action_id = None
+        if history is not None:
+            try:
+                self._pending_cognitive_action_id = history.record(
+                    "files.organize_downloads", "Em andamento", origin="Conversação",
+                    result="Preparando uma prévia; nenhum arquivo foi alterado.",
+                )
+            except Exception:
+                logger.exception("Não foi possível iniciar o histórico da ação")
         self.automation_active = True
         self.state = "thinking"
         self.show_bubble("Vou conferir a pasta Downloads e preparar uma prévia…", duration=999999)
@@ -1004,10 +1046,12 @@ class DesktopPet(
         if self._closing:
             return
         if error:
+            self._update_cognitive_action_history("Falhou", "Não foi possível preparar a prévia.", error)
             self._finish_cognitive_request(question, f"Não consegui preparar a tarefa ({error}).")
             return
         inspection = prepared.inspection
         if inspection is not None and inspection.data.get("limit_reached"):
+            self._update_cognitive_action_history("Falhou", "A prévia excedeu o limite seguro de arquivos.", "preview_limit_reached")
             self._finish_cognitive_request(
                 question,
                 "Downloads contém mais de 500 arquivos para organizar. "
@@ -1017,8 +1061,10 @@ class DesktopPet(
             return
         decision = prepared.decision
         if decision.kind.value == "request_permission":
+            self._update_cognitive_action_history("Aguardando autorização", "A prévia aguarda permissão explícita.")
             permission = next(iter(decision.permissions_required), None)
             if permission is None:
+                self._update_cognitive_action_history("Falhou", "A permissão necessária não pôde ser identificada.", "permission_unknown")
                 self._finish_cognitive_request(question, "A tarefa requer uma permissão que não identifiquei.")
                 return
             accepted = messagebox.askyesno(
@@ -1028,14 +1074,17 @@ class DesktopPet(
                 parent=self.root,
             )
             if not accepted:
+                self._update_cognitive_action_history("Cancelada", "A permissão não foi concedida.")
                 self._finish_cognitive_request(question, "Sem essa permissão, não alterei nenhum arquivo.")
                 return
             try:
                 self.permission_manager.authorize("nova.core", permission, confirmed=True)
                 self.permission_manager.require("nova.core", permission, confirmed=True)
             except (PermissionError, OSError, ValueError):
+                self._update_cognitive_action_history("Falhou", "Não foi possível registrar a permissão.", "permission_error")
                 self._finish_cognitive_request(question, "Não consegui registrar essa permissão.")
                 return
+            self._update_cognitive_action_history("Em andamento", "Permissão registrada; atualizando a prévia.")
             self.state = "thinking"
             self.show_bubble("Permissão registrada. Estou atualizando a prévia…", duration=999999)
             threading.Thread(
@@ -1044,21 +1093,27 @@ class DesktopPet(
             ).start()
             return
         if decision.kind.value == "ask_clarification":
+            self._update_cognitive_action_history("Aguardando autorização", "A solicitação precisa de esclarecimento antes de qualquer alteração.")
             self._finish_cognitive_request(
                 question, prepared.task.clarification_question or "Pode explicar o que deseja organizar?"
             )
             return
         if decision.kind.value != "require_confirmation" or not prepared.files_checked:
+            self._update_cognitive_action_history("Falhou", "A prévia não passou pelas verificações necessárias.", "plan_blocked")
             self._finish_cognitive_request(question, decision.reason or "Não posso executar essa tarefa agora.")
             return
         rows = prepared.inspection.data.get("plan", []) if prepared.inspection else []
         if not rows:
+            self._update_cognitive_action_history("Concluída", "Nenhum arquivo precisou ser alterado.")
             self._finish_cognitive_request(question, "Não encontrei arquivos para organizar; nada foi alterado.")
             return
         operations = [(Path(row["source"]), Path(row["destination"])) for row in rows]
+        self._update_cognitive_action_history("Aguardando autorização", "A prévia aguarda confirmação explícita da movimentação.")
         if not self._confirm_automation_plan(operations):
+            self._update_cognitive_action_history("Cancelada", "A pessoa usuária recusou a confirmação da movimentação.")
             self._finish_cognitive_request(question, "Tudo bem. Cancelei a organização e mantive os arquivos no lugar.")
             return
+        self._update_cognitive_action_history("Em andamento", "Ação confirmada; executando pelo despachante autorizado.")
         self._cognitive_cancel_token = CancellationToken()
         self.state = "thinking"
         self.show_bubble("Organizando os arquivos aprovados…", duration=999999)
@@ -1114,13 +1169,23 @@ class DesktopPet(
         if error is not None or result is None:
             error_name = error if isinstance(error, str) else "erro inesperado"
             if error_name == "cancelada":
+                self._update_cognitive_action_history("Cancelada", "A operação foi cancelada.")
                 message = "Cancelei a tarefa. Os arquivos permaneceram no lugar ou foram restaurados."
             else:
+                self._update_cognitive_action_history("Falhou", "A execução não terminou com sucesso.", error_name)
                 message = f"Não consegui concluir a organização ({error_name}). Você pode tentar novamente."
             self.state = "curious"
             self._record_local_interaction(question, message)
             self.show_bubble(message, duration=6000)
             return
+        if result.status.value == "cancelled":
+            self._update_cognitive_action_history("Cancelada", result.message)
+        elif result.status.value == "succeeded" and result.verified:
+            self._update_cognitive_action_history("Concluída", "A organização foi concluída e verificada.")
+        elif result.status.value == "unverified":
+            self._update_cognitive_action_history("Concluída", "A ação ocorreu, mas o resultado não foi verificado.", "unverified")
+        else:
+            self._update_cognitive_action_history("Falhou", result.message, result.status.value)
         self.state = "thumbs_up" if result.verified else "curious"
         self.show_bubble(result.message, duration=6000)
         if result.verified and self.nova_integration.last_undo_mapping:
@@ -1169,6 +1234,57 @@ class DesktopPet(
         if not self._closing:
             self._record_local_interaction(question, message)
             self.show_bubble(message, duration=6000)
+
+    def ask_computer_consultant(self, question, context, *, action_history_id=None):
+        """Send a computer question through the existing conversation/provider path."""
+        if self._closing or self.ai_request_active or self.automation_active:
+            raise RuntimeError("A conversa da Nova já está ocupada ou foi encerrada.")
+        if not isinstance(question, str) or not question.strip() or len(question) > 2000:
+            raise ValueError("A pergunta está vazia ou excede o limite permitido.")
+        if not isinstance(context, dict) or context.get("schema") != "nova-computer-context.v1":
+            raise ValueError("O contexto do computador não passou pela validação.")
+        self._authorize_core_action("ai.use")
+        self.permission_manager.require("nova.core", "ai.use")
+        if action_history_id is None and self.computer_action_history is not None:
+            try:
+                action_history_id = self.computer_action_history.record(
+                    "consultor.computador", "Em andamento", origin="Meu Computador",
+                    result="Contexto local coletado; resposta pela conversa da Nova.",
+                )
+            except Exception:
+                logger.exception("Não foi possível registrar a consulta no histórico")
+        self._pending_computer_action_id = action_history_id
+        self.history.append({
+            "role": "user", "content": question,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        })
+        self.history = self.history[-MAX_HISTORY_MESSAGES:]
+        self.ai_request_active = True
+        self.state = "thinking"
+        self._show_idea_icon = False
+        self._thinking_started_at = time.monotonic()
+        self.show_bubble("pensando...", duration=999999)
+        memories = list(self.settings.get("memories", [])) if (
+            self.profile_manager.active_profile.profile_id == "legacy") else []
+        user_name = (self.settings.get("user_name", "").strip()[:60]
+                     if self.profile_manager.active_profile.profile_id == "legacy"
+                     else self.profile_manager.active_profile.name)
+        worker = threading.Thread(
+            target=self._ask_worker,
+            args=(list(self.history), memories, dict(self.settings), user_name),
+            kwargs={"computer_context": context}, daemon=True,
+        )
+        try:
+            worker.start()
+        except (OSError, RuntimeError) as exc:
+            self.ai_request_active = False
+            self._pending_computer_action_id = None
+            if action_history_id is not None and self.computer_action_history is not None:
+                self.computer_action_history.update(
+                    action_history_id, "Falhou", result="Não foi possível iniciar a conversa.",
+                    error_code=type(exc).__name__,
+                )
+            raise RuntimeError("Não foi possível iniciar a conversa da Nova.") from exc
 
     def _finish_cognitive_controls(self):
         self.automation_active = False
@@ -1372,6 +1488,24 @@ class DesktopPet(
         if self._closing:
             return
         self._closing = True
+        pending_computer_action = getattr(self, "_pending_computer_action_id", None)
+        action_history = getattr(self, "computer_action_history", None)
+        if pending_computer_action is not None and action_history is not None:
+            try:
+                action_history.update(pending_computer_action, "Cancelada", result="Aplicativo encerrado durante a resposta.")
+            except Exception:
+                logger.exception("Não foi possível atualizar o histórico durante o encerramento")
+            self._pending_computer_action_id = None
+        pending_cognitive_action = getattr(self, "_pending_cognitive_action_id", None)
+        if pending_cognitive_action is not None and action_history is not None:
+            try:
+                action_history.update(pending_cognitive_action, "Cancelada", result="Aplicativo encerrado durante a ação.")
+            except Exception:
+                logger.exception("Não foi possível atualizar o histórico durante o encerramento")
+            self._pending_cognitive_action_id = None
+        performance_monitor = getattr(self, "performance_monitor", None)
+        if performance_monitor is not None:
+            performance_monitor.stop(timeout=2.0)
         cancel_ai = getattr(self, "_ai_cancel", None)
         if cancel_ai is not None:
             cancel_ai.set()

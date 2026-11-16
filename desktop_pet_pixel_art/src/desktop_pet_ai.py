@@ -21,7 +21,7 @@ from providers.provider_factory import create_provider
 
 
 class DesktopPetAIMixin:
-    def _ask_worker(self, history, memories=None, settings=None, user_name=""):
+    def _ask_worker(self, history, memories=None, settings=None, user_name="", *, computer_context=None):
         event_bus = getattr(self, "event_bus", None)
         permissions = getattr(self, "permission_manager", None)
         request_settings = settings or self.settings
@@ -57,6 +57,22 @@ class DesktopPetAIMixin:
                 )
                 request_settings["nova_personality_instructions"] = (
                     integration.personality_instructions(request_settings, question)
+                )
+            if computer_context is not None:
+                from computer_consultant import consultant_context_memory
+                memories = list(memories or ())
+                memories.append(consultant_context_memory(computer_context))
+                guardrails = (
+                    "Nesta pergunta, responda sobre o computador usando os dados locais fornecidos. "
+                    "Separe observações explícitas de hipóteses, explique limitações e diga claramente "
+                    "quando faltarem dados. Não invente valores. Sugira passos seguros; não solicite "
+                    "nem execute ações administrativas ou destrutivas sem autorização explícita. "
+                    "Mantenha a personalidade acolhedora da Nova."
+                )
+                base_personality = str(request_settings.get("nova_personality_instructions", ""))
+                request_settings["nova_personality_instructions"] = (
+                    base_personality[:max(0, 4_000 - len(guardrails) - 2)]
+                    + "\n\n" + guardrails
                 )
             request_history = conversation_context_for_request(history, request_settings)
             answer = answer_request(
@@ -134,7 +150,23 @@ class DesktopPetAIMixin:
             not conversation_history_is_enabled(self.settings)
             or save_history(self.history, self.history_path)
         )
-        failed = answer == PROVIDER_FAILURE_MESSAGE
+        failed = (answer == PROVIDER_FAILURE_MESSAGE
+                  or answer.startswith(("Já estou respondendo a outra pergunta",
+                                        "Tive um problema ao consultar a IA")))
+        action_id = getattr(self, "_pending_computer_action_id", None)
+        if action_id is not None:
+            history_store = getattr(self, "computer_action_history", None)
+            if history_store is not None:
+                try:
+                    history_store.update(
+                        action_id, "Falhou" if failed else "Concluída",
+                        result="O provedor não respondeu." if failed else "Resposta enviada à conversa da Nova.",
+                        error_code=("conversation_busy" if answer.startswith("Já estou respondendo")
+                                    else "provider_unavailable") if failed else None,
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception("Não foi possível atualizar o histórico do consultor")
+            self._pending_computer_action_id = None
         focus_mode = getattr(self, "focus_mode", "idle")
         if focus_mode == "focus":
             self.state = "focused"
