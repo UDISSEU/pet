@@ -192,7 +192,6 @@ class DashboardUIMixin:
             if state["busy"] or state["closed"]:
                 return
             state["busy"] = True
-
             def worker():
                 try:
                     result = self.system_monitor.collect(extra=self._dashboard_snapshot())
@@ -300,6 +299,20 @@ class DashboardUIMixin:
                 self._dashboard_window = None
             window.destroy()
 
+        def on_destroy(event):
+            if event.widget is not window:
+                return
+            state["closed"] = True
+            after_id = state.get("after_id")
+            if after_id is not None:
+                try:
+                    window.after_cancel(after_id)
+                except tk.TclError:
+                    pass
+            if getattr(self, "_dashboard_window", None) is window:
+                self._dashboard_window = None
+
         window.protocol("WM_DELETE_WINDOW", on_close)
+        window.bind("<Destroy>", on_destroy, add="+")
         refresh()
         return window

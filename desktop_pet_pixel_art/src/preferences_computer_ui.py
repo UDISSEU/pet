@@ -1227,14 +1227,16 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 reverse=inventory_sort["reverse"],
             )
             for app in rows:
-                item_id = inventory_table.insert(
-                    "", "end",
-                    image=app_icon_image(app),
-                    values=(
+                row_options = {
+                    "values": (
                         app["name"], app["version"], app["candidate_version"],
                         app["update_status"], app["origin"], app["package"],
                     ),
-                )
+                }
+                icon = app_icon_image(app)
+                if icon is not None:
+                    row_options["image"] = icon
+                item_id = inventory_table.insert("", "end", **row_options)
                 app_by_item[item_id] = app
             if rows:
                 inventory_empty_state.pack_forget()

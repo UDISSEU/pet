@@ -134,10 +134,9 @@ class MemoryPreferencesTabMixin:
 
         memory_card = card(
             memory_content, "O que a Nova deve lembrar?",
-            "Memórias manuais antigas pertencem ao perfil principal. "
-            "Memórias de outros perfis ficam no armazenamento local separado. "
-            "Desativar o uso impede sua recuperação em respostas, estilo e saudações; "
-            "não apaga os registros.",
+            "Memórias manuais antigas pertencem ao perfil principal. Outros perfis usam "
+            "armazenamento separado. Desativar o uso impede que a Nova recupere estas "
+            "memórias, mas não as apaga.",
         )
         memory_enabled = tk.BooleanVar(
             value=self.settings.get("memory_enabled", True) is True
@@ -185,13 +184,35 @@ class MemoryPreferencesTabMixin:
         memory_input.pack(side="left", fill="x", expand=True, ipady=5)
         memory_list, refresh_memories, remove_memory = setup_list(
             memory_content, memory_items, lambda item: item,
-            "Suas memórias ficam neste computador e você pode removê-las quando quiser.",
+            "Nenhuma memória manual salva",
+            height=3,
+            empty_description=(
+                "Suas memórias ficam neste computador e você pode removê-las quando quiser."
+            ),
         )
         visible_memory_indices = []
+        memory_add_button = None
+        memory_remove_button = None
+
+        def update_remove_state(_event=None):
+            if memory_remove_button is None:
+                return
+            can_edit_profile = (
+                profile_manager is None
+                or profile_manager.active_profile.profile_id == "legacy"
+            )
+            memory_remove_button.configure(
+                state=(
+                    "normal"
+                    if can_edit_profile and memory_list.curselection()
+                    else "disabled"
+                )
+            )
 
         def render_memories(*_args):
             needle = memory_search.get().casefold().strip()
             visible_memory_indices.clear()
+            memory_list.selection_clear(0, "end")
             for source_index, memory in enumerate(memory_items):
                 if not needle or needle in str(memory).casefold():
                     visible_memory_indices.append(source_index)
@@ -200,6 +221,7 @@ class MemoryPreferencesTabMixin:
                 str,
                 lambda memory: not needle or needle in str(memory).casefold(),
             )
+            update_remove_state()
 
         def remove_visible_memory():
             selection = memory_list.curselection()
@@ -210,10 +232,6 @@ class MemoryPreferencesTabMixin:
 
         memory_search.trace_add("write", render_memories)
         render_memories()
-        memory_list.bind("<<ListboxSelect>>", lambda _event: None)
-        memory_add_button = None
-        memory_remove_button = None
-
         def add_memory():
             value = memory_entry.get().strip()
             if value:
@@ -221,13 +239,14 @@ class MemoryPreferencesTabMixin:
                 memory_entry.set("")
                 render_memories()
 
+        memory_list.bind("<<ListboxSelect>>", update_remove_state)
+
         def set_memory_controls(enabled):
             state = "normal" if enabled else "disabled"
             memory_input.configure(state=state)
             if memory_add_button is not None:
                 memory_add_button.configure(state=state)
-            if memory_remove_button is not None:
-                memory_remove_button.configure(state=state)
+            update_remove_state()
 
         if profile_manager is not None:
             active_profile_id = profile_manager.active_profile.profile_id
@@ -240,6 +259,7 @@ class MemoryPreferencesTabMixin:
         memory_input.bind("<Return>", lambda _event: add_memory())
         memory_remove_button = ttk.Button(
             memory_content, text="Remover selecionada", style="Secondary.TButton",
+            state="disabled",
             command=remove_visible_memory,
         )
         memory_remove_button.pack(anchor="e", pady=(10, 0))
@@ -376,7 +396,11 @@ class MemoryPreferencesTabMixin:
                     f"[{memory.kind.value} · {memory.provenance} · "
                     f"confiança {memory.confidence:.0%}] {memory.content}"
                 ),
-                "Nenhuma memória estruturada cadastrada neste perfil.",
+                "Nenhuma memória estruturada salva",
+                height=3,
+                empty_description=(
+                    "As informações deste perfil aparecerão aqui quando você confirmar o salvamento."
+                ),
             )
 
             structured_actions = ttk.Frame(structured_card, style="Card.TFrame")

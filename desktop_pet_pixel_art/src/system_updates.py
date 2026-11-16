@@ -512,7 +512,7 @@ def build_installed_app_inventory(
             "desktop_file": desktop_file,
             "command": application.get("command", ""),
             "location": application.get("location", ""),
-            "shortcut_state": shortcut_state,
+            "shortcut_state": shortcut_state or "",
         })
 
     for application_id, (name, version, remote) in flatpak_apps.items():
@@ -534,7 +534,7 @@ def build_installed_app_inventory(
             "candidate_version": candidate or "—",
             "update_status": update_status,
             "description": "",
-            "categories": [],
+            "categories": "",
             "icon": "",
             "desktop_file": "",
             "command": "",

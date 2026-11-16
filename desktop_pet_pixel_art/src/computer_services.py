@@ -126,7 +126,7 @@ def collect_storage_overview(path=None):
     import psutil
 
     selected = Path(path or Path.home()).expanduser().resolve(strict=True)
-    usage = shutil.disk_usage(selected)
+    usage = psutil.disk_usage(selected)
     volumes = []
     seen = set()
     for partition in psutil.disk_partitions(all=False):

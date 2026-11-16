@@ -642,18 +642,31 @@ All packages are up to date.
                     "origin": "Flatpak · flathub", "package": "com.spotify.Client",
                     "source": "Flatpak", "candidate_version": "—",
                     "update_status": "Verificação necessária",
+                    "description": "", "categories": "", "icon": "",
+                    "desktop_file": (
+                        "/home/user/.local/share/flatpak/exports/share/"
+                        "applications/com.spotify.Client.desktop"
+                    ),
+                    "command": "", "location": "",
+                    "shortcut_state": "",
                 },
                 {
                     "name": "Visual Studio Code", "version": "1.146.0",
                     "origin": "APT/DEB", "package": "code",
                     "source": "APT/DEB", "candidate_version": "—",
                     "update_status": "Verificação necessária",
+                    "description": "", "categories": "", "icon": "",
+                    "desktop_file": "/usr/share/applications/code.desktop",
+                    "command": "", "location": "", "shortcut_state": "",
                 },
                 {
                     "name": "Zeta Editor", "version": "2.3.1",
                     "origin": "APT/DEB", "package": "zeta-editor",
                     "source": "APT/DEB", "candidate_version": "—",
                     "update_status": "Verificação necessária",
+                    "description": "", "categories": "", "icon": "",
+                    "desktop_file": "/usr/share/applications/zeta.desktop",
+                    "command": "", "location": "", "shortcut_state": "",
                 },
             ],
         )

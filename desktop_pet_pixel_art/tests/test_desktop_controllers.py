@@ -264,7 +264,7 @@ class DesktopControllerRegressionTests(unittest.TestCase):
                 self.value = value
 
             def get(self):
-                return self.value
+                return "" if self.value is None else self.value
 
             def set(self, value):
                 self.value = value
@@ -348,7 +348,14 @@ class DesktopControllerRegressionTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(module, "tk", FakeTk()))
                 if hasattr(module, "ttk"):
                     stack.enter_context(mock.patch.object(module, "ttk", FakeTtk()))
+            stack.enter_context(mock.patch.object(
+                preferences_common_ui, "make_empty_state",
+                side_effect=lambda *_args, **_kwargs: FakeWidget(),
+            ))
             stack.enter_context(mock.patch.object(preferences_ui, "make_header"))
+            stack.enter_context(mock.patch.object(
+                preferences_ui, "apply_theme", return_value=mock.Mock(),
+            ))
             stack.enter_context(
                 mock.patch.object(
                     preferences_ui.PreferencesUIMixin,
@@ -356,6 +363,10 @@ class DesktopControllerRegressionTests(unittest.TestCase):
                     fake_build_computer,
                 )
             )
+            stack.enter_context(mock.patch.object(
+                preferences_ui.PreferencesUIMixin,
+                "_build_memory_preferences_tabs",
+            ))
             pet.open_autonomy_settings("computer")
 
         refresh_called.assert_called_once_with()
@@ -366,7 +377,7 @@ class DesktopControllerRegressionTests(unittest.TestCase):
                 self.value = value
 
             def get(self):
-                return self.value
+                return "" if self.value is None else self.value
 
             def set(self, value):
                 self.value = value
@@ -440,7 +451,14 @@ class DesktopControllerRegressionTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(module, "tk", FakeTk()))
                 if hasattr(module, "ttk"):
                     stack.enter_context(mock.patch.object(module, "ttk", FakeTtk()))
+            stack.enter_context(mock.patch.object(
+                preferences_common_ui, "make_empty_state",
+                side_effect=lambda *_args, **_kwargs: FakeWidget(),
+            ))
             stack.enter_context(mock.patch.object(preferences_ui, "make_header"))
+            stack.enter_context(mock.patch.object(
+                preferences_ui, "apply_theme", return_value=mock.Mock(),
+            ))
             pet.open_autonomy_settings("routine")
 
         self.assertGreaterEqual(

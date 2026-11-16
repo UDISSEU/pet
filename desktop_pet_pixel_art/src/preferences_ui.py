@@ -24,7 +24,7 @@ class PreferencesUIMixin(
         window.title("Preferências da Nova")
         window.transient(self.root)
         window.attributes("-topmost", True)
-        fit_window_to_screen(window, 560, 600, min_width=520, min_height=440)
+        fit_window_to_screen(window, 560, 660, min_width=520, min_height=440)
         window.configure(bg=COLORS["background"])
         self._activate_panel(window)
         make_header(
@@ -77,6 +77,8 @@ class PreferencesUIMixin(
         notebook = ttk.Frame(outer, style="Autonomy.TFrame")
         tab_navigation = ttk.Frame(outer, style="Autonomy.TFrame")
         tab_navigation.pack(fill="x", pady=(0, 6))
+        tab_controls = ttk.Frame(tab_navigation, style="Autonomy.TFrame")
+        tab_controls.pack(anchor="center")
         tab_pages = []
         scroll_canvases = set()
         wheel_bindings = []
@@ -120,20 +122,20 @@ class PreferencesUIMixin(
                     break
 
         ttk.Button(
-            tab_navigation, text="◀", width=2, style="Nav.TButton",
+            tab_controls, text="◀", width=2, style="Nav.TButton",
             command=lambda: move_tab(-1),
         ).pack(side="left")
         tab_selector = ttk.Combobox(
-            tab_navigation, textvariable=active_tab_name, state="readonly", width=27,
+            tab_controls, textvariable=active_tab_name, state="readonly", width=20,
             style="TabNav.TCombobox",
             values=("Comportamento", "Foco e rotina", "Memórias", "Histórico",
                     "Lembretes", "Aplicativos", "Meu Computador", "Automações",
                     "Inteligência artificial"),
         )
-        tab_selector.pack(side="left", fill="x", expand=True, padx=8)
+        tab_selector.pack(side="left", padx=8)
         tab_selector.bind("<<ComboboxSelected>>", select_tab_name)
         ttk.Button(
-            tab_navigation, text="▶", width=2, style="Nav.TButton",
+            tab_controls, text="▶", width=2, style="Nav.TButton",
             command=lambda: move_tab(1),
         ).pack(side="right")
         notebook.pack(fill="both", expand=True)
@@ -184,7 +186,7 @@ class PreferencesUIMixin(
                 return
             for sequence, binding_id in wheel_bindings:
                 try:
-                    window.unbind_class("all", sequence, binding_id)
+                    window._root()._unbind(("bind", "all", sequence), binding_id)
                 except tk.TclError:
                     break
             wheel_bindings.clear()
@@ -301,7 +303,7 @@ class PreferencesUIMixin(
             frame.pack(fill="x", pady=(0, 12))
             ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor="w")
             if hint:
-                ttk.Label(frame, text=hint, style="Hint.TLabel", wraplength=360).pack(anchor="w", pady=(3, 8))
+                ttk.Label(frame, text=hint, style="Hint.TLabel", wraplength=440).pack(anchor="w", pady=(3, 8))
             return frame
 
         context.__dict__.update(locals())
@@ -476,3 +478,4 @@ class PreferencesUIMixin(
             select_tab(ai_tab)
         window.bind("<Escape>", lambda _event: window.destroy())
         window.bind("<Control-Return>", lambda _event: save_and_close())
+        return window

@@ -210,7 +210,8 @@ def make_empty_state(parent, title, description=None):
     copy = tk.Frame(frame, bg=COLORS["surface"])
     copy.pack(side="left", fill="x", expand=True)
     tk.Label(copy, text=title, bg=COLORS["surface"], fg=COLORS["ink"],
-             font=("TkDefaultFont", 10, "bold"), anchor="w").pack(fill="x")
+             font=("TkDefaultFont", 10, "bold"), anchor="w", justify="left",
+             wraplength=390).pack(fill="x")
     if description:
         tk.Label(copy, text=description, bg=COLORS["surface"], fg=COLORS["muted"],
                  font=FONTS["small"], anchor="w", justify="left", wraplength=420).pack(

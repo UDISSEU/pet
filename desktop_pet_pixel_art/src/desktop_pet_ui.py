@@ -114,6 +114,16 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
         more = tk.Frame(panel, bg=COLORS["background"])
         expanded = {"value": False}
 
+        def fit_popup_to_screen():
+            popup.update_idletasks()
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            width = max(popup.winfo_width(), popup.winfo_reqwidth())
+            height = max(popup.winfo_height(), popup.winfo_reqheight())
+            x = max(0, min(popup.winfo_x(), screen_width - width))
+            y = max(0, min(popup.winfo_y(), screen_height - height))
+            popup.geometry(f"+{x}+{y}")
+
         def toggle_more():
             if expanded["value"]:
                 more.pack_forget()
@@ -122,6 +132,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
                 more.pack(fill="x", pady=(5, 0))
                 more_button.configure(text="Mostrar menos  ▴")
             expanded["value"] = not expanded["value"]
+            fit_popup_to_screen()
 
         more_button = tk.Button(
             panel, text="Mostrar mais  ▾", command=toggle_more, anchor="w",

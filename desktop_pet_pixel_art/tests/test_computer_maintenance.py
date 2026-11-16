@@ -9,7 +9,7 @@ from pathlib import Path
 from tkinter import ttk
 from unittest import mock
 
-from computer_services import analyze_directory
+from computer_services import analyze_directory, collect_storage_overview
 from computer_center_ui import ComputerCenterUIMixin
 from startup_manager import discover_startup_entries, set_startup_enabled
 
@@ -128,6 +128,14 @@ class StartupManagerTests(unittest.TestCase):
 
 
 class StorageAnalysisTests(unittest.TestCase):
+    def test_storage_overview_reports_usage_for_selected_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result = collect_storage_overview(temporary)
+
+        self.assertEqual(result["path"], temporary)
+        self.assertGreaterEqual(result["percent"], 0)
+        self.assertLessEqual(result["percent"], 100)
+
     def test_scans_files_and_directory_totals_without_following_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "chosen"
@@ -231,11 +239,13 @@ class ComputerCenterUITests(unittest.TestCase):
             buttons = lambda: [widget for widget in descendants(window)
                                if isinstance(widget, ttk.Button)]
             next(button for button in buttons()
-                 if button.cget("text") == "Biblioteca de Aplicativos · abrir inventário").invoke()
+                 if button.cget("text").startswith(
+                     "✦  Biblioteca de Aplicativos · abrir inventário"
+                 )).invoke()
             self.assertEqual(controller.opened_preferences_tab, "computer")
             self.assertTrue(wait_for(lambda: any(
                 isinstance(widget, ttk.Label)
-                and "Processador" in str(widget.cget("text"))
+                and "processador" in str(widget.cget("text")).casefold()
                 for widget in descendants(window)
             )))
             next(button for button in buttons() if button.cget("text") == "Inicialização").invoke()
@@ -245,11 +255,17 @@ class ComputerCenterUITests(unittest.TestCase):
                 for widget in descendants(window)
             )))
             next(button for button in buttons() if button.cget("text") == "Armazenamento").invoke()
-            self.assertTrue(wait_for(lambda: any(
+            storage_action_loaded = wait_for(lambda: any(
                 isinstance(widget, ttk.Button)
                 and widget.cget("text") == "Analisar pasta"
                 for widget in descendants(window)
-            )))
+            ))
+            status_messages = [
+                str(window.getvar(widget.cget("textvariable")))
+                for widget in descendants(window)
+                if isinstance(widget, ttk.Label) and widget.cget("textvariable")
+            ]
+            self.assertTrue(storage_action_loaded, "; ".join(status_messages))
             with tempfile.TemporaryDirectory() as temporary:
                 with mock.patch("computer_center_ui.filedialog.askdirectory",
                                 return_value=temporary):
