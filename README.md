@@ -1,205 +1,336 @@
-# ✨ Nova — mascote de desktop para Linux
+# ✨ AUROVA — Uma assistente virtual com identidade própria
 
-Uma companheira virtual em pixel art que vive na área de trabalho, anima-se, conversa por IA e oferece ferramentas locais para foco, lembretes e organização. O projeto é feito em Python e Tkinter, com preferência por processamento local e confirmações antes de ações que alteram arquivos ou o sistema.
+> **Não apenas uma inteligência que responde. Uma parceira que pensa, aprende, cria e realiza junto com você.**
 
-> **Branch principal:** `main` · **Plataforma-alvo:** Linux
+A **Aurova** é um projeto de assistente virtual independente, criado com o propósito de auxiliar as pessoas e facilitar suas vidas por meio da tecnologia. Mais do que responder perguntas, ela está sendo desenvolvida para compreender objetivos, encontrar soluções, executar tarefas e acompanhar o usuário em suas atividades do dia a dia.
 
-## O que a Nova oferece
+Com personalidade própria, aparência visual única e uma maneira descontraída de interagir, a Aurova busca construir uma experiência diferente das assistentes virtuais tradicionais.
 
-- **Mascote animada:** caminha, descansa, acena, dança, boceja e reage às interações.
-- **Conversa com IA:** usa Ollama local por padrão e permite configurar Gemini, Groq ou Mistral.
-- **Foco e rotina:** sessões de concentração e pausa, horário silencioso, lembretes e mensagens de rotina.
-- **Automações locais:** consulta de indicadores do notebook, análise de arquivos e organização de Downloads e capturas.
-- **Integrações:** abertura de aplicativos Linux e controle de reprodução do Spotify.
-- **Controles de segurança:** permissões para ações sensíveis, prévias e confirmações antes de operações destrutivas.
+O projeto utiliza o repositório PET como ponto de partida para desenvolver uma inteligência cada vez mais autônoma, adaptável e independente.
 
-A Nova pode ser usada sem configurar provedores online. Recursos que dependem de X11, como observar janelas e posicionar a mascote sobre elas, são opcionais.
+---
 
-### Tecnologias
+## 🌟 Nossa visão
 
-- **Linguagem:** Python
-- **Interface e runtime:** Tkinter, em ambiente desktop Linux
-- **Bibliotecas principais:** Pillow, OpenCV, NumPy e psutil
-- **Integrações opcionais:** Ollama, APIs Gemini/Groq/Mistral, Spotify, Secret Service e `python-xlib`
+A Aurova nasce de uma ideia: criar uma assistente virtual que realmente participe da vida de quem a utiliza.
 
-## Estrutura do repositório
+Imagine estar trabalhando em uma planilha no Excel e pedir:
+
+*"Aurova, termine o restante dessa planilha para mim."*
+
+Em vez de simplesmente explicar como fazer, a proposta é que ela consiga compreender a estrutura do documento, identificar o que precisa ser feito, elaborar as fórmulas necessárias, organizar as informações e concluir o trabalho.
+
+E esse é apenas um exemplo.
+
+No futuro, a Aurova deverá ser capaz de auxiliar em diversas atividades, como:
+
+- **Trabalho e produtividade:** criar, editar e organizar documentos, planilhas, apresentações e outros arquivos.
+- **Programação:** desenvolver projetos, analisar códigos, encontrar erros e implementar soluções.
+- **Computador:** interagir com programas, navegar por interfaces, gerenciar arquivos e executar tarefas.
+- **Organização pessoal:** ajudar com compromissos, lembretes, planejamento e atividades cotidianas.
+- **Resolução de problemas:** analisar situações, identificar possíveis soluções e executar etapas para resolver problemas.
+- **Criação:** trabalhar junto com o usuário na elaboração de ideias, projetos e conteúdos.
+- **Aprendizado:** utilizar experiências anteriores e informações relevantes para melhorar suas interações futuras.
+
+A intenção é que o usuário possa explicar o resultado que deseja e deixar que a Aurova descubra o melhor caminho para alcançá-lo.
+
+## 🧠 Uma inteligência que busca soluções
+
+A Aurova está sendo desenvolvida para ir além de respostas pré-programadas.
+
+Sua proposta é possuir capacidade de interpretar objetivos, analisar situações, planejar etapas, selecionar ferramentas e encontrar diferentes caminhos para realizar uma tarefa.
+
+Em vez de depender de instruções detalhadas para cada ação, ela deverá conseguir:
+
+1. Compreender o que o usuário deseja.
+2. Analisar o contexto e as informações disponíveis.
+3. Elaborar um plano de execução.
+4. Identificar as ferramentas necessárias.
+5. Executar as ações autorizadas.
+6. Verificar os resultados.
+7. Aprender com os erros e experiências relevantes.
+
+O objetivo é desenvolver autonomia operacional: uma assistente capaz de tomar decisões durante a execução de tarefas, adaptar seus planos e procurar alternativas quando algo não funciona.
+
+## 💻 Controle e interação com o computador
+
+Um dos principais objetivos da Aurova é conquistar a capacidade de operar o computador de maneira ampla.
+
+Ela deverá trabalhar diretamente com o ambiente do usuário, interagindo com programas e ferramentas para realizar atividades reais.
+
+Entre as possibilidades futuras estão:
+
+- Identificar elementos exibidos na tela.
+- Interagir com janelas, menus e botões.
+- Utilizar teclado e mouse.
+- Abrir, editar, criar e organizar arquivos.
+- Trabalhar com planilhas e documentos.
+- Auxiliar no desenvolvimento de softwares.
+- Executar tarefas em diferentes programas.
+- Acompanhar processos e verificar se foram concluídos corretamente.
+
+A Aurova não deverá se limitar a ensinar o usuário a fazer alguma coisa. Quando autorizada e tecnicamente preparada, deverá ser capaz de fazer junto com ele.
+
+A autonomia será acompanhada por um sistema de permissões, confirmações e mecanismos de segurança, especialmente para operações sensíveis ou irreversíveis.
+
+## 💜 Personalidade e identidade própria
+
+A Aurova não será apenas uma ferramenta com uma interface visual. Ela terá uma identidade própria.
+
+Sua personalidade será construída a partir de características fundamentais:
+
+- Alegre e descontraída.
+- Acolhedora e receptiva.
+- Prestativa e proativa.
+- Curiosa e interessada em aprender.
+- Comunicativa e natural.
+- Capaz de reconhecer o contexto de cada interação.
+
+Sua maneira de conversar poderá se adaptar ao perfil e às preferências de cada usuário.
+
+Com o tempo, poderá compreender se determinada pessoa prefere conversas mais descontraídas, explicações detalhadas ou respostas objetivas.
+
+Essa adaptação, entretanto, não deverá apagar sua essência. A Aurova continuará tendo sua própria identidade, seus princípios e sua maneira característica de interagir.
+
+### Uma presença visual diferente
+
+A identidade visual também é uma parte importante do projeto.
+
+A Aurova possui uma proposta de representação visual própria, baseada em uma personagem virtual com animações e expressões.
+
+A personagem deverá transmitir emoções e estados comportamentais por meio de movimentos, expressões faciais e animações, tornando a interação mais natural e próxima.
+
+A intenção é criar uma assistente reconhecível, com aparência e personalidade distintas, em vez de reproduzir o visual tradicional de outras inteligências artificiais.
+
+## 🧩 Memória e convivência
+
+Uma assistente que acompanha o usuário precisa conseguir preservar informações importantes ao longo do tempo.
+
+Por isso, a Aurova tem como objetivo desenvolver um sistema de memória persistente que permita:
+
+- Recordar informações relevantes sobre o usuário.
+- Recuperar detalhes de conversas anteriores.
+- Acompanhar projetos em andamento.
+- Registrar preferências e decisões.
+- Reconhecer tarefas recorrentes.
+- Utilizar experiências anteriores para orientar novas ações.
+- Construir uma relação de convivência ao longo do tempo.
+
+A memória deverá estar conectada à personalidade e ao comportamento da assistente.
+
+Assim, suas interações poderão evoluir conforme a convivência, sem perder sua identidade central.
+
+## 🔬 Independência tecnológica
+
+Um dos objetivos de longo prazo é tornar a Aurova cada vez mais independente de serviços e provedores externos.
+
+O projeto busca construir uma arquitetura própria, na qual seus componentes de inteligência, memória, planejamento e execução possam evoluir de maneira integrada.
+
+Essa independência será desenvolvida gradualmente, começando pela organização da arquitetura, validação dos componentes e criação de mecanismos próprios.
+
+O objetivo futuro é reduzir progressivamente a dependência de modelos externos e desenvolver tecnologias próprias de inteligência, respeitando as limitações de hardware e os recursos disponíveis.
+
+A prioridade atual não é iniciar um treinamento de grande escala, mas construir uma base sólida, testável e confiável.
+
+## 🔐 Privacidade e segurança
+
+A autonomia da Aurova precisa ser acompanhada de responsabilidade.
+
+O projeto considera importantes os seguintes princípios:
+
+- Respeito às permissões concedidas pelo usuário.
+- Controle sobre ações executadas no computador.
+- Confirmação para operações sensíveis.
+- Proteção de informações pessoais.
+- Registro de atividades relevantes.
+- Tratamento seguro de arquivos e dados.
+- Separação de permissões entre componentes e extensões.
+- Transparência sobre as ações realizadas.
+
+A Aurova deverá ajudar o usuário sem retirar dele o controle sobre seu próprio computador.
+
+## 🛠️ Sobre o projeto
+
+O projeto utiliza como ponto de partida o repositório PET, originalmente desenvolvido como uma mascote virtual para desktop.
+
+A estrutura existente serve de base para a evolução da aplicação em direção a uma assistente virtual independente.
+
+A arquitetura está sendo organizada para permitir a evolução de diferentes componentes, incluindo:
+
+- Interface desktop.
+- Personagem virtual e sistema de animações.
+- Núcleo de inteligência.
+- Sistema de personalidade.
+- Memória persistente.
+- Gerenciamento de tarefas.
+- Sistema de permissões.
+- Gerenciamento de plugins.
+- Integrações com o sistema operacional.
+- Ferramentas de automação.
+- Testes e monitoramento.
+
+A estrutura poderá ser reorganizada conforme a evolução da Aurova.
+
+## 🧰 Tecnologias
+
+A base atual do projeto utiliza principalmente:
+
+- **Python:** linguagem principal da aplicação.
+- **Tkinter:** construção da interface desktop.
+- **Pillow:** processamento e manipulação de imagens.
+- **Ollama:** suporte à execução de modelos locais na arquitetura atual.
+- **SQLite e arquivos locais:** possibilidades de persistência e organização de dados, conforme os módulos implementados.
+- **Linux:** ambiente principal de desenvolvimento e execução.
+
+As tecnologias poderão ser substituídas, ampliadas ou reorganizadas conforme a arquitetura própria da Aurova evoluir.
+
+## 📁 Estrutura do projeto
+
+A estrutura abaixo representa a organização geral da base PET. Alguns módulos poderão mudar durante a transformação em Aurova.
 
 ```text
-.
-├── .github/
-│   └── workflows/            # CI: testes automatizados no GitHub Actions
+pet/
 ├── desktop_pet_pixel_art/
-│   ├── assets/
-│   │   ├── movements/        # Vídeos usados nas animações da Nova
-│   │   ├── personagem/       # Sprites e animações da personagem
-│   │   ├── icons/            # Ícones da aplicação
-│   │   └── references/       # Referências visuais
-│   ├── docs/                 # Arquitetura e instruções para testes gráficos
-│   ├── launchers/            # Lançador, ícone e atalhos da aplicação
-│   ├── src/
-│   │   ├── ai/               # Contexto, personalidade, roteamento e pedidos de IA
-│   │   ├── providers/        # Adaptadores para Ollama, Gemini, Groq e Mistral
-│   │   ├── desktop_pet.py    # Janela principal, ciclo e estado da mascote
-│   │   ├── desktop_pet_ui.py # Menu, preferências e janelas da interface
-│   │   ├── automations.py    # Automações locais e organização de arquivos
-│   │   ├── plugin_manager.py # Registro e ciclo de vida de plugins
-│   │   └── ...               # Persistência, permissões, animações e integrações
-│   ├── tests/                # Testes unitários e de integração com mocks
-│   ├── tools/                # Ferramentas de teste gráfico e soak tests
-│   ├── install.sh            # Cria o ambiente virtual e instala dependências
-│   └── requirements.txt      # Dependências Python
-├── movimentação Nova/       # Vídeos e imagens de referência da personagem
-├── movimento 2.0/           # Materiais de criação, sprites e referências
-└── README.md                 # Apresentação do projeto
+│   └── assets/
+│       ├── movements/
+│       ├── personagem/
+│       ├── icons/
+│       └── references/
+│
+├── docs/
+├── launchers/
+├── src/
+│   ├── ai/
+│   ├── providers/
+│   ├── desktop_pet.py
+│   └── ...
+│
+├── tests/
+├── tools/
+├── desktop_pet.py
+├── desktop_pet_ui.py
+├── automations.py
+├── plugin_manager.py
+├── install.sh
+└── requirements.txt
 ```
 
-As pastas `movimentação Nova/` e `movimento 2.0/` guardam materiais visuais de origem e referência. Os recursos usados pelo aplicativo em execução ficam organizados em `desktop_pet_pixel_art/assets/`.
+## 🚀 Instalação
 
-### Como as partes se conectam
-
-`src/desktop_pet.py` coordena a janela e o ciclo da aplicação; `desktop_pet_ui.py` reúne menus e preferências. `AnimationLoader` carrega as animações em segundo plano e entrega os resultados à interface Tkinter. Na conversa, `ai.request_handler` encaminha o contexto a `AICore`, que usa `ModelRouter` e os módulos de `providers/`.
-
-Pedidos locais conhecidos, como algumas automações e ações de sistema, podem ser tratados sem chamar um modelo de IA. As operações de arquivo que modificam conteúdo apresentam uma prévia e pedem confirmação; a interface também exige confirmação para esvaziar a Lixeira ou executar determinadas ações de manutenção.
-
-## Histórico e ramificações
-
-O histórico começa em **8 de outubro de 2026**, com a primeira versão da mascote e seus materiais gráficos. Os marcos identificados mostram a evolução do protótipo para uma aplicação desktop mais completa:
-
-- **Início do projeto:** primeira implementação da mascote, com assets e animações de pixel art.
-- **Organização do repositório:** remoção posterior de ambientes virtuais e arquivos redundantes do rastreamento, além da adoção de `.gitignore`.
-- **Expansão da aplicação:** inclusão de lançador Linux, provedores de IA, módulos separados para interface e animação e testes automatizados.
-- **Automações e integrações:** ferramentas locais para organização e análise de arquivos, integração com Spotify e controles de permissão.
-- **Estado atual de `main`:** aplicação modular em Python, com interface Tkinter, testes e documentação de arquitetura.
-
-As ramificações disponíveis no momento da análise são:
-
-| Branch | Referência no momento da análise |
-|---|---|
-| `main` | `94f827a` |
-| `feat/automacoes` | `3793db1` |
-| `feature/nova-complete` | `05ef1c2` |
-| `fix/analise-nova` | `9faa883` |
-| `javascript` | `4eb8625` |
-| `ramificação2.0` | `c05b40a` |
-| `testegeral` | `d0ed922` |
-
-Os nomes indicam linhas de trabalho distintas, mas a presença de uma branch não significa, por si só, que suas alterações já estejam integradas à `main`. Para conferir o conteúdo e a relação entre elas, consulte os respectivos históricos e compare cada branch com `main`.
-
-## Instalação
+A instalação abaixo corresponde ao fluxo da base atual e poderá mudar conforme a migração para Aurova avançar.
 
 ### Requisitos
 
-- Linux com Python 3 e suporte a `venv`
-- Tkinter disponível para a instalação Python do sistema
-- `python3-dbus` para recursos que dependem de D-Bus/Secret Service
+- Linux.
+- Python 3.
+- Git.
+- Tkinter.
+- Dependências Python do projeto.
 
-Em Debian ou Ubuntu, instale os requisitos do sistema:
+### Clonar o repositório
 
 ```bash
-sudo apt update
-sudo apt install python3-venv python3-tk python3-dbus
+git clone https://github.com/UDISSEU/pet.git
+cd pet
 ```
 
-### Instalar a Nova
-
-Na raiz do repositório:
+### Criar ambiente virtual
 
 ```bash
-cd desktop_pet_pixel_art
+python3 -m venv .venv
+```
+
+### Ativar o ambiente
+
+```bash
+source .venv/bin/activate
+```
+
+### Instalar dependências
+
+```bash
+pip install -r requirements.txt
+```
+
+### Executar o instalador, quando necessário
+
+```bash
+chmod +x install.sh
 ./install.sh
 ```
 
-O instalador cria o ambiente virtual `.venv`, instala as dependências de `requirements.txt` e registra o lançador no menu de aplicativos do usuário.
+### Executar a aplicação
 
-### Iniciar
+Na estrutura atual:
 
 ```bash
-cd desktop_pet_pixel_art
 .venv/bin/python src/desktop_pet.py
 ```
 
-## Conversa com IA
+## 🧪 Testes
 
-O **Ollama local** é o provedor padrão. Para conversar com um modelo, instale o Ollama, inicie o serviço e baixe o modelo configurado por padrão:
+O projeto possui uma estrutura de testes para verificar o funcionamento dos componentes.
 
-```bash
-ollama pull llama3.2:1b
-```
-
-A mascote e os recursos locais continuam disponíveis mesmo sem o Ollama. A conversa online é opcional: Gemini, Groq e Mistral podem ser configurados nas preferências da Nova. Para usar um provedor online, selecione-o e habilite as opções de uso e compartilhamento de contexto. As chaves não são armazenadas em `settings.json`; o projeto oferece suporte ao cofre Secret Service ou às variáveis de ambiente indicadas abaixo:
-
-```text
-GEMINI_API_KEY
-GROQ_API_KEY
-MISTRAL_API_KEY
-```
-
-Verifique os limites, a privacidade e as condições da sua conta diretamente no painel do provedor. A Nova também oferece um teste de conexão que não envia o histórico da conversa.
-
-## Recursos da interface
-
-- **Interações com a mascote:** clique para receber uma reação, use o menu de contexto para abrir as opções e arraste a personagem para reposicioná-la.
-- **Calendário:** calendário local, sem sincronização externa.
-- **Foco e rotina:** escolha uma prioridade e configure o tempo de foco e de pausa. As mensagens espontâneas e os lembretes respeitam o horário silencioso.
-- **Lembretes e histórico:** gerencie lembretes locais e consulte ou apague mensagens salvas.
-- **Aplicativos:** pesquise aplicativos Linux instalados ou cadastre um comando. A abertura de aplicativos pode exigir confirmação.
-- **Automações:** consulte informações do notebook, investigue arquivos grandes ou duplicados e organize Downloads e capturas. A organização pode ser desfeita.
-- **Manutenção do sistema:** as ações com APT usam autenticação do Linux; operações que removem pacotes apresentam uma prévia.
-- **Spotify:** configure a integração nas preferências para pesquisar músicas e interagir com playlists.
-
-Os lembretes só são exibidos enquanto a aplicação está aberta. Recursos específicos de X11 dependem do ambiente gráfico; `python-xlib` é opcional e sua ausência não impede o uso geral da Nova.
-
-## Dados e privacidade
-
-Os dados da aplicação são mantidos localmente nos seguintes caminhos:
-
-| Arquivo | Conteúdo |
-|---|---|
-| `~/.desktop_pet_history.json` | Histórico da conversa |
-| `~/.config/desktop_pet/settings.json` | Preferências, rotinas, memórias, lembretes, automações e aplicativos |
-| `~/.config/desktop_pet/downloads_undo.json` | Informações necessárias para desfazer a última organização de Downloads |
-| `~/.config/desktop_pet/permissions.json` | Permissões concedidas ou revogadas |
-
-As chaves dos provedores de IA não ficam nas preferências JSON. O envio de contexto a um provedor online depende das opções de privacidade configuradas na interface. Se arquivos JSON de dados estiverem corrompidos, a aplicação tenta preservar uma cópia antes de substituí-los.
-
-## Desenvolvimento e testes
-
-Instale as dependências Python:
-
-```bash
-cd desktop_pet_pixel_art
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-Execute a suíte de testes:
+Para executar os testes disponíveis:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-O workflow em `.github/workflows/tests.yml` executa os testes com Python 3.12, Tkinter e Xvfb. Os testes de integração com provedores usam mocks; não é necessário configurar chaves ou serviços online para executar a suíte normal.
+A validação contínua será importante para garantir que novos recursos não comprometam os componentes existentes.
 
-Para habilitar recursos dependentes de X11, instale a dependência opcional:
+## 🗺️ Roadmap — O futuro da Aurova
 
-```bash
-.venv/bin/python -m pip install 'python-xlib>=0.33'
-```
+O desenvolvimento será realizado em etapas, priorizando estabilidade, segurança e evolução progressiva.
 
-A documentação complementar está em `desktop_pet_pixel_art/docs/architecture.md` e `desktop_pet_pixel_art/docs/gui-testing.md`.
+### Etapa 1 — Fundação e identidade
+- Consolidar a identidade Aurova.
+- Organizar a arquitetura principal.
+- Finalizar a personalidade inicial.
+- Melhorar a interface e as animações.
+- Validar os componentes existentes.
 
-## Exemplos de pedidos
+### Etapa 2 — Memória e convivência
+- Desenvolver memória persistente.
+- Integrar memória e personalidade.
+- Registrar projetos e preferências.
+- Melhorar a continuidade das conversas.
+- Adaptar o comportamento conforme a convivência.
 
-- “Como está meu notebook?”
-- “Encontre os arquivos grandes em Downloads.”
-- “Procure arquivos duplicados.”
-- “Organize meus Downloads.”
-- “Inicie uma sessão de foco de 25 minutos.”
-- “Abra o Firefox.”
-- “Toque uma música no Spotify.”
+### Etapa 3 — Inteligência e planejamento
+- Desenvolver interpretação de objetivos.
+- Implementar planejamento de tarefas.
+- Criar mecanismos de escolha de ferramentas.
+- Desenvolver estratégias de recuperação de erros.
+- Melhorar a capacidade de encontrar soluções.
 
-## Perguntas para explorar o projeto
+### Etapa 4 — Interação com o computador
+- Desenvolver percepção de tela.
+- Implementar controle de teclado e mouse.
+- Integrar programas e ferramentas.
+- Trabalhar com documentos e planilhas.
+- Criar mecanismos de execução e verificação.
+- Ampliar a autonomia com segurança.
 
-- Como o `StateManager` se integra ao ciclo atual em `src/desktop_pet.py`?
-- Como executar os testes gráficos descritos em `docs/gui-testing.md`?
-- Como os plugins externos são registrados e quais permissões precisam de confirmação?
+### Etapa 5 — Independência e evolução
+- Reduzir dependências externas.
+- Desenvolver componentes próprios de inteligência.
+- Evoluir os mecanismos de memória e aprendizado.
+- Pesquisar e implementar tecnologias próprias.
+- Construir uma arquitetura cada vez mais independente.
+
+## 🌱 Uma assistente em constante evolução
+
+A Aurova não foi idealizada para ser apenas mais um chatbot.
+
+Ela está sendo desenvolvida para se tornar uma assistente virtual capaz de acompanhar pessoas, participar de seus projetos, facilitar tarefas e encontrar soluções para problemas reais.
+
+Uma inteligência com personalidade, memória, aparência própria e capacidade crescente de agir no ambiente em que está inserida.
+
+Seu desenvolvimento será gradual, mas sua visão é ampla: construir uma assistente que não apenas converse com você, mas que seja capaz de trabalhar ao seu lado.
+
+---
+
+**AUROVA**
+
+*Uma identidade própria. Uma inteligência em evolução. Uma parceira para o seu dia a dia.* 
