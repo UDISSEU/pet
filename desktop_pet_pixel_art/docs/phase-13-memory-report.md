@@ -20,9 +20,9 @@ As categorias antigas (`episodic`, `semantic`, `procedural`, `preference`) conti
 
 ## Testes
 
-`python3 -m unittest tests.nova_ai.test_memory tests.nova_ai.test_personality_system tests.nova_ai.test_desktop_integration tests.test_ai_providers`: **67 aprovados**. Cobertura inclui categorias novas, proveniência/expiração, limpeza, migração v1, conflitos sem sobrescrita, persistência, deduplicação, exclusão, corrupção, credenciais, recuperação lexical e contexto não confiável.
+`python3 -m unittest tests.aurova_ai.test_memory tests.aurova_ai.test_personality_system tests.aurova_ai.test_desktop_integration tests.test_ai_providers`: **67 aprovados**. Cobertura inclui categorias novas, proveniência/expiração, limpeza, migração v1, conflitos sem sobrescrita, persistência, deduplicação, exclusão, corrupção, credenciais, recuperação lexical e contexto não confiável.
 
-`python3 -m py_compile src/nova_ai/memory/*.py`: aprovado.
+`python3 -m py_compile src/aurova_ai/memory/*.py`: aprovado.
 
 ## Impacto e limitações
 

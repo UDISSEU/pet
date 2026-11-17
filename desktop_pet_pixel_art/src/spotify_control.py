@@ -190,7 +190,7 @@ def connect_spotify(client_id, timeout=180):
             result["state"] = params.get("state", [None])[0]
             result["error"] = params.get("error", [None])[0]
             payload = ("Autorização concluída. Você pode fechar esta janela." if result.get("code")
-                       else "A autorização não foi concluída. Volte ao aplicativo da Nova.")
+                       else "A autorização não foi concluída. Volte ao aplicativo da Aurova.")
             body = f"<html><meta charset='utf-8'><title>Spotify</title><p>{payload}</p></html>".encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -289,7 +289,7 @@ def _access_token(client_id):
     try:
         token = json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise SpotifyError("Conecte sua conta Spotify nas preferências da Nova primeiro.") from exc
+        raise SpotifyError("Conecte sua conta Spotify nas preferências da Aurova primeiro.") from exc
     if token.get("client_id") != str(client_id or "").strip():
         raise SpotifyError("O Client ID mudou. Conecte sua conta Spotify novamente.")
     if token.get("expires_at", 0) > time.time() + 60:

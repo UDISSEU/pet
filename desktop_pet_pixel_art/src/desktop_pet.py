@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Nova — mascote de desktop em pixel art com IA local (Ollama)
+Aurova — mascote de desktop em pixel art com IA local (Ollama)
 ----------------------------------------------------
 Personagem animada com vídeos de caminhada, aceno, descanso e sono.
 
@@ -112,13 +112,13 @@ from config import (
 )
 from animation import frame_index_at_elapsed
 from ollama_client import load_history, save_history
-from nova_ai.personality.speech import (
+from aurova_ai.personality.speech import (
     can_speak_spontaneously,
     pick_line,
     record_spontaneous_speech,
     reset_personality_state,
 )
-from nova_ai.desktop_routing import route_user_request
+from aurova_ai.desktop_routing import route_user_request
 from x11_helper import X11Helper
 from desktop_pet_ai import DesktopPetAIMixin
 from animation_controller import AnimationControllerMixin
@@ -128,7 +128,7 @@ from device_controller import DeviceControllerMixin
 from speech_controller import SpeechControllerMixin
 from window_controller import WindowControllerMixin
 from desktop_pet_ui import DesktopPetUIMixin
-from ui_theme import COLORS, apply_theme, make_aurora_mark
+from ui_theme import COLORS, apply_theme
 from event_bus import Event, EventBus, EventType
 from state_manager import StateManager
 from plugin_manager import PluginManager
@@ -146,9 +146,9 @@ from spotify_control import (
     playlist_uri_from_input,
     spotify_connected as spotify_token_connected,
 )
-from nova_ai.desktop_integration import DesktopNovaIntegration
-from nova_ai.profiles import UserProfileManager
-from nova_ai.actions import CancellationToken
+from aurova_ai.desktop_integration import DesktopAurovaIntegration
+from aurova_ai.profiles import UserProfileManager
+from aurova_ai.actions import CancellationToken
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ class DesktopPet(
         bus = getattr(self, "event_bus", None)
         if bus is not None and previous != value:
             bus.post(Event(EventType.PET_STATE_CHANGED, {"previous": previous, "current": value}))
-        integration = getattr(self, "nova_integration", None)
+        integration = getattr(self, "aurova_integration", None)
         if integration is not None:
             integration.sync_visual_state(value)
 
@@ -196,15 +196,15 @@ class DesktopPet(
             self.computer_action_history = None
             logger.exception("Histórico de ações do computador indisponível")
         self._pending_computer_action_id = None
-        self.nova_integration = None
+        self.aurova_integration = None
         try:
-            self.nova_integration = DesktopNovaIntegration(
+            self.aurova_integration = DesktopAurovaIntegration(
                 permission_manager=self.permission_manager,
                 profile_manager=self.profile_manager,
                 action_log=self.computer_action_history,
             )
         except Exception:
-            logger.exception("Núcleo Nova indisponível; mantendo a aplicação legado")
+            logger.exception("Núcleo Aurova indisponível; mantendo a aplicação legado")
         self._cognitive_cancel_token = None
         self._pending_cognitive_action_id = None
         self.plugin_manager = PluginManager(context={"event_bus": self.event_bus,
@@ -241,7 +241,7 @@ class DesktopPet(
         apply_theme(self.root)
         self._window_icon = None
         try:
-            with Image.open(PROJECT_ROOT / "launchers" / "nova-icon.png") as icon:
+            with Image.open(PROJECT_ROOT / "launchers" / "aurova-icon.png") as icon:
                 icon = icon.convert("RGBA")
                 icon.thumbnail((128, 128), Image.Resampling.LANCZOS)
                 self._window_icon = ImageTk.PhotoImage(icon)
@@ -256,7 +256,7 @@ class DesktopPet(
             )
             self.performance_monitor.start()
         except (OSError, RuntimeError, sqlite3.Error):
-            logger.exception("Histórico de desempenho indisponível; Nova continuará sem monitoramento proativo")
+            logger.exception("Histórico de desempenho indisponível; Aurova continuará sem monitoramento proativo")
         self._ai_results = queue.Queue()
         self._ai_cancel = threading.Event()
         self._ai_inference_lock = threading.Lock()
@@ -698,7 +698,7 @@ class DesktopPet(
             return
         if self.settings.get("confirm_app_launch", False):
             confirmation = (
-                f"A Nova vai executar este comando:\n\n{app['command']}\n\n"
+                f"A Aurova vai executar este comando:\n\n{app['command']}\n\n"
                 f"Abrir {app['name']} agora?"
             )
             if not messagebox.askyesno("Confirmar abertura", confirmation, parent=self.root):
@@ -728,7 +728,7 @@ class DesktopPet(
         try:
             permissions = getattr(self, "permission_manager", None)
             if permissions is not None:
-                permissions.require("nova.core", "system.app.launch", confirmed=True)
+                permissions.require("aurova.core", "system.app.launch", confirmed=True)
             self._launch_app(app, question)
             deliver(True)
         except subprocess.TimeoutExpired:
@@ -803,7 +803,7 @@ class DesktopPet(
             if not enabled:
                 self.show_bubble("Essa automação está desativada nas preferências.", duration=3000)
                 return
-            if getattr(self, "nova_integration", None) is None:
+            if getattr(self, "aurova_integration", None) is None:
                 self.show_bubble(
                     "A organização segura de Downloads está indisponível no momento.", duration=4000
                 )
@@ -817,7 +817,7 @@ class DesktopPet(
         read_permission = "system.cpu.read" if automation.get("read_only") and automation["id"] == "laptop_status" else "file.read"
         try:
             self._authorize_core_action(read_permission, confirmed=False)
-            self.permission_manager.require("nova.core", read_permission, confirmed=False)
+            self.permission_manager.require("aurova.core", read_permission, confirmed=False)
         except (PermissionError, OSError) as exc:
             self.show_bubble(f"Permissão necessária para essa automação: {exc}", duration=4000)
             return
@@ -865,7 +865,7 @@ class DesktopPet(
         self.event_bus.post(Event(event_type, {"automation_id": automation_id, "result": result}))
 
     def _confirm_automation_plan(self, operations, *, title="Prévia · Organizar Downloads"):
-        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
+        dialog = self._set_aurova_window_icon(tk.Toplevel(self.root))
         dialog.title(title)
         dialog.configure(bg=COLORS["background"])
         dialog.transient(self.root)
@@ -919,7 +919,7 @@ class DesktopPet(
             permission = self._automation_permission(automation["id"])
             destructive = automation["id"] in ("trash_duplicates", "empty_trash")
             self._authorize_core_action(permission, confirmed=True)
-            self.permission_manager.require("nova.core", permission,
+            self.permission_manager.require("aurova.core", permission,
                                             confirmed=bool(confirmed_plan is not None or destructive))
             result = automation["executor"](plan=confirmed_plan) if confirmed_plan is not None else automation["executor"]()
         except Exception as exc:
@@ -949,12 +949,12 @@ class DesktopPet(
         manager = getattr(self, "permission_manager", None)
         if manager is None:  # Compatibility for lightweight legacy/test instances.
             return True
-        if not manager.allowed("nova.core", permission):
-            if manager.has_decision("nova.core", permission):
+        if not manager.allowed("aurova.core", permission):
+            if manager.has_decision("aurova.core", permission):
                 raise PermissionError(f"Permissão revogada: {permission}")
-            if not manager.authorize("nova.core", permission, confirmed=True):
+            if not manager.authorize("aurova.core", permission, confirmed=True):
                 raise PermissionError(f"Permissão não concedida: {permission}")
-        return manager.require("nova.core", permission, confirmed=confirmed)
+        return manager.require("aurova.core", permission, confirmed=confirmed)
 
     def _on_automation_event(self, event):
         automation_id = event.payload.get("automation_id")
@@ -1033,12 +1033,12 @@ class DesktopPet(
         self.show_bubble("Vou conferir a pasta Downloads e preparar uma prévia…", duration=999999)
         threading.Thread(
             target=self._cognitive_prepare_worker,
-            args=(question,), name="nova-cognitive-prepare", daemon=True,
+            args=(question,), name="aurova-cognitive-prepare", daemon=True,
         ).start()
 
     def _cognitive_prepare_worker(self, question):
         try:
-            prepared = self.nova_integration.prepare_task(question)
+            prepared = self.aurova_integration.prepare_task(question)
             error = None
         except Exception as exc:
             prepared, error = None, type(exc).__name__
@@ -1072,7 +1072,7 @@ class DesktopPet(
                 return
             accepted = messagebox.askyesno(
                 "Permissão necessária",
-                f"Para preparar a prévia, a Nova precisa da permissão {permission}.\n\n"
+                f"Para preparar a prévia, a Aurova precisa da permissão {permission}.\n\n"
                 "Conceder esta permissão não confirma a movimentação dos arquivos. Deseja concedê-la?",
                 parent=self.root,
             )
@@ -1081,8 +1081,8 @@ class DesktopPet(
                 self._finish_cognitive_request(question, "Sem essa permissão, não alterei nenhum arquivo.")
                 return
             try:
-                self.permission_manager.authorize("nova.core", permission, confirmed=True)
-                self.permission_manager.require("nova.core", permission, confirmed=True)
+                self.permission_manager.authorize("aurova.core", permission, confirmed=True)
+                self.permission_manager.require("aurova.core", permission, confirmed=True)
             except (PermissionError, OSError, ValueError):
                 self._update_cognitive_action_history("Falhou", "Não foi possível registrar a permissão.", "permission_error")
                 self._finish_cognitive_request(question, "Não consegui registrar essa permissão.")
@@ -1092,7 +1092,7 @@ class DesktopPet(
             self.show_bubble("Permissão registrada. Estou atualizando a prévia…", duration=999999)
             threading.Thread(
                 target=self._cognitive_prepare_worker,
-                args=(question,), name="nova-cognitive-prepare", daemon=True,
+                args=(question,), name="aurova-cognitive-prepare", daemon=True,
             ).start()
             return
         if decision.kind.value == "ask_clarification":
@@ -1124,12 +1124,12 @@ class DesktopPet(
         threading.Thread(
             target=self._cognitive_execute_worker,
             args=(question, prepared, self._cognitive_cancel_token),
-            name="nova-cognitive-execute", daemon=True,
+            name="aurova-cognitive-execute", daemon=True,
         ).start()
 
     def _cognitive_execute_worker(self, question, prepared, cancellation):
         try:
-            result = self.nova_integration.execute_task(
+            result = self.aurova_integration.execute_task(
                 prepared, approved=True, cancellation=cancellation
             )
             self.post_ui_callback(self._handle_cognitive_execution, question, result, None)
@@ -1150,8 +1150,8 @@ class DesktopPet(
             )
 
     def _show_cognitive_progress(self, cancellation):
-        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
-        dialog.title("Nova · Organização")
+        dialog = self._set_aurova_window_icon(tk.Toplevel(self.root))
+        dialog.title("Aurova · Organização")
         dialog.transient(self.root)
         dialog.attributes("-topmost", True)
         dialog.resizable(False, False)
@@ -1191,7 +1191,7 @@ class DesktopPet(
             self._update_cognitive_action_history("Falhou", result.message, result.status.value)
         self.state = "thumbs_up" if result.verified else "curious"
         self.show_bubble(result.message, duration=6000)
-        if result.verified and self.nova_integration.last_undo_mapping:
+        if result.verified and self.aurova_integration.last_undo_mapping:
             if messagebox.askyesno(
                     "Organização concluída",
                     "A organização foi verificada. Deseja desfazer e restaurar os arquivos?",
@@ -1202,7 +1202,7 @@ class DesktopPet(
 
     def _request_cognitive_undo(self, question):
         for permission in ("file.read", "file.move"):
-            if self.permission_manager.allowed("nova.core", permission):
+            if self.permission_manager.allowed("aurova.core", permission):
                 continue
             if not messagebox.askyesno(
                     "Permissão para restaurar",
@@ -1212,7 +1212,7 @@ class DesktopPet(
                 self.show_bubble("Restauração cancelada; os arquivos continuam organizados.", duration=5000)
                 return
             try:
-                self.permission_manager.authorize("nova.core", permission, confirmed=True)
+                self.permission_manager.authorize("aurova.core", permission, confirmed=True)
             except (OSError, ValueError):
                 self.show_bubble("Não consegui registrar a permissão de restauração.", duration=5000)
                 return
@@ -1220,12 +1220,12 @@ class DesktopPet(
         self.show_bubble("Restaurando os arquivos…", duration=999999)
         threading.Thread(
             target=self._cognitive_undo_worker,
-            args=(question,), name="nova-cognitive-undo", daemon=True,
+            args=(question,), name="aurova-cognitive-undo", daemon=True,
         ).start()
 
     def _cognitive_undo_worker(self, question):
         try:
-            result = self.nova_integration.undo_last_organization(approved=True)
+            result = self.aurova_integration.undo_last_organization(approved=True)
             message = result.summary if result is not None else "Não há uma organização disponível para desfazer."
         except Exception as exc:
             logging.getLogger(__name__).exception("Falha ao desfazer organização")
@@ -1241,18 +1241,18 @@ class DesktopPet(
     def ask_computer_consultant(self, question, context, *, action_history_id=None):
         """Send a computer question through the existing conversation/provider path."""
         if self._closing or self.ai_request_active or self.automation_active:
-            raise RuntimeError("A conversa da Nova já está ocupada ou foi encerrada.")
+            raise RuntimeError("A conversa da Aurova já está ocupada ou foi encerrada.")
         if not isinstance(question, str) or not question.strip() or len(question) > 2000:
             raise ValueError("A pergunta está vazia ou excede o limite permitido.")
-        if not isinstance(context, dict) or context.get("schema") != "nova-computer-context.v1":
+        if not isinstance(context, dict) or context.get("schema") != "aurova-computer-context.v1":
             raise ValueError("O contexto do computador não passou pela validação.")
         self._authorize_core_action("ai.use")
-        self.permission_manager.require("nova.core", "ai.use")
+        self.permission_manager.require("aurova.core", "ai.use")
         if action_history_id is None and self.computer_action_history is not None:
             try:
                 action_history_id = self.computer_action_history.record(
                     "consultor.computador", "Em andamento", origin="Meu Computador",
-                    result="Contexto local coletado; resposta pela conversa da Nova.",
+                    result="Contexto local coletado; resposta pela conversa da Aurova.",
                 )
             except Exception:
                 logger.exception("Não foi possível registrar a consulta no histórico")
@@ -1287,7 +1287,7 @@ class DesktopPet(
                     action_history_id, "Falhou", result="Não foi possível iniciar a conversa.",
                     error_code=type(exc).__name__,
                 )
-            raise RuntimeError("Não foi possível iniciar a conversa da Nova.") from exc
+            raise RuntimeError("Não foi possível iniciar a conversa da Aurova.") from exc
 
     def _finish_cognitive_controls(self):
         self.automation_active = False
@@ -1397,7 +1397,7 @@ class DesktopPet(
                     previous.destroy()
             except tk.TclError:
                 pass
-        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
+        dialog = self._set_aurova_window_icon(tk.Toplevel(self.root))
         self._automation_detail_window = dialog
         dialog.title(result.get("title", "Resultado da automação"))
         dialog.configure(bg=COLORS["background"])
@@ -1565,7 +1565,7 @@ class DesktopPet(
     def switch_user_profile(self, profile_id):
         if self.ai_request_active:
             raise RuntimeError("Aguarde a conversa terminar antes de trocar de perfil")
-        integration = getattr(self, "nova_integration", None)
+        integration = getattr(self, "aurova_integration", None)
         if integration is None:
             raise RuntimeError("A troca de perfil está indisponível")
         profile = integration.select_profile(profile_id)
@@ -1588,7 +1588,7 @@ class DesktopPet(
     def ask_user_name(self):
         if self._closing or self.settings.get("user_name") or self._user_name_dialog:
             return
-        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
+        dialog = self._set_aurova_window_icon(tk.Toplevel(self.root))
         self._user_name_dialog = dialog
         dialog.title("Como devo chamar você?")
         dialog.transient(self.root)
@@ -1602,7 +1602,7 @@ class DesktopPet(
         style.configure("Autonomy.TEntry", fieldbackground=COLORS["surface_elevated"], foreground=COLORS["ink"], padding=4)
         frame = ttk.Frame(dialog, style="Autonomy.TFrame", padding=20)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Oi! Eu sou a Nova", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="Oi! Eu sou a Aurova", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             frame, text="Como você gostaria que eu te chamasse? Vou guardar seu nome para nossas próximas conversas.",
             style="Subtitle.TLabel", wraplength=360,
@@ -1661,7 +1661,7 @@ class DesktopPet(
             permissions = getattr(self, "permission_manager", None)
             if permissions is not None:
                 self._authorize_core_action("network.access", confirmed=True)
-                permissions.require("nova.core", "network.access", confirmed=True)
+                permissions.require("aurova.core", "network.access", confirmed=True)
             spotify_connect(client_id)
             self._spotify_results.put(("connect", True, "Conta Spotify conectada."))
         except Exception as exc:
@@ -1743,7 +1743,7 @@ class DesktopPet(
                 )
                 return
             self.show_bubble(
-                "Para a Nova adicionar a faixa automaticamente, a API exige um app Developer Mode cujo dono tenha Premium. Sem ele, você ainda pode tocar pelo link e adicionar a música manualmente no Spotify Free.",
+                "Para a Aurova adicionar a faixa automaticamente, a API exige um app Developer Mode cujo dono tenha Premium. Sem ele, você ainda pode tocar pelo link e adicionar a música manualmente no Spotify Free.",
                 duration=9000,
             )
             return
@@ -1757,7 +1757,7 @@ class DesktopPet(
         threading.Thread(
             target=self._spotify_action_worker,
             args=(question, request, client_id),
-            name="nova-spotify-action",
+            name="aurova-spotify-action",
             daemon=True,
         ).start()
 
@@ -1767,8 +1767,8 @@ class DesktopPet(
             if permissions is not None:
                 self._authorize_core_action("spotify.control", confirmed=True)
                 self._authorize_core_action("network.access", confirmed=True)
-                permissions.require("nova.core", "spotify.control", confirmed=True)
-                permissions.require("nova.core", "network.access", confirmed=True)
+                permissions.require("aurova.core", "spotify.control", confirmed=True)
+                permissions.require("aurova.core", "network.access", confirmed=True)
             message = execute_spotify_action(
                 client_id,
                 request["operation"],
@@ -1823,7 +1823,7 @@ class DesktopPet(
             self.show_calendar()
             self.show_bubble(answer)
             return
-        integration = getattr(self, "nova_integration", None)
+        integration = getattr(self, "aurova_integration", None)
         route, routed_task = route_user_request(
             question,
             cognitive_classifier=(integration.classify_task if integration is not None else None),
@@ -1906,123 +1906,11 @@ class DesktopPet(
             return f"{answer}\nNão consegui salvar o histórico."
         return answer
 
-    def _question_dialog_geometry(self, dialog_width=420, dialog_height=230):
-        gap = 8
-        pet_left = int(round(self.x))
-        pet_right = pet_left + WIDTH
-        available_left = max(0, pet_left - gap)
-        available_right = max(0, self.screen_w - pet_right - gap)
-        place_right = available_right >= dialog_width or available_right >= available_left
-        available_width = available_right if place_right else available_left
-        width = min(dialog_width, max(1, available_width))
-        x = pet_right + gap if place_right else pet_left - gap - width
-
-        height = min(dialog_height, self.screen_h)
-        y = int(round(self.y + (self.cur_height - height) / 2))
-        y = max(0, min(y, self.screen_h - height))
-        return x, y, width, height
-
-    def _ask_question(self):
-        dialog = self._set_nova_window_icon(tk.Toplevel(self.root))
-        dialog.title("Perguntar à Nova")
-        dialog.configure(bg=COLORS["background"])
-        dialog.transient(self.root)
-        dialog.resizable(False, False)
-        dialog.attributes("-topmost", True)
-        x, y, width, height = self._question_dialog_geometry()
-        dialog.geometry(f"{width}x{height}+{x}+{y}")
-
-        result = {"question": None}
-        background = COLORS["background"]
-        content = tk.Frame(dialog, bg=background, padx=18, pady=16)
-        content.pack(fill="both", expand=True)
-        prompt_heading = tk.Frame(content, bg=background)
-        prompt_heading.pack(fill="x")
-        make_aurora_mark(prompt_heading, size=32, background=background).pack(
-            side="left", padx=(0, 10),
-        )
-        prompt_copy = tk.Frame(prompt_heading, bg=background)
-        prompt_copy.pack(side="left", fill="x", expand=True)
-        tk.Label(
-            prompt_copy, text="Converse com a Nova",
-            font=("TkDefaultFont", 13, "bold"), fg=COLORS["ink"], bg=background,
-        ).pack(anchor="w")
-        tk.Label(
-            prompt_copy, text="Escreva sua pergunta abaixo",
-            font=("TkDefaultFont", 9), fg=COLORS["muted"], bg=background,
-        ).pack(anchor="w", pady=(3, 10))
-
-        editor_border = tk.Frame(content, bg=COLORS["border"], padx=1, pady=1)
-        editor_border.pack(fill="both", expand=True)
-        answer = tk.Text(
-            editor_border,
-            height=4,
-            wrap="word",
-            undo=True,
-            relief="flat",
-            bd=0,
-            padx=10,
-            pady=8,
-            font=("TkDefaultFont", 10),
-            fg=COLORS["ink"],
-            bg=COLORS["surface"],
-            insertbackground=COLORS["cyan"],
-        )
-        answer.pack(fill="both", expand=True)
-
-        buttons = tk.Frame(content, bg=background)
-        buttons.pack(fill="x", pady=(12, 0))
-
-        def finish():
-            question = answer.get("1.0", "end-1c").strip()
-            if not question:
-                answer.focus_set()
-                return
-            result["question"] = question
-            dialog.destroy()
-
-        def cancel():
-            dialog.destroy()
-
-        tk.Button(
-            buttons,
-            text="Cancelar",
-            command=cancel,
-            relief="flat",
-            bd=0,
-            padx=12,
-            pady=7,
-            fg=COLORS["muted"],
-            bg=background,
-            activebackground=COLORS["surface_elevated"],
-            cursor="hand2",
-        ).pack(side="right")
-        tk.Button(
-            buttons,
-            text="Perguntar",
-            command=finish,
-            relief="flat",
-            bd=0,
-            padx=16,
-            pady=7,
-            fg=COLORS["background"],
-            bg=COLORS["purple"],
-            activebackground=COLORS["focus"],
-            activeforeground=COLORS["background"],
-            cursor="hand2",
-        ).pack(side="right", padx=(0, 6))
-        dialog.protocol("WM_DELETE_WINDOW", cancel)
-        dialog.bind("<Control-Return>", lambda _event: finish())
-        dialog.bind("<Escape>", lambda _event: cancel())
-        answer.focus_set()
-        self.root.wait_window(dialog)
-        return result["question"]
-
     def run(self):
         if self._device_monitor_thread is None:
             self._device_monitor_thread = threading.Thread(
                 target=self._device_monitor_worker,
-                name="nova-device-monitor",
+                name="aurova-device-monitor",
                 daemon=True,
             )
             self._device_monitor_thread.start()
@@ -2034,11 +1922,11 @@ if __name__ == "__main__":
     log_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
-        handlers=[logging.FileHandler(log_dir / "nova.log", encoding="utf-8"), logging.StreamHandler()],
+        handlers=[logging.FileHandler(log_dir / "aurova.log", encoding="utf-8"), logging.StreamHandler()],
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     try:
-        if not run_first_access_if_needed(PROJECT_ROOT / "launchers" / "nova-icon.png"):
+        if not run_first_access_if_needed(PROJECT_ROOT / "launchers" / "aurova-icon.png"):
             sys.exit(0)
         pet = DesktopPet()
         pet.run()
@@ -2046,7 +1934,7 @@ if __name__ == "__main__":
         try:
             root = tk.Tk()
             root.withdraw()
-            messagebox.showerror("Erro na Nova", str(exc))
+            messagebox.showerror("Erro na Aurova", str(exc))
         except Exception:
             pass
         raise

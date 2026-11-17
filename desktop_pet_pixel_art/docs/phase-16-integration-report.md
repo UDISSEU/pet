@@ -2,7 +2,7 @@
 
 Data: 5 de novembro de 2026
 
-> Registro histórico anterior à remoção dos provedores remotos. O comando de testes abaixo registra a execução daquela fase e inclui `test_keyring_secret`, removido depois; consulte [a arquitetura atual](nova_ai/current_architecture.md) para o estado vigente.
+> Registro histórico anterior à remoção dos provedores remotos. O comando de testes abaixo registra a execução daquela fase e inclui `test_keyring_secret`, removido depois; consulte [a arquitetura atual](aurova_ai/current_architecture.md) para o estado vigente.
 
 ## Estado
 
@@ -15,7 +15,7 @@ Data: 5 de novembro de 2026
 - Somente pedido reconhecido de organização de Downloads entra no caminho cognitivo. `IntentClassifier` offline → plano estático → `ResultValidator` → pedido de permissões → prévia → confirmação separada → `ToolDispatcher`/allowlist → validação e verificação → resultado e opção de undo.
 - As ferramentas revalidam permissões no momento da execução. Cancelamento cooperativo e rollback protegem movimentações em lote.
 - O banco SQLite continua local e consentido. Preferências são persistentes, humor visual é transitório. Provedores externos seguem opcionais, e o Ollama local é limitado por contexto, tokens, threads e concorrência.
-- O laboratório Nova Model 0.1 permanece separado; não carrega automaticamente nem interfere no provedor de conversa.
+- O laboratório Aurova Model 0.1 permanece separado; não carrega automaticamente nem interfere no provedor de conversa.
 
 ## Cenários executados
 
@@ -32,14 +32,14 @@ Data: 5 de novembro de 2026
 
 ## Testes executados
 
-- `python3 -m unittest discover -s tests/nova_ai`: **79 aprovados, 2 ignorados** (PyTorch CPU ausente).
+- `python3 -m unittest discover -s tests/aurova_ai`: **79 aprovados, 2 ignorados** (PyTorch CPU ausente).
 - `python3 -m unittest tests.test_ai_providers tests.test_personality tests.test_automations tests.test_keyring_secret tests.test_ui_windows`: **59 aprovados, 1 ignorado**.
 - Testes de segurança de arquivos: 24 aprovados dentro da suíte cognitiva.
 - `python3 -m compileall -q src training tools`: aprovado.
-- `bash -n tools/nova_gui_test.sh tools/nova_gui_cleanup.sh install.sh`: aprovado.
+- `bash -n tools/aurova_gui_test.sh tools/aurova_gui_cleanup.sh install.sh`: aprovado.
 - `git diff --check`: aprovado.
 
-Tentativa da suíte pedida com `python3 -m pytest -v`: não iniciou porque `pytest` não está instalado. A descoberta total alternativa, `python3 -m unittest discover -s tests`, contou 115 casos e terminou com 26 erros, 1 falha e 2 skips. Os erros incluem a descoberta dos testes `nova_ai` como pacote top-level, que sombreia o pacote de código, e importações da GUI que encerram sem OpenCV. A falha restante é o teste do harness soak, que também depende de `cv2`. A suíte `tests/nova_ai` e os grupos independentes acima foram rodados com caminhos de importação corretos e passaram.
+Tentativa da suíte pedida com `python3 -m pytest -v`: não iniciou porque `pytest` não está instalado. A descoberta total alternativa, `python3 -m unittest discover -s tests`, contou 115 casos e terminou com 26 erros, 1 falha e 2 skips. Os erros incluem a descoberta dos testes `aurova_ai` como pacote top-level, que sombreia o pacote de código, e importações da GUI que encerram sem OpenCV. A falha restante é o teste do harness soak, que também depende de `cv2`. A suíte `tests/aurova_ai` e os grupos independentes acima foram rodados com caminhos de importação corretos e passaram.
 
 ## Recursos medidos
 
@@ -58,7 +58,7 @@ Tentativa da suíte pedida com `python3 -m pytest -v`: não iniciou porque `pyte
 
 ## Compatibilidade, pendências e próximos passos
 
-- Compatibilidade da UI em X11, Xwayland e Wayland nativo não foi verificada. `tools/nova_gui_test.sh smoke` parou com “Ambiente virtual ausente”; não iniciou servidor gráfico. Nenhuma captura foi gerada.
+- Compatibilidade da UI em X11, Xwayland e Wayland nativo não foi verificada. `tools/aurova_gui_test.sh smoke` parou com “Ambiente virtual ausente”; não iniciou servidor gráfico. Nenhuma captura foi gerada.
 - Os dois testes de ciclo de vida do modelo experimental continuam ignorados sem PyTorch; treino, checkpoint e geração desse modelo seguem não validados.
 - O comportamento visual integrado à janela foi compilado, mas não clicado nem observado em runtime.
 - Para aprovar a fase: preparar `.venv` com dependências declaradas, instalar Pytest e PyTorch CPU opcional, executar `python -m pytest -v`, rodar o smoke gráfico e soak em ambiente Xvfb configurado, depois validar com rede desabilitada e medir o aplicativo completo (threads, processos, RSS, CPU e responsividade). Capturar separadamente resultados X11/Xwayland/Wayland.

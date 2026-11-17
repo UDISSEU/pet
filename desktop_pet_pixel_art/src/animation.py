@@ -1,4 +1,4 @@
-"""Carregamento e preparação dos quadros de animação da Nova."""
+"""Carregamento e preparação dos quadros de animação da Aurova."""
 
 import math
 

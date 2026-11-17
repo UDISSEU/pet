@@ -8,7 +8,7 @@
 
 - `desktop_pet.py`: inicialização e coordenação principal; `DesktopPet` mantém a API e o ciclo `tick()`.
 - `desktop_pet_ai.py`: workers de provedores e fluxo de conversa fora do orquestrador visual.
-- `tools/nova_setup.py` e `launchers/run-nova.sh`: preparação guiada na primeira execução, instalação Python isolada em `.venv` após confirmação, diagnóstico local do Ollama e download de modelo consentido. Não usa `sudo` nem altera o Python global.
+- `tools/aurova_setup.py` e `launchers/run-aurova.sh`: preparação guiada na primeira execução, instalação Python isolada em `.venv` após confirmação, diagnóstico local do Ollama e download de modelo consentido. Não usa `sudo` nem altera o Python global.
 - `first_run.py`, `environment_check.py`, `diagnostics_ui.py` e `installation_state.py`: boas-vindas após a preparação, diagnóstico local atualizável e somente leitura, orientações de reparo e estado global da instalação, separado dos perfis.
 - `animation_controller.py`: seleção, reprodução, renderização e sincronização das animações.
 - `interaction_controller.py`: cliques, arraste e registro das interações.
@@ -31,11 +31,11 @@
 - `ollama_client.py`: API e persistência do histórico JSON legado.
 - `providers/`: contrato comum e adaptador Ollama, acessado pela API HTTP local.
 - `ai/`: contexto, prompts, roteamento e pedidos; `AICore` conecta a conversa exclusivamente ao Ollama local. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
-- `nova_ai/personality/`: fonte canônica da identidade, das regras, do estado e do estilo conversacional e da fala local. `personality.py` e `ai/personality.py` mantêm exports compatíveis.
+- `aurova_ai/personality/`: fonte canônica da identidade, das regras, do estado e do estilo conversacional e da fala local. `personality.py` e `ai/personality.py` mantêm exports compatíveis.
 - `x11_helper.py`: observação da janela ativa e geometria de janelas em ambientes X11. O módulo falha de forma segura se X11 ou `python-xlib` não estiverem disponíveis.
 - `event_bus.py`: barramento tipado, com publicação síncrona e fila `post`/`drain` para encaminhar eventos de workers à thread Tkinter.
 - `state_manager.py`: catálogo de estados compatível com as poses existentes, prioridade, geração e retorno de poses temporárias. `DesktopPet.state` permanece como fachada de compatibilidade e espelha as transições no controlador.
-- `plugin_manager.py`: contrato e ciclo de vida para instâncias explicitamente registradas. Não importa código externo nem descobre plugins automaticamente; código Python carregado no processo da Nova é confiável, não uma sandbox.
+- `plugin_manager.py`: contrato e ciclo de vida para instâncias explicitamente registradas. Não importa código externo nem descobre plugins automaticamente; código Python carregado no processo da Aurova é confiável, não uma sandbox.
 - `permissions.py`: permissões persistidas por plugin, inicialmente negadas, com confirmação para permissões sensíveis e revogação imediata.
 - `notifications.py`: histórico limitado, persistido com permissões restritas, deduplicação, leitura e descarte.
 - `system_monitor.py`: coleta tolerante a indisponibilidade de CPU, RAM, disco, memória do processo e threads para o painel.
@@ -44,23 +44,27 @@
 
 As dependências obrigatórias estão em `requirements.txt`. `python-xlib` é opcional e pode ser instalado separadamente para habilitar recursos que dependem de X11; sua ausência não impede os recursos gerais da mascote.
 
+## Compatibilidade após a mudança de nome
+
+`aurova_ai` é o pacote canônico. `nova_ai` e os nomes públicos antigos continuam disponíveis como aliases para imports existentes. Bancos e estados já salvos mantêm seus nomes de arquivo e não são movidos; o carregamento reconhece os caminhos anteriores. Concessões registradas para `nova.core` são mantidas ao usar o identificador atual `aurova.core`. Backups novos usam o formato Aurova, enquanto o leitor continua aceitando arquivos e identificadores anteriores.
+
 ## Primeiro acesso
 
-O lançador encaminha a primeira execução a `tools/nova_setup.py`, que verifica pré-requisitos e dependências do `.venv`, pede confirmação antes de instalar pacotes Python no ambiente virtual e não executa comandos administrativos. A tela também orienta a instalação manual do Ollama, testa somente o serviço local e solicita confirmação explícita antes de baixar um modelo. A ausência do Ollama é opcional. Depois da preparação, `run_first_access_if_needed()` lê `~/.config/desktop_pet/installation_state.json` e mostra a tela de boas-vindas quando a configuração ainda não foi concluída. O aviso informa que salvar e reutilizar conversas são opções independentes, ambas desligadas por padrão; o único provedor de conversa disponível é o Ollama local. `check_environment()` verifica Python, dependências, recursos gráficos, banco/perfil, memória física, espaço em disco e a API local de tags do Ollama. A tela **Diagnóstico do sistema**, no menu, permite repetir as verificações e oferece instruções de reparo sem instalar ou modificar dados; correções de banco requerem avaliação manual para evitar apagar dados.
+O lançador encaminha a primeira execução a `tools/aurova_setup.py`, que verifica pré-requisitos e dependências do `.venv`, pede confirmação antes de instalar pacotes Python no ambiente virtual e não executa comandos administrativos. A tela também orienta a instalação manual do Ollama, testa somente o serviço local e solicita confirmação explícita antes de baixar um modelo. A ausência do Ollama é opcional. Depois da preparação, `run_first_access_if_needed()` lê `~/.config/desktop_pet/installation_state.json` e mostra a tela de boas-vindas quando a configuração ainda não foi concluída. O aviso informa que salvar e reutilizar conversas são opções independentes, ambas desligadas por padrão; o único provedor de conversa disponível é o Ollama local. `check_environment()` verifica Python, dependências, recursos gráficos, banco/perfil, memória física, espaço em disco e a API local de tags do Ollama. A tela **Diagnóstico do sistema**, no menu, permite repetir as verificações e oferece instruções de reparo sem instalar ou modificar dados; correções de banco requerem avaliação manual para evitar apagar dados.
 
 ## Fluxo da conversa
 
 1. A interface recebe a pergunta e verifica primeiro data, calendário e intents locais de automação allowlist.
 2. Automações reconhecidas localmente não passam pela IA. Relatórios são somente leitura; movimentações mostram prévia e pedem confirmação; a Lixeira exige confirmação antes de apagar. Operações demoradas rodam em thread e retornam por Event Bus ou pela fila de callbacks UI, consumida pelo ciclo Tkinter. Avisos de pausa e bateria são verificados periodicamente, respeitando foco e horário silencioso.
-3. Se a solicitação corresponder a um app cadastrado, a Nova mostra o comando e pede confirmação.
+3. Se a solicitação corresponder a um app cadastrado, a Aurova mostra o comando e pede confirmação.
 4. Outras perguntas são processadas em worker por `desktop_pet_ai.py` e encaminhadas exclusivamente ao Ollama local. Por padrão, somente a mensagem atual é enviada como contexto; mensagens anteriores só são incluídas após ativação explícita da opção correspondente. Uma falha não provoca fallback para outro provedor. A resposta retorna por Event Bus, sem manipulação de widgets fora da thread Tkinter.
-5. O histórico é sempre mantido na sessão atual, mas só é persistido quando a pessoa ativa **Salvar as conversas neste computador**. Seu uso como contexto é controlado separadamente. A interface permite consultar e apagar mensagens. Preferências e histórico persistido usam arquivos JSON por substituição atômica; ao encontrar JSON inválido, a Nova guarda uma cópia `*.corrupt-*` antes de permitir nova gravação. Se não conseguir criar essa cópia, bloqueia a substituição.
+5. O histórico é sempre mantido na sessão atual, mas só é persistido quando a pessoa ativa **Salvar as conversas neste computador**. Seu uso como contexto é controlado separadamente. A interface permite consultar e apagar mensagens. Preferências e histórico persistido usam arquivos JSON por substituição atômica; ao encontrar JSON inválido, a Aurova guarda uma cópia `*.corrupt-*` antes de permitir nova gravação. Se não conseguir criar essa cópia, bloqueia a substituição.
 
 As memórias explícitas são selecionadas por relevância e adicionadas ao contexto como dados de referência, nunca como instruções. Preferências duplicadas são removidas ao carregar as configurações, sem alterar o formato JSON existente. O seletor de apps lê lançadores `*.desktop` dos diretórios XDG de aplicações; comandos são divididos em argumentos e executados sem shell.
 
 O modo de foco usa temporizadores Tkinter: enquanto a sessão ou a pausa está ativa, as falas espontâneas, observações de apps e lembretes aguardam. A pausa reaproveita a animação de descanso existente. As rotinas de boas-vindas e encerramento são opcionais e dependem de a aplicação estar aberta.
 
-`nova_ai.desktop_integration` conecta o fluxo de conversa existente à identidade permanente, às regras de comportamento, ao estado visual e às memórias do perfil ativo; não cria um roteador ou provedor paralelo. O detector local de tom considera apenas expressões claras na mensagem atual e não persiste estados emocionais nem faz diagnósticos. Estados temporários (`CALM`, `CURIOUS`, `CARING`, `PLAYFUL`, `FOCUSED` e `RESTING`, além dos estados visuais legados) só ajustam a orientação da resposta.
+`aurova_ai.desktop_integration` conecta o fluxo de conversa existente à identidade permanente, às regras de comportamento, ao estado visual e às memórias do perfil ativo; não cria um roteador ou provedor paralelo. O detector local de tom considera apenas expressões claras na mensagem atual e não persiste estados emocionais nem faz diagnósticos. Estados temporários (`CALM`, `CURIOUS`, `CARING`, `PLAYFUL`, `FOCUSED` e `RESTING`, além dos estados visuais legados) só ajustam a orientação da resposta.
 
 O aprendizado de preferências de comunicação é opcional e vem desligado. Quando habilitado em **Preferências > Comportamento**, guarda no `settings.json` do perfil somente contagens agregadas de sinais explícitos de brevidade, formalidade, humor e incentivo/acolhimento, no máximo uma por categoria por dia. Uma orientação só é aplicada após ao menos três dias de evidência e margem suficiente sobre sinais contrários. Mensagens brutas não são copiadas para esse estado e não há treinamento de modelos. Perfis mantêm contagens independentes.
 
@@ -70,18 +74,18 @@ Saudações podem retomar uma memória de projeto cadastrada explicitamente no S
 
 - `~/.desktop_pet_history.json`: histórico curto do perfil principal legado, gravado somente após opt-in.
 - `~/.config/desktop_pet/settings.json`: modo, preferências, horários, rotinas, foco, memórias, lembretes e apps cadastrados.
-- `~/.config/desktop_pet/user_profiles.json`: cadastro local dos perfis e perfil ativo. O perfil `legacy` continua usando `nova_memory.sqlite3`; novos perfis recebem bancos SQLite e estado de personalidade em diretórios próprios sob `~/.config/desktop_pet/profiles/`.
+- `~/.config/desktop_pet/user_profiles.json`: cadastro local dos perfis e perfil ativo. O perfil `legacy` continua usando `aurova_memory.sqlite3`; novos perfis recebem bancos SQLite e estado de personalidade em diretórios próprios sob `~/.config/desktop_pet/profiles/`.
 - `~/.config/desktop_pet/profiles/<id>/history.json`: histórico curto separado para cada perfil adicional, gravado somente após opt-in.
 - `~/.config/desktop_pet/profiles/<id>/settings.json`: preferências gerais do perfil. Perfis novos começam com os padrões do aplicativo, sem copiar preferências, aplicativos, memórias ou nome do perfil principal.
 - `~/.config/desktop_pet/downloads_undo.json`: mapa da última organização confirmada de Downloads.
 
-`nova_ai/profiles.py` fornece isolamento local para memória, personalidade, histórico e preferências gerais. Perfis podem ser criados e selecionados na aba **Memórias** das Preferências; o histórico legado permanece no caminho original e não é copiado. As memórias JSON antigas só são editáveis no perfil principal; a aba também permite cadastrar, corrigir e remover memórias SQLite com confirmação explícita, no armazenamento do perfil ativo. Preferências de rotina, humor, provedor, aplicativos, automações, nome e, quando habilitado, contagens de aprendizagem são carregadas e salvas no `settings.json` de cada perfil. Dados de permissões e integrações do sistema que não fazem parte das preferências continuam no escopo da conta Linux.
+`aurova_ai/profiles.py` fornece isolamento local para memória, personalidade, histórico e preferências gerais. Perfis podem ser criados e selecionados na aba **Memórias** das Preferências; o histórico legado permanece no caminho original e não é copiado. As memórias JSON antigas só são editáveis no perfil principal; a aba também permite cadastrar, corrigir e remover memórias SQLite com confirmação explícita, no armazenamento do perfil ativo. Preferências de rotina, humor, provedor, aplicativos, automações, nome e, quando habilitado, contagens de aprendizagem são carregadas e salvas no `settings.json` de cada perfil. Dados de permissões e integrações do sistema que não fazem parte das preferências continuam no escopo da conta Linux.
 
 ## Backend de IA
 
 O roteador e a fábrica suportam somente Ollama local. A pergunta atual é enviada ao serviço local; mensagens anteriores dependem do opt-in de contexto. O modelo e os limites de recursos são configuráveis em **Inteligência artificial**. O botão de download envia um pedido de pull ao Ollama apenas após confirmação; a operação ocorre em worker, exibe progresso e pode ser cancelada.
 
-Os lembretes são verificados pelo próprio processo da Nova. Eles são mostrados quando o app está em execução e não estão no horário silencioso.
+Os lembretes são verificados pelo próprio processo da Aurova. Eles são mostrados quando o app está em execução e não estão no horário silencioso.
 
 O desenho, a conversa e as animações não dependem do X11. Observar a janela ativa, posicionar a mascote em janelas e aplicar recursos de janela usam `python-xlib` e dependem do X11; no Wayland esses recursos podem não estar disponíveis, conforme o compositor e a sessão.
 
@@ -100,11 +104,11 @@ aplicação e o soak em conjunto, consulte [Testes gráficos isolados](gui-testi
 
 ## Componentes extensíveis
 
-`EventBus.post(event)` recebe resultados de IA e automações em workers sem chamar assinantes; a UI consome a fila com `drain()` no ciclo Tkinter. Widgets são atualizados apenas na thread principal. Mudanças de estado e animação são publicadas no ciclo principal. Para uma habilidade interna confiável, implemente `Plugin`, declare `PluginManifest` e registre explicitamente a instância no `PluginManager`. Confirme permissões no momento da operação com `PermissionManager.require`; declarar uma permissão no manifesto não concede acesso. O menu **Permissões** permite revisar e revogar grants da Nova e das habilidades registradas.
+`EventBus.post(event)` recebe resultados de IA e automações em workers sem chamar assinantes; a UI consome a fila com `drain()` no ciclo Tkinter. Widgets são atualizados apenas na thread principal. Mudanças de estado e animação são publicadas no ciclo principal. Para uma habilidade interna confiável, implemente `Plugin`, declare `PluginManifest` e registre explicitamente a instância no `PluginManager`. Confirme permissões no momento da operação com `PermissionManager.require`; declarar uma permissão no manifesto não concede acesso. O menu **Permissões** permite revisar e revogar grants da Aurova e das habilidades registradas.
 
 Plugins externos usam manifesto JSON explicitamente selecionado via `PluginManager.register_external_manifest` (máximo de 16 KiB). O executável deve ser absoluto, existente e estar em `/usr` ou `/bin`; comandos aceitam no máximo 16 itens de argv, com limites de bytes por argumento e no total, e caminhos que escapem do diretório do plugin ou dos diretórios de sistema montados são rejeitados. O processo usa JSON por stdin/stdout, timeout, limite de mensagem, `prlimit` para CPU, espaço virtual de memória, processos, arquivos abertos e tamanho de arquivo, `bubblewrap`, diretório do plugin somente leitura, ambiente sem credenciais e namespaces de usuário e PID. Sem autorização `network.access`, tenta também desabilitar a rede; se o isolamento de rede não for suportado, a execução falha fechada. As permissões são verificadas em cada chamada, inclusive após a ativação do plugin. Com `network.access` concedida, o processo pode usar a rede. O sandbox reduz acesso ao sistema, mas não deve ser tratado como isolamento perfeito contra vulnerabilidades do kernel ou do bubblewrap.
 
-O menu abre **Painel da Nova**, **Notificações** e **Permissões**. Cada janela reutiliza a instância já aberta e traz essa janela para frente. O painel coleta métricas em worker, mantém histórico limitado e atualiza a interface pela thread principal; a frequência pode ser ajustada ou pausada na janela. Notificações são salvas em `~/.config/desktop_pet/notifications.json`, incluindo filtros por categoria, modo silencioso e intervalo anti-repetição; permissões ficam em `~/.config/desktop_pet/permissions.json`. Os controles de permissões internas usam o identificador `nova.core`, igual ao Permission Manager.
+O menu abre **Painel da Aurova**, **Notificações** e **Permissões**. Cada janela reutiliza a instância já aberta e traz essa janela para frente. O painel coleta métricas em worker, mantém histórico limitado e atualiza a interface pela thread principal; a frequência pode ser ajustada ou pausada na janela. Notificações são salvas em `~/.config/desktop_pet/notifications.json`, incluindo filtros por categoria, modo silencioso e intervalo anti-repetição; permissões ficam em `~/.config/desktop_pet/permissions.json`. Os controles de permissões internas usam o identificador `aurova.core`, igual ao Permission Manager.
 
 O controlador de estado é uma migração incremental. O código existente ainda escolhe poses e temporizadores; novas alterações devem migrar para `StateManager.transition` antes de remover a fachada `DesktopPet.state`. Workers que precisem retornar uma ação visual usam `post_ui_callback`; o callback só é executado pelo `tick()` na thread que criou Tk. Não chame `root.after()` de workers.
 
@@ -112,7 +116,7 @@ Validação operacional registrada: probes limitados confirmaram o encerramento 
 
 ### Soak tests
 
-`tools/nova_soak.py` executa os serviços reais de EventBus, fila de callbacks da
+`tools/aurova_soak.py` executa os serviços reais de EventBus, fila de callbacks da
 UI, notificações, monitor de sistema e seleção de quadros de animação em um
 processo separado. O arquivo JSONL registra CPU, RSS, threads, filhos, filas,
 históricos limitados e quadros selecionados. Ele não cria uma janela Tk e não
@@ -120,9 +124,9 @@ mede fluidez visual. Os cenários de 30 minutos, 1 hora e 3 horas são separados
 da suíte normal:
 
 ```bash
-.venv/bin/python tools/nova_soak.py --scenario 30m --output /tmp/nova-soak-30m.jsonl
-.venv/bin/python tools/nova_soak.py --scenario 1h --output /tmp/nova-soak-1h.jsonl
-.venv/bin/python tools/nova_soak.py --scenario 3h --output /tmp/nova-soak-3h.jsonl
+.venv/bin/python tools/aurova_soak.py --scenario 30m --output /tmp/aurova-soak-30m.jsonl
+.venv/bin/python tools/aurova_soak.py --scenario 1h --output /tmp/aurova-soak-1h.jsonl
+.venv/bin/python tools/aurova_soak.py --scenario 3h --output /tmp/aurova-soak-3h.jsonl
 ```
 
 `--duration-seconds` e `--sample-interval` permitem verificações curtas. Os

@@ -254,7 +254,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
         def show_maintenance_details():
             if not maintenance_details["text"]:
                 return
-            details_window = self._set_nova_window_icon(tk.Toplevel(window))
+            details_window = self._set_aurova_window_icon(tk.Toplevel(window))
             details_window.title("Detalhes da operação")
             details_window.transient(window)
             fit_window_to_screen(details_window, 620, 380, min_width=500, min_height=300)
@@ -277,7 +277,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
         details_button.pack(anchor="e", pady=(8, 0))
 
         def show_maintenance_confirmation(title, description, confirm_label, on_confirm):
-            dialog = self._set_nova_window_icon(tk.Toplevel(window))
+            dialog = self._set_aurova_window_icon(tk.Toplevel(window))
             dialog.title(title)
             dialog.transient(window)
             dialog.configure(bg=COLORS["background"])
@@ -304,7 +304,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             title, description, packages, action_label=None, on_action=None,
             on_package_action=None,
         ):
-            dialog = self._set_nova_window_icon(tk.Toplevel(window))
+            dialog = self._set_aurova_window_icon(tk.Toplevel(window))
             dialog.title(title)
             dialog.transient(window)
             fit_window_to_screen(dialog, 620, 440, min_width=500, min_height=350)
@@ -326,7 +326,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             )
             table.heading("package", text="Pacote")
             table.heading("current", text="Versão instalada")
-            table.heading("action", text="Ação / nova versão")
+            table.heading("action", text="Ação / Versão mais recente")
             table.column("package", width=200, minwidth=120, anchor="w")
             table.column("current", width=130, minwidth=90, anchor="w")
             table.column("action", width=200, minwidth=100, anchor="w")
@@ -736,7 +736,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 failed_apt_update = False
                 error = None
                 try:
-                    self.permission_manager.require("nova.core", "system.maintenance", confirmed=True)
+                    self.permission_manager.require("aurova.core", "system.maintenance", confirmed=True)
                     for index, command in enumerate(commands, start=1):
                         if failed_apt_update and command[0] == "apt":
                             self.post_ui_callback(
@@ -1032,18 +1032,21 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
         inventory_table = ttk.Treeview(
             inventory_table_frame,
             columns=("name", "version", "candidate", "status", "origin", "package"),
-            show="tree headings", height=12, style="Maintenance.Treeview",
+            show="tree headings", height=6, style="Maintenance.Treeview",
             selectmode="extended",
         )
+        inventory_table.tag_configure(
+            "broken_shortcut", foreground=COLORS["error"],
+        )
         inventory_table.heading("#0", text="Ícone")
-        inventory_table.column("#0", width=42, minwidth=34, stretch=False, anchor="center")
+        inventory_table.column("#0", width=52, minwidth=50, stretch=False, anchor="center")
         for column, heading, width, minimum in (
-            ("name", "Aplicativo", 190, 140),
-            ("version", "Instalada", 120, 90),
-            ("candidate", "Disponível", 120, 90),
-            ("status", "Estado", 160, 120),
-            ("origin", "Origem", 130, 100),
-            ("package", "Pacote / ID", 170, 120),
+            ("name", "Aplicativo", 175, 140),
+            ("version", "Instalada", 100, 90),
+            ("candidate", "Disponível", 100, 90),
+            ("status", "Estado", 145, 120),
+            ("origin", "Origem", 120, 100),
+            ("package", "Pacote / ID", 160, 120),
         ):
             inventory_table.heading(
                 column, text=heading,
@@ -1123,10 +1126,16 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             value="Selecione um aplicativo para ver suas versões e detalhes.",
         )
         inventory_error_label.pack(anchor="w", pady=(0, 6))
+        app_detail_area = ttk.Frame(apps_card, style="Card.TFrame", padding=(10, 8))
+        app_detail_area.pack(fill="x", pady=(8, 0))
         ttk.Label(
-            apps_card, textvariable=selected_app_details, style="Hint.TLabel",
-            wraplength=460, justify="left",
-        ).pack(anchor="w", pady=(8, 0))
+            app_detail_area, text="Detalhes do aplicativo selecionado",
+            style="CardTitle.TLabel",
+        ).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            app_detail_area, textvariable=selected_app_details, style="Hint.TLabel",
+            wraplength=850, justify="left",
+        ).pack(anchor="w", fill="x")
         inventory_actions = ttk.Frame(apps_card, style="Card.TFrame")
         inventory_actions.pack(fill="x", pady=(8, 0))
         update_selected_button = ttk.Button(
@@ -1236,6 +1245,8 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 icon = app_icon_image(app)
                 if icon is not None:
                     row_options["image"] = icon
+                if app.get("shortcut_state") == "broken":
+                    row_options["tags"] = ("broken_shortcut",)
                 item_id = inventory_table.insert("", "end", **row_options)
                 app_by_item[item_id] = app
             if rows:
@@ -1263,12 +1274,23 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             }
             for app in installed_apps_inventory:
                 counts[app["update_status"]] = counts.get(app["update_status"], 0) + 1
+            name_counts = {}
+            for app in installed_apps_inventory:
+                folded_name = app["name"].casefold()
+                name_counts[folded_name] = name_counts.get(folded_name, 0) + 1
+            broken_shortcuts = sum(
+                app.get("shortcut_state") == "broken"
+                for app in installed_apps_inventory
+            )
+            duplicate_names = sum(count > 1 for count in name_counts.values())
             inventory_summary.set(
                 f"Total: {len(installed_apps_inventory)} · "
                 f"atualizados: {counts['Atualizado']} · "
                 f"desatualizados: {counts['Atualização disponível']} · "
                 f"aguardando verificação: {counts['Verificação necessária']} · "
-                f"não gerenciados: {counts['Atualização não gerenciada']}"
+                f"não gerenciados: {counts['Atualização não gerenciada']} · "
+                f"atalhos quebrados: {broken_shortcuts} · "
+                f"possíveis duplicados: {duplicate_names}"
             )
             app_inventory_status.set(
                 f"{len(rows)} aplicativo(s) exibido(s) · "
@@ -1345,32 +1367,53 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 categories = app.get("categories", "") or "Não informada"
                 description = app.get("description") or "Sem descrição fornecida pelo aplicativo."
                 shortcut = {
-                    "available": "disponível", "broken": "quebrado", "absent": "ausente",
+                    "available": "Disponível", "broken": "Quebrado", "absent": "Não instalado",
                 }.get(app.get("shortcut_state"), "não identificado")
+                source_label = {
+                    "APT/DEB": "APT/DEB",
+                    "Flatpak": "Flatpak",
+                    "Snap": "Snap",
+                    "AppImage": "AppImage",
+                    "Manual/outro": "Manual / outro",
+                }.get(app["source"], app["source"])
                 details = (
-                    f"{app['name']}\n{description}\n"
-                    f"Instalada: {app['version']} · disponível: {app['candidate_version']}\n"
-                    f"Origem: {app['origin']} · categoria: {categories}\n"
-                    f"Estado: {app['update_status']} · atalho: {shortcut}"
+                    f"{app['name']}  ·  {source_label}\n"
+                    f"{description}\n\n"
+                    f"Versão instalada: {app['version']}  ·  "
+                    f"Disponível: {app['candidate_version']}\n"
+                    f"Origem / repositório: {app['origin']}\n"
+                    f"Categoria: {categories}  ·  Estado: {app['update_status']}\n"
+                    f"Atalho: {shortcut}"
                 )
                 if app.get("desktop_file") and not app["desktop_file"].startswith("appstream:"):
-                    details += f" · arquivo: {app['desktop_file']}"
-                details += f"\nExecutável/localização: {location}"
+                    details += f"\nArquivo de atalho: {app['desktop_file']}"
+                details += f"\nLocalização: {location}"
                 if app["source"] == "AppImage":
                     try:
                         path = Path(app["package"])
                         if path.is_file() and not path.is_symlink():
-                            details += f" · arquivo {format_bytes(path.stat().st_size)}"
+                            details += f"\nTamanho do arquivo: {format_bytes(path.stat().st_size)}"
                     except OSError:
-                        pass
-                duplicate_sources = sorted({
-                    other["origin"] for other in installed_apps_inventory
+                        details += "\nTamanho do arquivo: não foi possível consultar."
+                else:
+                    details += "\nTamanho instalado: não informado pela fonte."
+                duplicates = sorted((
+                    other for other in installed_apps_inventory
                     if other is not app and other["name"].casefold() == app["name"].casefold()
-                }, key=str.casefold)
-                if duplicate_sources:
-                    details += "\nPossível duplicata com: " + ", ".join(duplicate_sources)
+                ), key=lambda other: (other["source"].casefold(), other["package"].casefold()))
+                if duplicates:
+                    details += "\nPossíveis duplicados:"
+                    details += "".join(
+                        f"\n• {other['source']} · {other['version']} · {other['package']}"
+                        for other in duplicates
+                    )
                 if app["source"] in ("APT/DEB", "Flatpak", "Snap"):
-                    details += "\nTamanho instalado: não consultado nesta versão."
+                    details += "\nRemoção: disponível pelo gerenciador, após prévia e confirmação."
+                else:
+                    details += (
+                        "\nRemoção: manual. A Aurova não apaga arquivos nem considera "
+                        "a exclusão de um arquivo como desinstalação."
+                    )
                 selected_app_details.set(details)
             else:
                 selected_app_details.set(
@@ -1394,7 +1437,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
 
         history_card = card(
             computer_content, "Histórico de operações",
-            "Atualizações e remoções iniciadas pela Nova; dados pessoais não são registrados.",
+            "Atualizações e remoções iniciadas pela Aurova; dados pessoais não são registrados.",
         )
         history_table = ttk.Treeview(
             history_card, columns=("when", "apps", "result"),
@@ -1531,7 +1574,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
 
                 try:
                     self.permission_manager.require(
-                        "nova.core", "system.maintenance.read",
+                        "aurova.core", "system.maintenance.read",
                     )
                     source_errors = []
                     launcher_discovery_complete = True
@@ -1653,9 +1696,19 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                                 "Falha nas fontes de pacotes; inventário anterior preservado.",
                             )
                     else:
-                        inventory_status_banner.set(
-                            f"Consulta concluída · última atualização em {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M')}"
+                        unavailable_sources = (
+                            sources.get("unavailable_sources", set())
+                            if sources else set()
                         )
+                        if unavailable_sources:
+                            names = ", ".join(sorted(unavailable_sources))
+                            inventory_status_banner.set(
+                                f"Consulta concluída · {names}: gerenciador não instalado."
+                            )
+                        else:
+                            inventory_status_banner.set(
+                                f"Consulta concluída · última atualização em {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M')}"
+                            )
                         inventory_error.set("")
                     if commit_inventory:
                         installed_apps_inventory[:] = (
@@ -1778,7 +1831,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
 
             show_package_review(
                 "Confirmar atualização dos aplicativos",
-                "A Nova atualizará somente estes aplicativos pelos gerenciadores de origem. "
+                "A Aurova atualizará somente estes aplicativos pelos gerenciadores de origem. "
                 "Dependências necessárias podem ser atualizadas pelo próprio gerenciador.",
                 packages, "Atualizar todos", start_updates,
             )
@@ -1796,7 +1849,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             try:
                 self._authorize_core_action("system.app.launch", confirmed=True)
                 self.permission_manager.require(
-                    "nova.core", "system.app.launch", confirmed=True,
+                    "aurova.core", "system.app.launch", confirmed=True,
                 )
             except (PermissionError, OSError) as exc:
                 messagebox.showerror("Permissão necessária", str(exc), parent=window)
@@ -1806,7 +1859,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             def worker():
                 try:
                     self.permission_manager.require(
-                        "nova.core", "system.app.launch", confirmed=True,
+                        "aurova.core", "system.app.launch", confirmed=True,
                     )
                     open_installed_application(
                         app, env=self._child_process_env(),
@@ -1831,7 +1884,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 self.post_ui_callback(finish_open)
 
             try:
-                threading.Thread(target=worker, name="nova-open-installed-app", daemon=True).start()
+                threading.Thread(target=worker, name="aurova-open-installed-app", daemon=True).start()
             except (OSError, RuntimeError) as exc:
                 computer_status.set(f"Não foi possível iniciar a abertura: {exc}")
 
@@ -1852,14 +1905,14 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                     "Revisar remoção manual",
                     f"Origem: {app['source']}\nLocalização: {location}\nAtalho: {shortcut}\n\n"
                     "Os dados associados não podem ser identificados com segurança. "
-                    "A Nova não apagará o executável, atalho nem configurações automaticamente. "
+                    "A Aurova não apagará o executável, atalho nem configurações automaticamente. "
                     "Faça a remoção manual após revisar esses locais; nenhum arquivo será alterado agora.",
                     parent=window,
                 )
                 return
             try:
                 self._authorize_core_action("system.maintenance.read")
-                self.permission_manager.require("nova.core", "system.maintenance.read")
+                self.permission_manager.require("aurova.core", "system.maintenance.read")
             except (PermissionError, OSError) as exc:
                 messagebox.showerror("Permissão necessária", str(exc), parent=window)
                 return
@@ -1873,7 +1926,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
 
             def worker():
                 try:
-                    self.permission_manager.require("nova.core", "system.maintenance.read")
+                    self.permission_manager.require("aurova.core", "system.maintenance.read")
                     preview = preview_uninstall(
                         app, env={**self._child_process_env(), "LC_ALL": "C"},
                     )
@@ -1925,7 +1978,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
                 self.post_ui_callback(finish_preview)
 
             try:
-                threading.Thread(target=worker, name="nova-preview-app-removal", daemon=True).start()
+                threading.Thread(target=worker, name="aurova-preview-app-removal", daemon=True).start()
             except (OSError, RuntimeError) as exc:
                 self.system_maintenance_active = False
                 for button in maintenance_buttons:
@@ -1953,7 +2006,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
 
             def worker():
                 try:
-                    self.permission_manager.require("nova.core", "system.maintenance.read")
+                    self.permission_manager.require("aurova.core", "system.maintenance.read")
                     result = subprocess.run(
                         ["apt-get", "-s", "autoremove"], capture_output=True,
                         text=True, timeout=120, check=False,
@@ -2028,7 +2081,7 @@ class ComputerPreferencesTabMixin(ComputerCenterUIMixin):
             "Essas informações são controladas pelo código e não podem ser removidas pela lista de memórias.",
         )
         ttk.Label(
-            protected_memory_card, text="Nome da assistente: Nova · protegido",
+            protected_memory_card, text="Nome da assistente: Aurova · protegido",
             style="CardTitle.TLabel",
         ).pack(anchor="w", pady=(2, 4))
         user_name_display = tk.StringVar(

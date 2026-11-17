@@ -38,31 +38,47 @@ class AppsPreferencesTabMixin:
         reminder_status_filter = tk.StringVar(value="Todos")
         reminder_toolbar = ttk.Frame(reminder_content, style="Autonomy.TFrame")
         reminder_toolbar.pack(fill="x", pady=(0, 7))
-        ttk.Label(reminder_toolbar, text="Exibir", style="Hint.TLabel").pack(side="left", padx=(0, 8))
+        reminder_search = tk.StringVar()
+        ttk.Label(
+            reminder_toolbar, text="Buscar", style="PageHint.TLabel",
+        ).pack(side="left", padx=(0, 8))
+        ttk.Entry(
+            reminder_toolbar, textvariable=reminder_search, style="Autonomy.TEntry",
+        ).pack(side="left", fill="x", expand=True, ipady=4)
         reminder_filter = ttk.Combobox(
             reminder_toolbar, textvariable=reminder_status_filter, state="readonly",
-            values=("Todos", "Próximos", "Atrasados", "Concluídos"), width=16,
+            values=("Todos", "Hoje", "Próximos", "Atrasados", "Concluídos"), width=16,
         )
-        reminder_filter.pack(side="left")
+        reminder_filter.pack(side="left", padx=(8, 0))
         visible_reminders = []
 
-        def reminder_is_overdue(reminder, now=None):
+        def reminder_dates(reminder, now=None):
+            now = now or datetime.now().astimezone()
             due = valid_reminder_time(reminder.get("at", ""))
             if due is None:
+                return None, now
+            due = due.astimezone()
+            now = now.astimezone()
+            return due, now
+
+        def reminder_is_overdue(reminder, now=None):
+            due, now = reminder_dates(reminder, now)
+            if due is None or now is None:
                 return False
-            now = now or datetime.now().astimezone()
-            if due.tzinfo is None:
-                now = now.replace(tzinfo=None)
             return due < now
 
         def reminder_is_upcoming(reminder, now=None):
-            due = valid_reminder_time(reminder.get("at", ""))
-            if due is None:
+            due, now = reminder_dates(reminder, now)
+            if due is None or now is None:
                 return False
-            now = now or datetime.now().astimezone()
-            if due.tzinfo is None:
-                now = now.replace(tzinfo=None)
-            return due >= now
+            return due.date() > now.date()
+
+        def reminder_is_today(reminder, now=None):
+            due, now = reminder_dates(reminder, now)
+            return (
+                due is not None and now is not None
+                and due.date() == now.date() and due >= now
+            )
 
         def format_reminder(reminder):
             if reminder.get("done"):
@@ -71,26 +87,81 @@ class AppsPreferencesTabMixin:
                 state = "◷ Atrasado"
             else:
                 state = "◷ Programado"
-            return f"{state}   ·   {reminder.get('at', '')[:16].replace('T', ' ')}   ·   {reminder.get('text', '')}"
+            due, _ = reminder_dates(reminder)
+            formatted_due = (
+                due.strftime("%d/%m/%Y às %H:%M")
+                if due else "Data não disponível"
+            )
+            return f"{state}   ·   {formatted_due}   ·   {reminder.get('text', '')}"
 
+        reminder_list_area = ttk.Frame(reminder_content, style="Autonomy.TFrame")
+        reminder_list_area.pack(fill="x")
         reminder_list, _refresh_reminders_list, _remove_visible_reminder = setup_list(
-            reminder_content, visible_reminders,
+            reminder_list_area, visible_reminders,
             format_reminder,
             "Nenhum lembrete cadastrado. Adicione um lembrete para receber a notificação no momento certo.",
+            height=6,
         )
+        reminder_summary = tk.StringVar(value="")
+        ttk.Label(
+            reminder_content, textvariable=reminder_summary, style="PageHint.TLabel",
+        ).pack(anchor="w", pady=(7, 0))
+        reminder_detail = tk.StringVar(
+            value="Selecione um lembrete para ver seus detalhes."
+        )
+        ttk.Label(
+            reminder_content, textvariable=reminder_detail, style="Hint.TLabel",
+            wraplength=430, justify="left",
+        ).pack(fill="x", pady=(6, 0))
+
         def refresh_reminders():
             now = datetime.now().astimezone()
             status = reminder_status_filter.get()
+            needle = reminder_search.get().casefold().strip()
+
+            def sort_reminder(item):
+                due, _ = reminder_dates(item, now)
+                return (
+                    bool(item.get("done")),
+                    due.timestamp() if due else float("inf"),
+                )
+
             visible_reminders[:] = [item for item in reminder_items if (
                 status == "Todos"
+                or (
+                    status == "Hoje" and not item.get("done")
+                    and reminder_is_today(item, now)
+                )
                 or (status == "Concluídos" and item.get("done"))
                 or (status == "Próximos" and not item.get("done") and reminder_is_upcoming(item, now))
                 or (status == "Atrasados" and not item.get("done") and reminder_is_overdue(item, now))
+            ) and (
+                not needle or needle in (
+                    f"{item.get('text', '')} {item.get('at', '')}"
+                ).casefold()
             )]
-            visible_reminders.sort(key=lambda item: (bool(item.get("done")), item.get("at", "")))
+            visible_reminders.sort(key=sort_reminder)
             _refresh_reminders_list()
+            total = len(reminder_items)
+            overdue_count = sum(
+                not item.get("done") and reminder_is_overdue(item, now)
+                for item in reminder_items
+            )
+            today_count = sum(
+                not item.get("done")
+                and reminder_is_today(item, now)
+                for item in reminder_items
+            )
+            completed_count = sum(bool(item.get("done")) for item in reminder_items)
+            reminder_summary.set(
+                f"{len(visible_reminders)} exibidos de {total} · "
+                f"{today_count} hoje · {overdue_count} atrasados · "
+                f"{completed_count} concluídos"
+            )
+            reminder_detail.set("Selecione um lembrete para ver seus detalhes.")
 
         reminder_filter.bind("<<ComboboxSelected>>", lambda _event: refresh_reminders())
+        reminder_search.trace_add("write", lambda *_args: refresh_reminders())
         reminder_list.bind("<<ListboxSelect>>", lambda _event: load_selected_reminder())
 
         def load_selected_reminder():
@@ -101,10 +172,20 @@ class AppsPreferencesTabMixin:
             editing_reminder["index"] = next(
                 index for index, item in enumerate(reminder_items) if item is reminder
             )
+            due, _now = reminder_dates(reminder)
             reminder_date.set(reminder.get("at", "")[:10])
             reminder_time.set(reminder.get("at", "")[11:16])
             reminder_text.set(reminder.get("text", ""))
             reminder_submit.configure(text="Salvar edição")
+            state = (
+                "Concluído" if reminder.get("done")
+                else "Atrasado" if reminder_is_overdue(reminder)
+                else "Programado"
+            )
+            reminder_detail.set(
+                f"{state} · {due.strftime('%d/%m/%Y às %H:%M') if due else 'Data inválida'}\n"
+                f"{reminder.get('text', '')}"
+            )
 
         def add_reminder():
             value = f"{reminder_date.get().strip()}T{reminder_time.get().strip()}"
@@ -125,6 +206,8 @@ class AppsPreferencesTabMixin:
             reminder_time.set("")
             reminder_text.set("")
             reminder_submit.configure(text="Adicionar")
+            reminder_search.set("")
+            reminder_status_filter.set("Todos")
             refresh_reminders()
         reminder_submit = ttk.Button(reminder_form, text="Adicionar", style="Primary.TButton", command=add_reminder)
         reminder_submit.grid(row=2, column=0, columnspan=3, sticky="e")
@@ -132,7 +215,14 @@ class AppsPreferencesTabMixin:
         def delete_selected_reminder():
             selected = reminder_list.curselection()
             if selected:
-                reminder_items.remove(visible_reminders[selected[0]])
+                reminder = visible_reminders[selected[0]]
+                if not messagebox.askyesno(
+                    "Remover lembrete",
+                    f"Remover este lembrete?\n\n{reminder.get('text', '')}",
+                    parent=window,
+                ):
+                    return
+                reminder_items.remove(reminder)
                 editing_reminder["index"] = None
                 refresh_reminders()
 
@@ -151,8 +241,8 @@ class AppsPreferencesTabMixin:
 
         app_card = card(
             apps_content,
-            "Permitir que a Nova abra um app",
-            "Cadastre apenas apps que você reconhece. Você pode escolher se a Nova confirma cada abertura.",
+            "Permitir que a Aurova abra um app",
+            "Cadastre apenas apps que você reconhece. Você pode escolher se a Aurova confirma cada abertura.",
         )
         ttk.Checkbutton(
             app_card,
@@ -194,11 +284,15 @@ class AppsPreferencesTabMixin:
         app_error_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 5))
         app_buttons = ttk.Frame(app_form, style="Card.TFrame")
         app_buttons.grid(row=4, column=0, columnspan=2, sticky="ew")
+        app_management_row = ttk.Frame(app_buttons, style="Card.TFrame")
+        app_management_row.pack(fill="x", pady=(0, 6))
+        app_form_row = ttk.Frame(app_buttons, style="Card.TFrame")
+        app_form_row.pack(fill="x")
         editing_app = {"index": None}
         app_list, refresh_apps, remove_app = setup_list(
             apps_content, app_items,
             lambda item: f"{item.get('name', '')}   ·   {item.get('command', '')}",
-            "Nenhum aplicativo cadastrado. Adicione um app para que a Nova possa abrir com segurança.",
+            "Nenhum aplicativo cadastrado. Adicione um app para que a Aurova possa abrir com segurança.",
         )
         def clear_app_form():
             editing_app["index"] = None
@@ -225,7 +319,7 @@ class AppsPreferencesTabMixin:
             remove_app_button.configure(state="normal")
 
         def open_app_picker():
-            picker = self._set_nova_window_icon(tk.Toplevel(window))
+            picker = self._set_aurova_window_icon(tk.Toplevel(window))
             picker.title("Selecionar aplicativo instalado")
             picker.transient(window)
             picker.attributes("-topmost", True)
@@ -396,12 +490,12 @@ class AppsPreferencesTabMixin:
             clear_app_form()
 
         app_list.bind("<<ListboxSelect>>", select_app)
-        save_app_button = ttk.Button(app_buttons, text="Adicionar app", style="Primary.TButton", command=save_app)
+        save_app_button = ttk.Button(app_form_row, text="Adicionar app", style="Primary.TButton", command=save_app)
         save_app_button.pack(side="right")
-        ttk.Button(app_buttons, text="Testar comando", style="Secondary.TButton", command=test_app_command).pack(side="right", padx=(0, 8))
-        ttk.Button(app_buttons, text="Novo app", style="Secondary.TButton", command=clear_app_form).pack(side="left")
+        ttk.Button(app_form_row, text="Testar comando", style="Secondary.TButton", command=test_app_command).pack(side="right", padx=(0, 8))
+        ttk.Button(app_management_row, text="Novo app", style="Secondary.TButton", command=clear_app_form).pack(side="left")
         remove_app_button = ttk.Button(
-            app_buttons,
+            app_management_row,
             text="Remover app",
             style="Secondary.TButton",
             command=remove_selected_app,

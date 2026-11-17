@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 
-from nova_ai.model.model_config import ModelConfig
+from aurova_ai.model.model_config import ModelConfig
 
 
 def _iter_records(path, max_line_bytes=4096):

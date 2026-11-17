@@ -1,4 +1,4 @@
-"""Non-blocking system and Nova process metrics collector."""
+"""Non-blocking system and Aurova process metrics collector."""
 import threading
 import time
 from collections import deque

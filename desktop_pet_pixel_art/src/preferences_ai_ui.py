@@ -21,11 +21,11 @@ class AIPreferencesTabMixin:
         window = getattr(context, 'window', None)
         ai_provider_card = card(
             ai_content, "Inferência local — Ollama",
-            "A conversa usa somente o Ollama instalado neste computador. Sem o serviço ou o modelo, a Nova continua disponível para animações, rotinas, memórias e recursos locais.",
+            "A conversa usa somente o Ollama instalado neste computador. Sem o serviço ou o modelo, a Aurova continua disponível para animações, rotinas, memórias e recursos locais.",
         )
         ttk.Label(
             ai_provider_card,
-            text="A Nova não inicia o serviço nem baixa modelos automaticamente. O download só começa após sua confirmação.",
+            text="A Aurova não inicia o serviço nem baixa modelos automaticamente. O download só começa após sua confirmação.",
             style="Hint.TLabel", wraplength=400,
         ).pack(anchor="w", pady=(5, 8))
         pull_row = ttk.Frame(ai_provider_card, style="Card.TFrame")
@@ -131,7 +131,7 @@ class AIPreferencesTabMixin:
                     cancel_event,
                 ),
                 daemon=True,
-                name="nova-ollama-model-pull",
+                name="aurova-ollama-model-pull",
             ).start()
 
         def cancel_model_pull():
@@ -209,7 +209,7 @@ class AIPreferencesTabMixin:
         spotify_card = card(
             ai_content,
             "Spotify",
-            "Para tocar uma música pelo nome, conecte sua conta: a Nova pesquisa pela API e envia a faixa ao player local. Para tocar playlist sem conectar a API, use o link dela. Adicionar faixas a playlists exige um app Spotify Developer Mode; o dono desse app precisa de Premium. Cadastre o Redirect URI http://127.0.0.1:8765/callback. A Nova usa PKCE e não pede Client Secret.",
+            "Para tocar uma música pelo nome, conecte sua conta: a Aurova pesquisa pela API e envia a faixa ao player local. Para tocar playlist sem conectar a API, use o link dela. Adicionar faixas a playlists exige um app Spotify Developer Mode; o dono desse app precisa de Premium. Cadastre o Redirect URI http://127.0.0.1:8765/callback. A Aurova usa PKCE e não pede Client Secret.",
         )
         ttk.Label(spotify_card, text="Client ID do app Spotify", style="Hint.TLabel").pack(anchor="w")
         ttk.Entry(

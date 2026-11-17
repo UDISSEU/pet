@@ -4,7 +4,7 @@ Data: 5 de novembro de 2026
 
 ## Funcionamento
 
-`NovaIdentity` e `BehaviorRules` fornecem identidade e limites imutáveis e independentes de provedor. `ResponseStyle` contém tom, detalhe e idioma; preferências só são gravadas com consentimento, no banco SQLite de preferências. A camada de prompt legada (`ai/personality.py`) continua ativa; a integração acrescenta as instruções de `PersonalityEngine` ao prompt comum do `AICore`.
+`AurovaIdentity` e `BehaviorRules` fornecem identidade e limites imutáveis e independentes de provedor. `ResponseStyle` contém tom, detalhe e idioma; preferências só são gravadas com consentimento, no banco SQLite de preferências. A camada de prompt legada (`ai/personality.py`) continua ativa; a integração acrescenta as instruções de `PersonalityEngine` ao prompt comum do `AICore`.
 
 Estados visuais existentes são mapeados deterministicamente para estados simulados: `thinking/curious` → curiosa, `thumbs_up/dance` → alegre, `working/busy` → focada, `sleep` → descansando, `error` → preocupada e `idle/walk/sitting` → tranquila. A mascote mantém seus sprites e animações existentes. Estados não reconhecidos não quebram a UI nem trocam aleatoriamente o estado cognitivo.
 
@@ -12,7 +12,7 @@ O estado visual é aplicado como estado emocional transitório em memória, no w
 
 ## Testes
 
-`python3 -m unittest tests.nova_ai.test_personality_system tests.nova_ai.test_desktop_integration tests.nova_ai.test_memory tests.test_ai_providers`: **69 aprovados**. Incluem identidade estável, transições determinísticas, estado temporário, preferências consentidas após reinício, instruções por estado visual e compatibilidade do prompt com provedores.
+`python3 -m unittest tests.aurova_ai.test_personality_system tests.aurova_ai.test_desktop_integration tests.aurova_ai.test_memory tests.test_ai_providers`: **69 aprovados**. Incluem identidade estável, transições determinísticas, estado temporário, preferências consentidas após reinício, instruções por estado visual e compatibilidade do prompt com provedores.
 
 ## Limitações
 

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import urllib.request
 
 from config import MOVEMENT_VIDEOS, OLLAMA_MODEL, OLLAMA_URL, resolve_movement_path
-from nova_ai.memory.memory_storage import APPLICATION_ID, SCHEMA_VERSION
+from aurova_ai.memory.memory_storage import APPLICATION_ID, SCHEMA_VERSION
 
 
 _REQUIRED_MODULES = {
@@ -81,7 +81,7 @@ def check_environment(*, home=None, model=OLLAMA_MODEL, url=OLLAMA_URL):
     database_status = _check_existing_database(home)
     personality_status = (
         "available"
-        if _module_available("nova_ai.personality.personality_engine")
+        if _module_available("aurova_ai.personality.personality_engine")
         else "missing"
     )
     try:
@@ -187,7 +187,7 @@ def _check_existing_database(home):
         profile_id = active_id
 
     if profile_id == "legacy":
-        database = base_dir / "nova_memory.sqlite3"
+        database = base_dir / "aurova_memory.sqlite3"
     else:
         profiles_dir = base_dir / "profiles"
         if profiles_dir.is_symlink():
@@ -195,7 +195,10 @@ def _check_existing_database(home):
         profile_dir = profiles_dir / profile_id
         if profile_dir.is_symlink():
             return "unsafe"
-        database = profile_dir / "nova_memory.sqlite3"
+        database = profile_dir / "aurova_memory.sqlite3"
+    legacy_database = database.with_name("nova_memory.sqlite3")
+    if not database.exists() and legacy_database.exists():
+        database = legacy_database
     if database.is_symlink():
         return "unsafe"
     if not database.exists():

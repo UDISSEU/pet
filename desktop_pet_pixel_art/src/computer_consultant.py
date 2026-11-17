@@ -56,7 +56,7 @@ class ActionHistoryStore:
         finally:
             db.close()
 
-    def record(self, action, status, *, origin="Nova", result="", error_code=None):
+    def record(self, action, status, *, origin="Aurova", result="", error_code=None):
         status = {"succeeded": "Concluída", "failed": "Falhou",
                   "cancelled": "Cancelada", "timeout": "Falhou"}.get(status, status)
         if status == "Falhou" and error_code == "authorization_required":
@@ -64,7 +64,7 @@ class ActionHistoryStore:
         allowed = {"Concluída", "Em andamento", "Cancelada", "Falhou", "Aguardando autorização"}
         if status not in allowed:
             raise ValueError("Estado de ação inválido.")
-        result = result or "Ação registrada pela Nova."
+        result = result or "Ação registrada pela Aurova."
         row = (str(action)[:100], status, str(origin)[:60], str(result)[:240],
                None if error_code is None else str(error_code)[:80],
                datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -115,7 +115,7 @@ def collect_computer_context(question="", *, performance_store=None, system_moni
         from autonomy import find_installed_apps
     except Exception:
         find_installed_apps = None
-    context = {"schema": "nova-computer-context.v1", "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "sources": {}, "limitations": [
+    context = {"schema": "aurova-computer-context.v1", "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "sources": {}, "limitations": [
         "Dados são amostras locais coletadas agora; valores ausentes não significam estado saudável.",
         "Causas sugeridas são hipóteses, salvo evidência explicitamente observada.",
     ]}
@@ -290,5 +290,5 @@ def consultant_context_memory(context):
             return value
         data = json.dumps(shrink(context), ensure_ascii=False, default=str)
     if len(data) > MAX_CONTEXT_CHARS:
-        data = json.dumps({"schema": "nova-computer-context.v1", "truncated": True}, ensure_ascii=False)
+        data = json.dumps({"schema": "aurova-computer-context.v1", "truncated": True}, ensure_ascii=False)
     return "[Dados observados do computador, coletados para esta pergunta; campos ausentes ou indisponíveis não devem ser inferidos] " + data

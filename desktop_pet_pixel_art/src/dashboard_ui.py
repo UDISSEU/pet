@@ -1,4 +1,4 @@
-"""Compact Nova dashboard with background metric collection."""
+"""Compact Aurova dashboard with background metric collection."""
 import queue
 import logging
 import threading
@@ -33,26 +33,39 @@ class DashboardUIMixin:
             messagebox.showerror("Permissão necessária", str(exc), parent=self.root)
             return
 
-        window = self._set_nova_window_icon(tk.Toplevel(self.root))
+        window = self._set_aurova_window_icon(tk.Toplevel(self.root))
         self._dashboard_window = window
         self._activate_panel(window)
-        window.title("Painel da Nova")
+        window.title("Painel da Aurova")
         fit_window_to_screen(window, 580, 570, min_width=520, min_height=440)
         colors = COLORS
         window.configure(bg=colors["background"])
         small_font = ("TkDefaultFont", 8)
         header = make_header(
-            window, "Painel da Nova", "Recursos e atividade em tempo real",
-            eyebrow="NOVA  /  MONITORAMENTO",
+            window, "Painel da Aurova", "Recursos e atividade em tempo real",
+            eyebrow="AUROVA  /  MONITORAMENTO",
             back_command=lambda: self._panel_back(window),
         )
 
-        badge_var = tk.StringVar(value="●  AO VIVO")
+        badge_var = tk.StringVar(value="Aguardando dados")
         badge = make_status_badge(
-            header.winfo_children()[0], badge_var, background=colors["surface_elevated"],
-            foreground=colors["success"],
+            header.winfo_children()[0], badge_var,
+            background=colors["surface_elevated"], foreground=colors["muted"],
         )
         badge.pack(side="right", anchor="n", padx=(8, 0), pady=3)
+
+        def set_badge(text, level):
+            foreground = {
+                "info": colors["cyan"],
+                "success": colors["success"],
+                "warning": colors["warning"],
+                "error": colors["error"],
+                "muted": colors["muted"],
+            }[level]
+            badge_var.set(text)
+            badge.configure(
+                bg=colors["surface_elevated"], fg=foreground,
+            )
         body = tk.Frame(window, bg=colors["background"])
         body.pack(fill="both", expand=True)
         canvas = tk.Canvas(body, bg=colors["background"], bd=0, highlightthickness=0)
@@ -114,7 +127,7 @@ class DashboardUIMixin:
         cpu = metric_card(0, 0, "Processador", colors["teal"])
         memory = metric_card(0, 1, "Memória RAM", colors["blue"])
         disk = metric_card(1, 0, "Disco", colors["violet"])
-        nova_memory = metric_card(1, 1, "Memória da Nova", colors["amber"], with_bar=False)
+        aurova_memory = metric_card(1, 1, "Memória da Aurova", colors["amber"], with_bar=False)
 
         def update_bar(canvas, percent, color):
             if canvas is None:
@@ -186,34 +199,40 @@ class DashboardUIMixin:
         ttk.Checkbutton(controls, text="Pausar", variable=paused).pack(side="right")
 
         results = queue.Queue(maxsize=1)
-        state = {"busy": False, "closed": False}
+        state = {
+            "busy": False, "closed": False, "has_result": False,
+            "collection_error": False,
+        }
 
         def collect():
             if state["busy"] or state["closed"]:
                 return
             state["busy"] = True
+            set_badge("Coletando dados", "info")
             def worker():
                 try:
                     result = self.system_monitor.collect(extra=self._dashboard_snapshot())
                 except Exception:
-                    logger.exception("Falha ao coletar métricas do Painel da Nova")
+                    logger.exception("Falha ao coletar métricas do Painel da Aurova")
                     result = {"error": "metrics_unavailable"}
                 try:
                     results.put_nowait(result)
                 except queue.Full:
                     pass
 
-            threading.Thread(target=worker, name="nova-dashboard-metrics", daemon=True).start()
+            threading.Thread(target=worker, name="aurova-dashboard-metrics", daemon=True).start()
 
         def render(metrics):
             if "error" in metrics:
+                state["collection_error"] = True
                 for metric in (cpu, memory, disk):
                     metric[0].set("Indisponível")
                     metric[1].set("Métrica temporariamente indisponível")
                     update_bar(metric[2], 0, metric[3])
-                nova_memory[0].set("—")
-                nova_memory[1].set("Aguardando dados")
+                aurova_memory[0].set("—")
+                aurova_memory[1].set("Aguardando dados")
             else:
+                state["collection_error"] = False
                 cpu_percent = metrics.get("cpu_percent", 0)
                 memory_percent = metrics.get("memory_percent", 0)
                 disk_percent = metrics.get("disk_percent", 0)
@@ -226,8 +245,8 @@ class DashboardUIMixin:
                 )
                 disk[0].set(f"{disk_percent:.0f}%")
                 disk[1].set(f"{metrics.get('disk_free', 0) // (1024 ** 3)} GB livres")
-                nova_memory[0].set(f"{metrics.get('process_memory', 0) // (1024 ** 2)} MB")
-                nova_memory[1].set(
+                aurova_memory[0].set(f"{metrics.get('process_memory', 0) // (1024 ** 2)} MB")
+                aurova_memory[1].set(
                     f"{metrics.get('threads', 0)} threads · "
                     f"{metrics.get('uptime_seconds', 0) // 60} min aberta"
                 )
@@ -237,20 +256,48 @@ class DashboardUIMixin:
 
             pet_state = metrics.get("pet_state", getattr(self, "state", "idle"))
             animation = metrics.get("animation", "idle")
-            pet_state_var.set(f"Nova está {pet_state}")
+            pet_state_labels = {
+                "idle": "disponível",
+                "thinking": "pensando",
+                "curious": "curiosa",
+                "greeting": "cumprimentando",
+                "celebrating": "comemorando",
+                "focused": "concentrada",
+                "sitting": "sentada",
+                "walk": "em movimento",
+                "yawning": "bocejando",
+                "held": "sendo movida",
+                "vanishing": "se escondendo",
+                "thumbs_up": "aprovando",
+            }
+            pet_state = str(pet_state)
+            pet_state_var.set(
+                f"Aurova está {pet_state_labels.get(pet_state, pet_state.replace('_', ' '))}"
+            )
             animation_var.set(f"Animação  {animation}")
             active_plugins = metrics.get("plugins", {}).get("active", 0)
             task_count = metrics.get("tasks_running", 0)
             errors = len(metrics.get("recent_errors", []))
             unread = getattr(self.notification_manager, "unread_count", 0)
-            activity_var.set(f"{task_count} tarefas · {active_plugins} plugins ativos")
+            task_label = "tarefa em execução" if task_count == 1 else "tarefas em execução"
+            activity_var.set(f"{task_count} {task_label} · {active_plugins} plugins ativos")
             activity_detail_var.set(f"{errors} erros · {unread} notificações não lidas")
             ai_status = metrics.get("ai_status", "idle")
+            ai_status_labels = {
+                "idle": "disponível",
+                "consultando": "aguardando resposta",
+                "respondida": "respondeu",
+                "falha": "com problema",
+            }
+            ai_status = str(ai_status)
             spotify = metrics.get("integrations", {}).get("spotify", False)
-            services_var.set(f"IA  Ollama · {ai_status}")
+            services_var.set(
+                f"IA  Ollama · {ai_status_labels.get(ai_status, ai_status)}"
+            )
             services_detail_var.set(
                 f"Spotify  {'conectado' if spotify else 'não configurado'}"
             )
+            state["has_result"] = True
 
         def refresh():
             if state["closed"]:
@@ -264,11 +311,19 @@ class DashboardUIMixin:
                 render(metrics)
 
             is_paused = paused.get()
-            badge_var.set("Ⅱ  PAUSADO" if is_paused else "●  AO VIVO")
-            badge.configure(
-                bg=colors["surface_elevated"] if is_paused else colors["surface"],
-                fg=colors["muted"] if is_paused else colors["success"],
-            )
+            if is_paused:
+                set_badge(
+                    "Aguardando coleta terminar" if state["busy"] else "Pausado",
+                    "warning" if state["busy"] else "muted",
+                )
+            elif state["busy"]:
+                set_badge("Coletando dados", "info")
+            elif state["collection_error"]:
+                set_badge("Dados indisponíveis", "error")
+            elif state["has_result"]:
+                set_badge("Dados atualizados", "success")
+            else:
+                set_badge("Aguardando dados", "muted")
             try:
                 delay = max(2, min(30, int(interval.get()))) * 1000
             except ValueError:

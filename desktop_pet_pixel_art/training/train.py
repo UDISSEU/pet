@@ -8,7 +8,7 @@ from .training_manager import TrainingManager
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Treina explicitamente um experimento local Nova Model")
+    parser = argparse.ArgumentParser(description="Treina explicitamente um experimento local Aurova Model")
     parser.add_argument("--config", default="training/training_config.json")
     args = parser.parse_args(argv)
     config = TrainingConfig.from_json(args.config)

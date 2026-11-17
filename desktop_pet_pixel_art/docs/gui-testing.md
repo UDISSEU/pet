@@ -1,7 +1,7 @@
-# Testes gráficos isolados da Nova
+# Testes gráficos isolados da Aurova
 
 O ambiente gráfico fica em um display X independente. A sessão principal
-:0.0 não é usada como display da Nova nos testes Xvfb. O smoke test reutiliza
+:0.0 não é usada como display da Aurova nos testes Xvfb. O smoke test reutiliza
 tests/test_ui_windows.py, que abre, reutiliza e fecha dashboard, notificações
 e permissões, exercita uma concessão/revogação e marca uma notificação como
 lida.
@@ -27,58 +27,58 @@ configurados automaticamente.
 
 Executar apenas o smoke test:
 
-    tools/nova_gui_test.sh smoke
+    tools/aurova_gui_test.sh smoke
 
 Capturar PNGs do dashboard, notificações e permissões:
 
-    tools/nova_gui_test.sh --reports /tmp/nova-gui-reports capture
+    tools/aurova_gui_test.sh --reports /tmp/aurova-gui-reports capture
 
 Iniciar a aplicação num display isolado; Ctrl+C encerra a sessão:
 
-    tools/nova_gui_test.sh launch
+    tools/aurova_gui_test.sh launch
 
 Para exibir o display isolado numa janela Xephyr, numa sessão X11 já
 funcional:
 
-    tools/nova_gui_test.sh --backend xephyr capture
+    tools/aurova_gui_test.sh --backend xephyr capture
 
-Executar o soak com a Nova aberta e métricas separadas do servidor X:
+Executar o soak com a Aurova aberta e métricas separadas do servidor X:
 
-    tools/nova_gui_test.sh --reports /tmp/nova-gui-reports soak 30m
-    tools/nova_gui_test.sh --reports /tmp/nova-gui-reports soak 1h
-    tools/nova_gui_test.sh --reports /tmp/nova-gui-reports soak 3h
+    tools/aurova_gui_test.sh --reports /tmp/aurova-gui-reports soak 30m
+    tools/aurova_gui_test.sh --reports /tmp/aurova-gui-reports soak 1h
+    tools/aurova_gui_test.sh --reports /tmp/aurova-gui-reports soak 3h
 
 Cada execução cria um diretório de sessão privado em /tmp, com cookie
 Xauthority e PIDs. O caminho é impresso no terminal. Enquanto a sessão estiver
 ativa, pode-se consultar ou encerrar somente os processos registrados:
 
-    tools/nova_gui_test.sh status /tmp/nova-gui-session.XXXXXX
-    tools/nova_gui_test.sh cleanup /tmp/nova-gui-session.XXXXXX
+    tools/aurova_gui_test.sh status /tmp/aurova-gui-session.XXXXXX
+    tools/aurova_gui_test.sh cleanup /tmp/aurova-gui-session.XXXXXX
 
 O encerramento também ocorre por trap ao sair, falhar ou receber interrupção.
 Ele valida PID, horário de início e grupo antes de sinalizar os processos;
-examina descendentes da Nova para encerrar grupos de plugins que tenham criado
+examina descendentes da Aurova para encerrar grupos de plugins que tenham criado
 uma sessão própria. O cookie e o diretório temporário são removidos. Capturas
 e relatórios permanecem no diretório indicado por --reports.
 
-O executor usa um ambiente de variáveis limpo para a Nova e para os testes,
+O executor usa um ambiente de variáveis limpo para a Aurova e para os testes,
 com HOME e diretórios XDG temporários. A única credencial encaminhada à
 aplicação é o cookie Xauthority do display de teste. Plugins externos
-continuam sujeitos ao sandbox existente da Nova.
+continuam sujeitos ao sandbox existente da Aurova.
 
 ## Métricas do soak gráfico
 
-Sem --target-pid ou --display-pid, tools/nova_soak.py mantém o modo original
+Sem --target-pid ou --display-pid, tools/aurova_soak.py mantém o modo original
 e mede o próprio harness e seus serviços. Com ambos os PIDs, o JSONL inclui
-amostras separadas de CPU, RSS, threads e filhos da Nova e do servidor X.
-nova_worker_threads_estimate subtrai a thread principal do total de threads.
+amostras separadas de CPU, RSS, threads e filhos da Aurova e do servidor X.
+aurova_worker_threads_estimate subtrai a thread principal do total de threads.
 Grupos de filhos isolados são reportados separadamente; o campo
-nova_plugin_processes_estimate reconhece lançadores chamados bwrap, bubblewrap
+aurova_plugin_processes_estimate reconhece lançadores chamados bwrap, bubblewrap
 ou prlimit, portanto é uma estimativa observável, não uma telemetria interna
 do plugin. O harness também registra CPU/RSS agregados desses grupos e dos
-outros filhos da Nova. A métrica de CPU do sistema continua separada.
+outros filhos da Aurova. A métrica de CPU do sistema continua separada.
 
-O soak gráfico mantém a janela da Nova aberta durante o cenário. Não inicia
+O soak gráfico mantém a janela da Aurova aberta durante o cenário. Não inicia
 por padrão durante a suíte normal. Teste de seleção de quadros não mede
 fluidez visual; capturas também não constituem aprovação estética.
 
@@ -107,10 +107,10 @@ a suíte completa executou 155 testes: 153 passaram e 2 foram ignorados (UI
 sem display no sandbox e isolamento de rede bloqueado pelo host). Foram
 capturadas e examinadas:
 
-- `/tmp/nova-gui-reports-phase62/character.png` — Nova real em animação; a
+- `/tmp/aurova-gui-reports-phase62/character.png` — Aurova real em animação; a
   captura em Xvfb sem compositor mostra fundo preto e a área branca da imagem,
   então ela confirma renderização e posição, mas não transparência composta.
-- `/tmp/nova-gui-reports-phase62/nova-gui-capture.6l6MR0/dashboard.png` —
+- `/tmp/aurova-gui-reports-phase62/aurova-gui-capture.6l6MR0/dashboard.png` —
   métricas reais preenchidas.
 - `.../notifications.png` — lista e controles legíveis, incluindo modo
   silencioso.
@@ -126,21 +126,21 @@ ser instaladas manualmente com `sudo apt install xvfb xauth x11-utils
 python3-tk`.
 
 O soak gráfico de 30 minutos terminou em 1.800 segundos, com 180 amostras e
-encerramento limpo. RSS da Nova: mínimo 107 MiB, pico 543 MiB durante a carga
+encerramento limpo. RSS da Aurova: mínimo 107 MiB, pico 543 MiB durante a carga
 inicial e 170 MiB ao final. CPU: mínimo 12,6%, pico inicial 176,4% e 16,7% na
 última amostra. Threads: máximo 20 na inicialização e 12 ao final. Não houve
-filhos da Nova ou do Xvfb; filas de eventos e callbacks variaram entre 0 e 1 e
+filhos da Aurova ou do Xvfb; filas de eventos e callbacks variaram entre 0 e 1 e
 terminaram em 0. O histórico de notificações chegou a 30; o histórico de
 métricas permaneceu no limite de 120. O worker do harness encerrou e não
 restaram processos, sockets de teste ou diretórios de sessão. A execução
 também revelou que a limpeza deixava `soak.log`; o script agora remove esse
 arquivo, com teste de regressão. JSONL:
-`/tmp/nova-gui-reports-phase62/nova-soak-30m-20261104-100718.jsonl`.
+`/tmp/aurova-gui-reports-phase62/aurova-soak-30m-20261104-100718.jsonl`.
 
 Neste executor Codex, a execução padrão fica dentro do sandbox, que não pode
 criar o socket X. Para executar manualmente no terminal normal do usuário, use
-`tools/nova_gui_test.sh --reports /tmp/nova-gui-reports capture` e depois
-`tools/nova_gui_test.sh --reports /tmp/nova-gui-reports soak 30m`. O script
+`tools/aurova_gui_test.sh --reports /tmp/aurova-gui-reports capture` e depois
+`tools/aurova_gui_test.sh --reports /tmp/aurova-gui-reports soak 30m`. O script
 mantém Xauthority privada, escolhe display livre, desliga TCP e limpa os
 processos ao terminar; não requer sudo quando o diretório do host está
 configurado normalmente.

@@ -4,7 +4,7 @@ Data: 5 de novembro de 2026
 
 ## Fluxo anterior
 
-O `DesktopPet.ask_menu()` roteava algumas tarefas diretamente para automações legadas e encaminhava as demais mensagens ao `answer_request()` em worker. Os módulos `nova_ai.cognition` e `nova_ai.actions` existiam, mas não participavam do fluxo de conversa da janela.
+O `DesktopPet.ask_menu()` roteava algumas tarefas diretamente para automações legadas e encaminhava as demais mensagens ao `answer_request()` em worker. Os módulos `aurova_ai.cognition` e `aurova_ai.actions` existiam, mas não participavam do fluxo de conversa da janela.
 
 ## Fluxo integrado
 
@@ -15,21 +15,21 @@ O `DesktopPet.ask_menu()` roteava algumas tarefas diretamente para automações 
 5. A UI apresenta nomes e destinos e aguarda confirmação explícita.
 6. A execução ocorre em worker, reconsulta permissões no dispatcher, usa cancelamento cooperativo e rollback da operação de arquivos.
 7. O resultado passa por validação estrutural e verificação independente de origem/destino.
-8. A Nova apresenta o resultado e pergunta separadamente se deve desfazer. A restauração revalida permissões e exige confirmação.
+8. A Aurova apresenta o resultado e pergunta separadamente se deve desfazer. A restauração revalida permissões e exige confirmação.
 
 Nenhum texto livre do modelo é transformado em chamada de ferramenta. A classificação de tarefa é por regras locais, nomes de operação são constantes e registradas, e o modelo conversacional existente continua responsável por conversa comum.
 
 ## Módulos envolvidos
 
 - `desktop_pet.py`: roteamento, diálogos e callbacks na thread Tk; preparação, execução e undo em workers.
-- `nova_ai/desktop_integration.py`: composição de core, memória, personalidade, registry e `CognitiveEngine`.
-- `nova_ai/cognition/*`: classificação, plano, decisões, validação e execução.
-- `nova_ai/actions/*`: allowlist, revalidação de permissão, cancelamento, timeout e ferramentas locais.
-- `nova_ai/actions/file_manager.py`: operações ancoradas em descritores e rollback, endurecidos na Fase 11.
+- `aurova_ai/desktop_integration.py`: composição de core, memória, personalidade, registry e `CognitiveEngine`.
+- `aurova_ai/cognition/*`: classificação, plano, decisões, validação e execução.
+- `aurova_ai/actions/*`: allowlist, revalidação de permissão, cancelamento, timeout e ferramentas locais.
+- `aurova_ai/actions/file_manager.py`: operações ancoradas em descritores e rollback, endurecidos na Fase 11.
 
 ## Testes
 
-- `python3 -m unittest tests.nova_ai.test_desktop_integration tests.nova_ai.test_cognition tests.nova_ai.test_actions`: **39 aprovados**.
+- `python3 -m unittest tests.aurova_ai.test_desktop_integration tests.aurova_ai.test_cognition tests.aurova_ai.test_actions`: **39 aprovados**.
 - Cenários cobertos: conversa comum sem ferramenta, intenção reconhecida/desconhecida, plano inválido, ausência/revogação de permissão, confirmação recusada/concedida, execução real em diretório temporário, cancelamento entre arquivos com rollback, timeout/erro de ferramenta e desfazer.
 - `py_compile` de `desktop_pet.py`, `desktop_integration.py` e `cognitive_engine.py`: aprovado.
 

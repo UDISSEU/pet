@@ -98,7 +98,7 @@ class LogCenterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             missing = Path(temporary) / "absent.log"
             self.assertEqual(collect_logs(app_log=missing, which=lambda _name: None), [])
-            path = Path(temporary) / "nova.log"
+            path = Path(temporary) / "aurova.log"
             path.write_text("2026-01-01 INFO app: started\n2026-01-02 ERROR app: token=abc123 password:hello\n", encoding="utf-8")
             rows = collect_logs(app_log=path, which=lambda _name: None, max_records=1)
         self.assertEqual(len(rows), 1)

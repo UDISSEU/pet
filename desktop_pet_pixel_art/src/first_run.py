@@ -8,6 +8,7 @@ from PIL import Image, ImageTk
 
 from environment_check import check_environment, format_disk_space, format_memory
 from installation_state import InstallationStateStore
+from ui_theme import COLORS, apply_theme, fit_window_to_screen, make_aurora_mark
 
 
 def run_first_access_if_needed(icon_path=None, *, state_store=None):
@@ -24,14 +25,11 @@ def run_first_access_if_needed(icon_path=None, *, state_store=None):
 def _show_welcome_window(icon_path=None, report=None):
     report = report or check_environment()
     window = tk.Tk()
-    window.title("Bem-vinda à Nova")
-    window.resizable(True, True)
+    apply_theme(window)
+    window.title("Bem-vinda à Aurova")
     screen_width = window.winfo_screenwidth()
     screen_height = window.winfo_screenheight()
-    window_width = max(320, min(760, screen_width - 32))
-    window_height = max(260, min(720, screen_height - 48))
-    window.minsize(min(480, window_width), min(380, window_height))
-    window.geometry(f"{window_width}x{window_height}")
+    fit_window_to_screen(window, 760, 720, min_width=480, min_height=380)
     try:
         window.attributes("-topmost", True)
     except tk.TclError:
@@ -44,7 +42,9 @@ def _show_welcome_window(icon_path=None, report=None):
     container.columnconfigure(0, weight=1)
     container.rowconfigure(0, weight=1)
     scroll_area.grid(row=0, column=0, sticky="nsew")
-    canvas = tk.Canvas(scroll_area, highlightthickness=0, borderwidth=0)
+    canvas = tk.Canvas(
+        scroll_area, bg=COLORS["background"], highlightthickness=0, borderwidth=0,
+    )
     scrollbar = ttk.Scrollbar(scroll_area, orient="vertical", command=canvas.yview)
     canvas.configure(yscrollcommand=scrollbar.set)
     scrollbar.pack(side="right", fill="y")
@@ -67,19 +67,23 @@ def _show_welcome_window(icon_path=None, report=None):
             with Image.open(image_path) as source:
                 image = source.convert("RGBA")
                 image.thumbnail((96, 96), Image.Resampling.LANCZOS)
-            window.nova_image = ImageTk.PhotoImage(image)
-            ttk.Label(content, image=window.nova_image).pack(pady=(0, 8))
+            window.aurova_image = ImageTk.PhotoImage(image)
+            ttk.Label(content, image=window.aurova_image).pack(pady=(0, 8))
         except (OSError, tk.TclError, ValueError):
             pass
 
+    welcome_heading = ttk.Frame(content, style="Aurora.TFrame")
+    welcome_heading.pack(fill="x", pady=(0, 6))
+    make_aurora_mark(
+        welcome_heading, size=34, background=COLORS["background"],
+    ).pack(side="left", padx=(0, 10))
     ttk.Label(
-        content, text="Oi! Eu sou a Nova",
-        font=("TkDefaultFont", 19, "bold"),
-    ).pack(pady=(0, 6))
+        welcome_heading, text="Oi! Eu sou a Aurova", style="Title.TLabel",
+    ).pack(side="left")
     intro = ttk.Label(
         content,
         text=(
-            "Que bom ter você por aqui. A Nova funciona sem configurar IA; a conversa "
+            "Que bom ter você por aqui. A Aurova funciona sem configurar IA; a conversa "
             "fica disponível quando o Ollama local estiver pronto."
         ),
         justify="left",
@@ -112,13 +116,13 @@ def _show_welcome_window(icon_path=None, report=None):
         "ready": f"Ollama disponível; modelo {report.selected_model} encontrado.",
         "model_missing": f"Ollama disponível; falta o modelo {report.selected_model}.",
         "installed_not_running": "Ollama instalado, mas o serviço não está respondendo.",
-        "not_installed": "Ollama não encontrado; a Nova pode continuar sem IA.",
+        "not_installed": "Ollama não encontrado; a Aurova pode continuar sem IA.",
         "unavailable": "O serviço respondeu em formato não reconhecido.",
     }
     dependency_status = (
         "Todas as dependências principais foram encontradas."
         if all(report.dependencies.values())
-        else "Faltam dependências; reabra ./launchers/run-nova.sh para reparar o ambiente."
+        else "Faltam dependências; reabra ./launchers/run-aurova.sh para reparar o ambiente."
     )
     rows = (
         ("Python", f"{report.python_version} — " + (
@@ -136,7 +140,7 @@ def _show_welcome_window(icon_path=None, report=None):
             "corrupt": "Banco de memória com erro de integridade; os dados serão preservados.",
             "unsafe": "Banco de memória usa um link simbólico; verifique o diagnóstico.",
             "unavailable": "Banco de memória não pôde ser verificado.",
-            "unrecognized": "Arquivo SQLite existente não foi reconhecido como banco da Nova.",
+            "unrecognized": "Arquivo SQLite existente não foi reconhecido como banco da Aurova.",
             "profile_registry_invalid":
                 "Registro de perfis precisa de atenção; nada será apagado.",
         }.get(report.database_status, "Estado não reconhecido.")),
@@ -175,42 +179,17 @@ def _show_welcome_window(icon_path=None, report=None):
         result["continue"] = continue_to_app
         window.destroy()
 
-    continue_button = tk.Button(
+    continue_button = ttk.Button(
         button_row,
         text="Continuar sem baixar modelos",
         command=lambda: finish(True),
-        background="#2864D7",
-        foreground="#FFFFFF",
-        activebackground="#1D4FAF",
-        activeforeground="#FFFFFF",
-        disabledforeground="#E6EAF0",
-        highlightbackground="#2864D7",
-        highlightcolor="#17469E",
-        highlightthickness=2,
-        borderwidth=0,
-        relief="flat",
-        padx=18,
-        pady=11,
-        font=("TkDefaultFont", 10, "bold"),
-        cursor="hand2",
+        style="Primary.TButton",
     )
-    exit_button = tk.Button(
+    exit_button = ttk.Button(
         button_row,
         text="Sair",
         command=lambda: finish(False),
-        background="#E8EDF4",
-        foreground="#24364B",
-        activebackground="#D4DDE9",
-        activeforeground="#18263A",
-        highlightbackground="#AAB8C8",
-        highlightcolor="#64748B",
-        highlightthickness=1,
-        borderwidth=1,
-        relief="solid",
-        padx=16,
-        pady=10,
-        font=("TkDefaultFont", 10),
-        cursor="hand2",
+        style="Secondary.TButton",
     )
     if not report.can_continue:
         continue_button.configure(state="disabled")

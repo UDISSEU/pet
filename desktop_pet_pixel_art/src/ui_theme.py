@@ -1,4 +1,4 @@
-"""Nova Aurora design tokens and reusable Tk/ttk building blocks."""
+"""Aurova Aurora design tokens and reusable Tk/ttk building blocks."""
 
 from types import SimpleNamespace
 
@@ -45,7 +45,7 @@ FONTS = {
 
 
 def apply_theme(root, *, style=None):
-    """Install the shared Nova Aurora ttk styles on the UI thread."""
+    """Install the shared Aurova Aurora ttk styles on the UI thread."""
     from tkinter import ttk
 
     if style is None:
@@ -86,42 +86,74 @@ def apply_theme(root, *, style=None):
               foreground=[("disabled", c["disabled"])])
     style.configure("Secondary.TButton", padding=(12, 8), background=c["surface_elevated"],
                     foreground=c["ink"])
-    style.map("Secondary.TButton", background=[("pressed", c["border"]),
-                                                ("active", c["border"])])
+    style.map("Secondary.TButton", background=[("disabled", c["background_secondary"]),
+                                                ("pressed", c["border"]),
+                                                ("active", c["border"])],
+              foreground=[("disabled", c["disabled"])])
     style.configure("Quiet.TButton", padding=(8, 5), background=c["background_secondary"],
                     foreground=c["muted"])
+    style.map("Quiet.TButton", background=[("disabled", c["background_secondary"]),
+                                            ("pressed", c["border"]),
+                                            ("active", c["surface_elevated"])],
+              foreground=[("disabled", c["disabled"])])
     style.configure("Destructive.TButton", padding=(12, 8), background=c["error"],
                     foreground=c["background"])
+    style.map("Destructive.TButton", background=[("disabled", c["track"]),
+                                                  ("pressed", c["error"]),
+                                                  ("active", c["error"])],
+              foreground=[("disabled", c["disabled"])])
     style.configure("Nav.TButton", padding=(7, 4), background=c["surface_elevated"],
                     foreground=c["ink"])
-    style.map("Nav.TButton", background=[("active", c["border"])])
+    style.map("Nav.TButton", background=[("disabled", c["track"]),
+                                          ("pressed", c["focus"]),
+                                          ("active", c["border"])],
+              foreground=[("disabled", c["disabled"])])
     style.configure("Nav.Active.TButton", padding=(7, 4), background=c["purple"],
                     foreground=c["background"], font=("TkDefaultFont", 9, "bold"))
-    style.map("Nav.Active.TButton", background=[("active", c["focus"])])
+    style.map("Nav.Active.TButton", background=[("disabled", c["track"]),
+                                                 ("pressed", c["focus"]),
+                                                 ("active", c["focus"])],
+              foreground=[("disabled", c["disabled"])])
     style.configure("TEntry", fieldbackground=c["surface_elevated"],
                     foreground=c["ink"], insertcolor=c["ink"], padding=6)
+    style.map("TEntry", fieldbackground=[("disabled", c["background_secondary"]),
+                                          ("readonly", c["surface_elevated"])],
+              foreground=[("disabled", c["disabled"])],
+              bordercolor=[("focus", c["focus"])],
+              lightcolor=[("focus", c["focus"])])
     style.configure("Autonomy.TEntry", fieldbackground=c["surface_elevated"],
                     foreground=c["ink"], padding=6)
+    style.map("Autonomy.TEntry", fieldbackground=[("disabled", c["background_secondary"])],
+              foreground=[("disabled", c["disabled"])],
+              bordercolor=[("focus", c["focus"])],
+              lightcolor=[("focus", c["focus"])])
     style.configure("TCombobox", fieldbackground=c["surface_elevated"],
                     foreground=c["ink"], padding=5, arrowcolor=c["cyan"])
-    style.map("TCombobox", fieldbackground=[("readonly", c["surface_elevated"])],
-              foreground=[("readonly", c["ink"])])
+    style.map("TCombobox", fieldbackground=[("disabled", c["background_secondary"]),
+                                             ("readonly", c["surface_elevated"])],
+              foreground=[("disabled", c["disabled"]), ("readonly", c["ink"])],
+              bordercolor=[("focus", c["focus"])],
+              lightcolor=[("focus", c["focus"])])
     style.configure("TabNav.TCombobox", fieldbackground=c["surface_elevated"],
                     foreground=c["ink"], padding=(10, 7),
                     font=("TkDefaultFont", 10, "bold"), arrowcolor=c["cyan"])
-    style.map("TabNav.TCombobox", fieldbackground=[("readonly", c["surface_elevated"])],
-              foreground=[("readonly", c["ink"])])
+    style.map("TabNav.TCombobox", fieldbackground=[("disabled", c["background_secondary"]),
+                                                    ("readonly", c["surface_elevated"])],
+              foreground=[("disabled", c["disabled"]), ("readonly", c["ink"])],
+              bordercolor=[("focus", c["focus"])],
+              lightcolor=[("focus", c["focus"])])
     style.configure("TCheckbutton", background=c["background"], foreground=c["ink"])
-    style.map("TCheckbutton", background=[("active", c["background"])])
+    style.map("TCheckbutton", background=[("active", c["background"])],
+              foreground=[("disabled", c["disabled"])])
     style.configure("TNotebook", background=c["background"], borderwidth=0)
     style.configure("TNotebook.Tab", padding=(12, 8), background=c["surface"],
                     foreground=c["muted"])
     style.map("TNotebook.Tab", background=[("selected", c["surface_elevated"])],
-              foreground=[("selected", c["ink"])])
+              foreground=[("disabled", c["disabled"]), ("selected", c["ink"])])
     style.configure("Treeview", background=c["surface"], fieldbackground=c["surface"],
                     foreground=c["ink"], rowheight=30, borderwidth=0)
     style.map("Treeview", background=[("selected", c["surface_elevated"])],
-              foreground=[("selected", c["ink"])])
+              foreground=[("disabled", c["disabled"]), ("selected", c["ink"])])
     style.configure("Treeview.Heading", background=c["background_secondary"],
                     foreground=c["muted"], font=("TkDefaultFont", 9, "bold"), padding=7)
     style.map("Treeview.Heading", background=[("active", c["surface_elevated"])])
@@ -154,7 +186,7 @@ def make_card(parent, *, padding=16, elevated=False, tk_widget=False):
 
 
 def make_aurora_mark(parent, *, size=34, background=None):
-    """Draw Nova's small static orbital glyph; no image assets or animation needed."""
+    """Draw Aurova's small static orbital glyph; no image assets or animation needed."""
     import tkinter as tk
     background = background or COLORS["background_secondary"]
     mark = tk.Canvas(parent, width=size, height=size, bg=background,
@@ -254,7 +286,7 @@ def make_status_indicator(parent, text, level="info"):
 
 
 def show_dialog(parent, title, message, *, actions=(("OK", True),), destructive=False):
-    """Show a small modal Nova Aurora dialog and return the chosen action value."""
+    """Show a small modal Aurova Aurora dialog and return the chosen action value."""
     import tkinter as tk
     from tkinter import ttk
 
@@ -266,7 +298,8 @@ def show_dialog(parent, title, message, *, actions=(("OK", True),), destructive=
     dialog.title(title)
     dialog.transient(parent)
     dialog.configure(bg=COLORS["background"])
-    dialog.resizable(False, False)
+    screen_width = dialog.winfo_screenwidth()
+    wraplength = max(220, min(420, screen_width - 80))
     header = tk.Frame(dialog, bg=COLORS["background_secondary"], padx=SPACING["lg"],
                       pady=SPACING["md"])
     header.pack(fill="x")
@@ -275,7 +308,8 @@ def show_dialog(parent, title, message, *, actions=(("OK", True),), destructive=
     body = tk.Frame(dialog, bg=COLORS["background"], padx=SPACING["lg"], pady=SPACING["lg"])
     body.pack(fill="both", expand=True)
     tk.Label(body, text=message, bg=COLORS["background"], fg=COLORS["muted"],
-             font=FONTS["body"], anchor="w", justify="left", wraplength=420).pack(fill="x")
+             font=FONTS["body"], anchor="w", justify="left",
+             wraplength=wraplength).pack(fill="x")
     controls = ttk.Frame(body, style="Aurora.TFrame")
     controls.pack(fill="x", pady=(SPACING["lg"], 0))
 
@@ -283,28 +317,47 @@ def show_dialog(parent, title, message, *, actions=(("OK", True),), destructive=
         result["value"] = value
         dialog.destroy()
 
+    buttons = []
     for index, (label, value) in enumerate(actions):
         style = "Destructive.TButton" if destructive and index == len(actions) - 1 else (
             "Primary.TButton" if index == len(actions) - 1 else "Secondary.TButton"
         )
-        ttk.Button(controls, text=label, style=style,
-                   command=lambda selected=value: choose(selected)).pack(
-                       side="right", padx=(SPACING["sm"], 0))
+        button = ttk.Button(
+            controls, text=label, style=style,
+            command=lambda selected=value: choose(selected),
+        )
+        buttons.append(button)
+        button.pack(side="right", padx=(SPACING["sm"], 0))
+    dialog.update_idletasks()
+    dialog_width = min(480, screen_width - 32)
+    if controls.winfo_reqwidth() > dialog_width - 2 * SPACING["lg"]:
+        for button in buttons:
+            button.pack_forget()
+            button.pack(fill="x", pady=(SPACING["xs"], 0))
+    dialog.update_idletasks()
+    fit_window_to_screen(
+        dialog, dialog_width, max(260, dialog.winfo_reqheight()),
+        min_width=min(360, screen_width - 32), min_height=200,
+    )
     dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
     dialog.bind("<Escape>", lambda _event: choose(None))
     dialog.bind("<Return>", lambda _event: choose(actions[-1][1]))
-    dialog.update_idletasks()
+    screen_height = dialog.winfo_screenheight()
     x = parent.winfo_rootx() + max(0, (parent.winfo_width() - dialog.winfo_width()) // 2)
     y = parent.winfo_rooty() + max(0, (parent.winfo_height() - dialog.winfo_height()) // 2)
+    x = max(0, min(screen_width - dialog.winfo_width(), x))
+    y = max(0, min(screen_height - dialog.winfo_height(), y))
     dialog.geometry(f"+{x}+{y}")
     dialog.grab_set()
+    buttons[-1].focus_set()
     dialog.wait_window()
     return result["value"]
 
 
-def make_header(parent, title, subtitle, *, eyebrow="NOVA  /  PAINEL", back_command=None):
-    """Build the compact Nova Aurora header shared by top-level panels."""
+def make_header(parent, title, subtitle, *, eyebrow="AUROVA  /  PAINEL", back_command=None):
+    """Build the compact Aurova Aurora header shared by top-level panels."""
     import tkinter as tk
+    from tkinter import ttk
 
     c = COLORS
     header = tk.Frame(parent, bg=c["background_secondary"], padx=SPACING["lg"], pady=SPACING["md"])
@@ -314,10 +367,9 @@ def make_header(parent, title, subtitle, *, eyebrow="NOVA  /  PAINEL", back_comm
     tk.Label(topline, text=eyebrow, bg=c["background_secondary"], fg=c["cyan"],
              font=FONTS["eyebrow"], anchor="w").pack(side="left")
     if back_command:
-        tk.Button(topline, text="← Voltar", command=back_command, relief="flat", bd=0,
-                  padx=9, pady=3, cursor="hand2", bg=c["surface_elevated"], fg=c["ink"],
-                  activebackground=c["border"], activeforeground=c["ink"],
-                  font=FONTS["small"]).pack(side="right")
+        ttk.Button(
+            topline, text="← Voltar", command=back_command, style="Quiet.TButton",
+        ).pack(side="right")
     title_row = tk.Frame(header, bg=c["background_secondary"])
     title_row.pack(fill="x", pady=(6, 0))
     make_aurora_mark(title_row, size=36, background=c["background_secondary"]).pack(
@@ -337,8 +389,10 @@ def fit_window_to_screen(
     """Size and center a resizable panel without exceeding the available display."""
     screen_width = window.winfo_screenwidth()
     screen_height = window.winfo_screenheight()
-    width = max(320, min(width, screen_width - 32))
-    height = max(240, min(height, screen_height - vertical_margin))
+    available_width = max(1, screen_width - 32)
+    available_height = max(1, screen_height - vertical_margin)
+    width = min(max(320, width), available_width)
+    height = min(max(240, height), available_height)
     window.resizable(True, True)
     window.minsize(min(min_width, width), min(min_height, height))
     window.geometry(f"{width}x{height}")
@@ -349,7 +403,7 @@ def fit_window_to_screen(
 
 
 class PanelNavigationMixin:
-    """Small back stack for Nova's top-level windows."""
+    """Small back stack for Aurova's top-level windows."""
 
     def _activate_panel(self, window):
         if not hasattr(self, "_panel_history"):
@@ -365,8 +419,8 @@ class PanelNavigationMixin:
             except Exception:
                 pass
         self._active_panel_window = window
-        if not getattr(window, "_nova_navigation_bound", False):
-            window._nova_navigation_bound = True
+        if not getattr(window, "_aurova_navigation_bound", False):
+            window._aurova_navigation_bound = True
             window.bind("<Destroy>", lambda event, target=window: self._panel_destroyed(event, target), add="+")
 
     def _panel_destroyed(self, event, window):
@@ -374,9 +428,9 @@ class PanelNavigationMixin:
             self._active_panel_window = None
 
     def _panel_back(self, window):
-        if getattr(window, "_nova_back_in_progress", False):
+        if getattr(window, "_aurova_back_in_progress", False):
             return
-        window._nova_back_in_progress = True
+        window._aurova_back_in_progress = True
         if getattr(self, "_active_panel_window", None) is window:
             self._active_panel_window = None
         try:

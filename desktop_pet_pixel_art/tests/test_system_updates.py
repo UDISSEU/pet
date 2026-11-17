@@ -1180,6 +1180,53 @@ All packages are up to date.
         self.assertTrue(all(environment["LC_ALL"] == "C" for environment in seen_environments))
         self.assertTrue(all(environment["PATH"] == "/usr/bin" for environment in seen_environments))
 
+    def test_missing_optional_snap_cli_is_reported_without_command_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            commands = []
+
+            def runner(command, **_kwargs):
+                command = tuple(command)
+                commands.append(command)
+                if command == (
+                    "dpkg-query", "-W",
+                    "-f=${binary:Package}\\t${Version}\\t${Status}\\n",
+                ):
+                    return "editor\t1.0\tinstall ok installed\n", None
+                if command == ("apt", "list", "--upgradable"):
+                    return "Listing...\n", None
+                if command == (
+                    "flatpak", "list", "--app",
+                    "--columns=application,name,version,origin",
+                ):
+                    return "", None
+                if command == (
+                    "flatpak", "remote-ls", "--updates",
+                    "--columns=ref,version,commit",
+                ):
+                    return "", None
+                self.fail(f"Consulta inesperada: {command}")
+
+            def find_manager(executable, path=None):
+                return None if executable == "snap" else f"/usr/bin/{executable}"
+
+            with mock.patch(
+                "system_updates.shutil.which", side_effect=find_manager,
+            ), mock.patch(
+                "system_updates.run_inventory_query", side_effect=runner,
+            ):
+                sources = query_installed_app_sources(
+                    [],
+                    apt_lists_directory=self.fresh_apt_lists(tmpdir),
+                    apt_metadata_directories=(),
+                )
+
+        self.assertNotIn(("snap", "list"), commands)
+        self.assertEqual(sources["unavailable_sources"], {"Snap"})
+        self.assertFalse(sources["source_results"]["Snap"]["inventory_complete"])
+        self.assertFalse(any("Snap" in error for error in sources["errors"]))
+        self.assertIn("APT/DEB", sources["checked_sources"])
+        self.assertIn("Flatpak", sources["checked_sources"])
+
     def test_failed_apt_update_query_never_marks_installed_app_as_updated(self):
         apt_launcher = "/usr/share/applications/editor.desktop"
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1414,8 +1461,8 @@ All packages are up to date.
             parse_flatpak_upgradable(updates, installed),
             [
                 ("Flatpak · org.example.Editor (stable)", "2.3", "2.4"),
-                ("Flatpak · org.example.Platform (50)", "—", "Nova revisão platform-50"),
-                ("Flatpak · org.example.Platform (51)", "—", "Nova revisão platform-51"),
+                ("Flatpak · org.example.Platform (50)", "—", "Revisão platform-50"),
+                ("Flatpak · org.example.Platform (51)", "—", "Revisão platform-51"),
             ],
         )
 

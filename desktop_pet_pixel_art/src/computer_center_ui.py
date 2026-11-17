@@ -40,14 +40,14 @@ class ComputerCenterUIMixin:
         except (PermissionError, OSError) as exc:
             messagebox.showerror("Permissão necessária", str(exc), parent=parent)
             return
-        window = self._set_nova_window_icon(tk.Toplevel(parent))
+        window = self._set_aurova_window_icon(tk.Toplevel(parent))
         window.title("Meu Computador · Central")
         window.configure(bg=COLORS["background"])
         window.transient(parent)
         fit_window_to_screen(window, 780, 700, min_width=600, min_height=480)
         self._activate_panel(window)
         make_header(window, "Meu Computador", "Informações reais para acompanhar e cuidar do sistema.",
-                    eyebrow="NOVA  /  SISTEMA", back_command=lambda: self._panel_back(window))
+                    eyebrow="AUROVA  /  SISTEMA", back_command=lambda: self._panel_back(window))
 
         body = ttk.Frame(window, padding=(16, 10, 16, 16))
         body.pack(fill="both", expand=True)
@@ -277,7 +277,7 @@ class ComputerCenterUIMixin:
                 for indicator in disk["indicators"]:
                     ttk.Label(card, text=f"• {indicator}", style=state_style, wraplength=640).pack(anchor="w", pady=(3, 0))
             ttk.Button(result, text="Atualizar SMART", command=load_disks).pack(anchor="e", pady=6)
-            ttk.Label(result, text="Consulta somente leitura. SMART pode exigir permissões adicionais; a Nova não as solicita nem executa reparos.", style="PageHint.TLabel", wraplength=640).pack(anchor="w")
+            ttk.Label(result, text="Consulta somente leitura. SMART pode exigir permissões adicionais; a Aurova não as solicita nem executa reparos.", style="PageHint.TLabel", wraplength=640).pack(anchor="w")
 
         def render_logs(rows):
             clear_result(); log_rows[:] = rows
@@ -285,7 +285,7 @@ class ComputerCenterUIMixin:
             search = tk.StringVar(); severity = tk.StringVar(value="Todas")
             category = tk.StringVar(value="Todas")
             ttk.Entry(controls, textvariable=search).pack(side="left", fill="x", expand=True, padx=(0, 5))
-            ttk.Combobox(controls, textvariable=category, values=("Todas", "Nova", "Sistema"), state="readonly", width=10).pack(side="left", padx=2)
+            ttk.Combobox(controls, textvariable=category, values=("Todas", "Aurova", "Sistema"), state="readonly", width=10).pack(side="left", padx=2)
             ttk.Combobox(controls, textvariable=severity, values=("Todas", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"), state="readonly", width=12).pack(side="left", padx=2)
             ttk.Button(controls, text="Atualizar", command=load_logs).pack(side="left", padx=2)
             table = ttk.Treeview(result, columns=("date", "severity", "category", "source", "message"), show="headings", height=12, style="Maintenance.Treeview")
@@ -394,7 +394,7 @@ class ComputerCenterUIMixin:
                 if not item["integrity"].startswith("Íntegro"): status.set("Backups inválidos não podem ser renomeados."); return
                 try: self._authorize_core_action("file.write", confirmed=True)
                 except (PermissionError, OSError) as exc: messagebox.showerror("Permissão necessária", str(exc), parent=window); return
-                label = simpledialog.askstring("Renomear backup", "Nova identificação:", initialvalue=item["label"], parent=window)
+                label = simpledialog.askstring("Renomear backup", "Aurova identificação:", initialvalue=item["label"], parent=window)
                 if label is None: return
                 try: rename_backup(item["path"], backup_directory["path"], label)
                 except (OSError, ValueError) as exc: messagebox.showerror("Não foi possível renomear", str(exc), parent=window); return
@@ -409,7 +409,7 @@ class ComputerCenterUIMixin:
             if action == "export":
                 try: self._authorize_core_action("file.write", confirmed=True)
                 except (PermissionError, OSError) as exc: messagebox.showerror("Permissão necessária", str(exc), parent=window); return
-                destination = filedialog.asksaveasfilename(parent=window, title="Exportar backup", initialfile=Path(item["path"]).name, defaultextension=".nova-backup.json", filetypes=(("Backup Nova", "*.nova-backup.json"),))
+                destination = filedialog.asksaveasfilename(parent=window, title="Exportar backup", initialfile=Path(item["path"]).name, defaultextension=".aurova-backup.json", filetypes=(("Backup Aurova", "*.aurova-backup.json"),))
                 if destination: start_worker("Backup exportado", lambda _p: export_backup(item["path"], backup_directory["path"], destination))
                 return
             manager = getattr(self, "profile_manager", None)
@@ -556,7 +556,7 @@ class ComputerCenterUIMixin:
                 status.set("O armazenamento do histórico está indisponível."); return
             def list_actions():
                 rows = action_history.list()
-                integration = getattr(self, "nova_integration", None)
+                integration = getattr(self, "aurova_integration", None)
                 dispatcher = getattr(getattr(integration, "cognition", None), "dispatcher", None)
                 existing_log = getattr(dispatcher, "action_log", None)
                 if existing_log is not None and existing_log is not action_history:
@@ -573,8 +573,8 @@ class ComputerCenterUIMixin:
 
         def render_consultant():
             clear_result()
-            add_metric("Converse sobre seu computador", "A Nova usa observações atuais dos serviços do Meu Computador.", "A resposta segue pela conversa habitual da Nova e aparece no balão; não há um segundo histórico de chat.")
-            ttk.Label(result, text="A coleta acontece sob demanda e a resposta usa a conversa habitual da Nova. Fontes indisponíveis serão identificadas como tal.", style="PageHint.TLabel", wraplength=640).pack(anchor="w", pady=(0, 8))
+            add_metric("Converse sobre seu computador", "A Aurova usa observações atuais dos serviços do Meu Computador.", "A resposta segue pela conversa habitual da Aurova e aparece no balão; não há um segundo histórico de chat.")
+            ttk.Label(result, text="A coleta acontece sob demanda e a resposta usa a conversa habitual da Aurova. Fontes indisponíveis serão identificadas como tal.", style="PageHint.TLabel", wraplength=640).pack(anchor="w", pady=(0, 8))
             ttk.Label(result, text="As observações relevantes acompanham apenas esta pergunta ao provedor configurado. O histórico de ações não guarda a pergunta nem os dados técnicos.", style="PageHint.TLabel", wraplength=640).pack(anchor="w", pady=(0, 8))
             hint = tk.StringVar(value="Pergunte sobre RAM, espaço, inicialização, rede, SMART, logs ou desempenho.")
             ttk.Label(result, textvariable=hint, style="PageHint.TLabel", wraplength=640).pack(anchor="w")
@@ -582,7 +582,7 @@ class ComputerCenterUIMixin:
             def send_question():
                 ask = getattr(self, "_ask_question", None)
                 if not callable(ask):
-                    hint.set("A conversa da Nova não está disponível nesta sessão."); return
+                    hint.set("A conversa da Aurova não está disponível nesta sessão."); return
                 text = ask()
                 if state["closed"]:
                     return
@@ -609,7 +609,7 @@ class ComputerCenterUIMixin:
                         "Aguardando autorização", result="Uma permissão necessária não foi concedida.",
                         error_code=type(exc).__name__,
                     )
-                    hint.set(f"Permissão necessária para usar a conversa da Nova: {exc}"); return
+                    hint.set(f"Permissão necessária para usar a conversa da Aurova: {exc}"); return
                 user_question = text
                 consultant_action["id"] = record_consultant_action(
                     "Em andamento", result="Coletando fontes relevantes para a pergunta.",
@@ -624,7 +624,7 @@ class ComputerCenterUIMixin:
                         cancel_event=cancel_event,
                     ),
                 })
-            ttk.Button(controls, text="Perguntar na conversa da Nova", style="Primary.TButton", command=send_question).pack(side="right")
+            ttk.Button(controls, text="Perguntar na conversa da Aurova", style="Primary.TButton", command=send_question).pack(side="right")
             ttk.Button(controls, text="Cancelar coleta", command=cancel_event.set).pack(side="left")
 
         def render_alerts(rows):
@@ -722,7 +722,7 @@ class ComputerCenterUIMixin:
             configure_monitor(silenced_categories=sorted(muted))
 
         def consultant_performance_context(hours=24):
-            return performance_context(performance_monitor.store, hours=hours) if performance_monitor else {"schema": "nova-performance-context.v1", "samples": 0, "alerts": []}
+            return performance_context(performance_monitor.store, hours=hours) if performance_monitor else {"schema": "aurova-performance-context.v1", "samples": 0, "alerts": []}
 
         def show_process_detail(tree, snapshot):
             selected = tree.selection()
@@ -855,18 +855,18 @@ class ComputerCenterUIMixin:
             elif section == "Contexto do Consultor":
                 if value.get("context", {}).get("cancelled"):
                     update_consultant_action(value.get("action_id"), "Cancelada", result="Coleta cancelada pelo usuário.")
-                    status.set("Consulta cancelada antes de enviar à conversa da Nova.")
+                    status.set("Consulta cancelada antes de enviar à conversa da Aurova.")
                 else:
                     submit = getattr(self, "ask_computer_consultant", None)
                     if callable(submit):
                         try:
                             submit(value["question"], value["context"], action_history_id=value.get("action_id"))
-                            status.set("Pergunta enviada à conversa da Nova; a resposta aparecerá no balão habitual.")
+                            status.set("Pergunta enviada à conversa da Aurova; a resposta aparecerá no balão habitual.")
                         except (PermissionError, RuntimeError, ValueError) as exc:
                             update_consultant_action(value.get("action_id"), "Falhou", result="A conversa não aceitou a pergunta.", error_code=type(exc).__name__)
                             status.set(f"A pergunta não foi enviada: {exc}")
                     else:
-                        status.set("A conversa da Nova não está disponível neste momento.")
+                        status.set("A conversa da Aurova não está disponível neste momento.")
             elif section == "Histórico de Ações":
                 render_action_history(value)
                 status.set(f"{len(value)} ação(ões) recente(s).")

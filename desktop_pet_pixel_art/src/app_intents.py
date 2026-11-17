@@ -5,7 +5,7 @@ import unicodedata
 
 
 def app_open_target(question):
-    question = re.sub(r"^\s*(?:nova\s*[,!:—-]?\s*)", "", str(question or ""), flags=re.IGNORECASE)
+    question = re.sub(r"^\s*(?:aurova\s*[,!:—-]?\s*)", "", str(question or ""), flags=re.IGNORECASE)
     match = re.match(
         r"^\s*(?:(?:eu\s+)?(?:quero|preciso)\s+|gostaria\s+de\s+|"
         r"voc(?:e|ê)\s+(?:pode|consegue|poderia)\s+|"

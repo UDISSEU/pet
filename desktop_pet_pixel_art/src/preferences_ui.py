@@ -20,8 +20,8 @@ class PreferencesUIMixin(
     MemoryPreferencesTabMixin, AppsPreferencesTabMixin,
 ):
     def open_autonomy_settings(self, selected_tab="behavior"):
-        window = self._set_nova_window_icon(tk.Toplevel(self.root))
-        window.title("Preferências da Nova")
+        window = self._set_aurova_window_icon(tk.Toplevel(self.root))
+        window.title("Preferências da Aurova")
         window.transient(self.root)
         window.attributes("-topmost", True)
         fit_window_to_screen(window, 560, 660, min_width=520, min_height=440)
@@ -29,7 +29,7 @@ class PreferencesUIMixin(
         self._activate_panel(window)
         make_header(
             window, "Preferências", "Personalize comportamento, rotina, memória e integrações.",
-            eyebrow="NOVA  /  CONFIGURAÇÕES",
+            eyebrow="AUROVA  /  CONFIGURAÇÕES",
             back_command=lambda: self._panel_back(window),
         )
 
@@ -48,28 +48,27 @@ class PreferencesUIMixin(
         style.configure("ModeHint.TLabel", background=COLORS["surface"], foreground=COLORS["muted"], font=("TkDefaultFont", 8))
         style.configure("Primary.TButton", padding=(14, 8), font=("TkDefaultFont", 9, "bold"))
         style.configure("Secondary.TButton", padding=(12, 8))
-        style.configure("Nav.TButton", padding=(2, 1))
+        style.configure("Nav.TButton", padding=(7, 4))
         style.configure(
             "TabNav.TLabel", background=COLORS["background"], foreground=COLORS["ink"],
             font=("TkDefaultFont", 11, "bold"),
         )
         style.configure(
             "Maintenance.Treeview", background=COLORS["surface"], fieldbackground=COLORS["surface"],
-            foreground=COLORS["ink"], rowheight=28, borderwidth=0,
+            foreground=COLORS["ink"], rowheight=30, borderwidth=0,
         )
         style.configure(
-            "Maintenance.Treeview.Heading", background=COLORS["background"],
-            foreground=COLORS["ink"], font=("TkDefaultFont", 9, "bold"),
+            "Maintenance.Treeview.Heading", background=COLORS["background_secondary"],
+            foreground=COLORS["muted"], font=("TkDefaultFont", 9, "bold"), padding=7,
         )
         style.configure(
             "History.Treeview", background=COLORS["surface"], fieldbackground=COLORS["surface"],
-            foreground=COLORS["ink"], rowheight=27, borderwidth=0,
+            foreground=COLORS["ink"], rowheight=30, borderwidth=0,
         )
         style.configure(
-            "History.Treeview.Heading", background=COLORS["background"],
-            foreground=COLORS["ink"], font=("TkDefaultFont", 9, "bold"),
+            "History.Treeview.Heading", background=COLORS["background_secondary"],
+            foreground=COLORS["muted"], font=("TkDefaultFont", 9, "bold"), padding=7,
         )
-        style.configure("Autonomy.TEntry", fieldbackground=COLORS["surface_elevated"], foreground=COLORS["ink"], padding=4)
 
         outer = ttk.Frame(window, style="Autonomy.TFrame", padding=(16, 12, 16, 12))
         outer.pack(fill="both", expand=True)
@@ -99,6 +98,13 @@ class PreferencesUIMixin(
                 if i == index:
                     page.pack(fill="both", expand=True)
                     active_tab_name.set(name)
+                    fit_window_to_screen(
+                        window,
+                        1024 if name == "Meu Computador" else 560,
+                        800,
+                        min_width=740 if name == "Meu Computador" else 520,
+                        min_height=440,
+                    )
                     if name == "Histórico" and history_refresh_callback["callback"]:
                         history_refresh_callback["callback"]()
                     if name == "Meu Computador" and getattr(context, "refresh_computer_inventory", None):
@@ -440,7 +446,8 @@ class PreferencesUIMixin(
                 updated["memories"] = memory_items
             settings_path = (
                 self.profile_manager.settings_path()
-                if hasattr(self, "profile_manager") else None
+                if hasattr(self, "profile_manager")
+                else getattr(self, "settings_path", None)
             )
             if not save_settings(updated, settings_path):
                 messagebox.showerror("Erro ao salvar", "Não consegui salvar as preferências.", parent=window)
@@ -466,6 +473,8 @@ class PreferencesUIMixin(
             select_tab(routine_tab)
         elif selected_tab == "memory":
             select_tab(memory_tab)
+        elif selected_tab == "history":
+            select_tab(history_tab)
         elif selected_tab == "reminder":
             select_tab(reminder_tab)
         elif selected_tab == "apps":

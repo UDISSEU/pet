@@ -2,9 +2,11 @@
 
 import time
 import tkinter as tk
+from tkinter import ttk
 
 from autonomy import save_settings
 from calendar_view import open_calendar_window
+from config import WIDTH
 from dashboard_ui import DashboardUIMixin
 from notifications_ui import NotificationsUIMixin
 from permissions_ui import PermissionsUIMixin
@@ -40,7 +42,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
         title_copy = tk.Frame(title_bar, bg=COLORS["navy"], cursor="fleur")
         title_copy.pack(side="left", fill="x", expand=True, padx=2, pady=1)
         title_label = tk.Label(
-            title_copy, text="Painel Principal da Nova", font=("TkDefaultFont", 10, "bold"),
+            title_copy, text="Painel Principal da Aurova", font=("TkDefaultFont", 10, "bold"),
             fg=COLORS["ink"], bg=COLORS["navy"], anchor="w", cursor="fleur",
         )
         title_label.pack(anchor="w")
@@ -106,7 +108,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
 
         action_button("✦  Conversar", self.ask_menu, 0, 0, primary=True)
         action_button("▦  Calendário", self.show_calendar, 0, 1)
-        action_button("▤  Painel da Nova", self.show_dashboard, 1, 0)
+        action_button("▤  Painel da Aurova", self.show_dashboard, 1, 0)
         action_button("♧  Notificações", self.show_notifications, 1, 1)
         action_button("⏱  Foco e rotina", lambda: self.open_autonomy_settings("routine"), 2, 0)
         action_button("⚙  Preferências", self.open_autonomy_settings, 2, 1)
@@ -199,7 +201,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
         more_action("Diagnóstico do sistema", self.show_diagnostics)
         more_action("Esquecer conversa", self.forget_history)
         more_action("Apagar memórias salvas", self.forget_memories)
-        more_action("Fechar Nova", self.close_app)
+        more_action("Fechar Aurova", self.close_app)
 
         popup.update_idletasks()
         screen_w = popup.winfo_screenwidth()
@@ -237,8 +239,8 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
             on_back=lambda window: self._panel_back(window),
             on_open=self._activate_panel,
             memory_checker=(
-                self.nova_integration.memory_health
-                if self.nova_integration is not None else None
+                self.aurova_integration.memory_health
+                if self.aurova_integration is not None else None
             ),
         )
 
@@ -247,6 +249,118 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
             self.root, on_back=lambda window: self._panel_back(window),
             on_open=self._activate_panel,
         )
+
+    def _question_dialog_geometry(self, dialog_width=420, dialog_height=280):
+        gap = 8
+        pet_left = int(round(self.x))
+        pet_right = pet_left + WIDTH
+        available_left = max(0, pet_left - gap)
+        available_right = max(0, self.screen_w - pet_right - gap)
+        width = min(dialog_width, max(1, self.screen_w - 32))
+        if available_right >= width:
+            x = pet_right + gap
+        elif available_left >= width:
+            x = pet_left - gap - width
+        else:
+            pet_center = (pet_left + pet_right) // 2
+            x = pet_center - width // 2
+            x = max(16, min(x, self.screen_w - width - 16))
+
+        if width < 360:
+            dialog_height = max(dialog_height, 280)
+        height = min(dialog_height, self.screen_h)
+        y = int(round(self.y + (self.cur_height - height) / 2))
+        y = max(0, min(y, self.screen_h - height))
+        return x, y, width, height
+
+    def _ask_question(self):
+        dialog = self._set_aurova_window_icon(tk.Toplevel(self.root))
+        dialog.title("Perguntar à Aurova")
+        dialog.configure(bg=COLORS["background"])
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.attributes("-topmost", True)
+        x, y, width, height = self._question_dialog_geometry()
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+        result = {"question": None}
+        background = COLORS["background"]
+        content = tk.Frame(dialog, bg=background, padx=18, pady=16)
+        content.pack(fill="both", expand=True)
+        prompt_heading = tk.Frame(content, bg=background)
+        prompt_heading.pack(fill="x")
+        make_aurora_mark(prompt_heading, size=32, background=background).pack(
+            side="left", padx=(0, 10),
+        )
+        prompt_copy = tk.Frame(prompt_heading, bg=background)
+        prompt_copy.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            prompt_copy, text="Converse com a Aurova",
+            font=("TkDefaultFont", 13, "bold"), fg=COLORS["ink"], bg=background,
+        ).pack(anchor="w")
+        tk.Label(
+            prompt_copy, text="Escreva sua pergunta abaixo",
+            font=("TkDefaultFont", 9), fg=COLORS["muted"], bg=background,
+        ).pack(anchor="w", pady=(3, 10))
+
+        editor_border = tk.Frame(content, bg=COLORS["border"], padx=1, pady=1)
+        editor_border.pack(fill="both", expand=True)
+        answer = tk.Text(
+            editor_border,
+            height=4,
+            wrap="word",
+            undo=True,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=8,
+            font=("TkDefaultFont", 10),
+            fg=COLORS["ink"],
+            bg=COLORS["surface"],
+            insertbackground=COLORS["cyan"],
+        )
+        answer.pack(fill="both", expand=True)
+
+        buttons = tk.Frame(content, bg=background)
+        buttons.pack(fill="x", pady=(12, 0))
+
+        def finish():
+            question = answer.get("1.0", "end-1c").strip()
+            if not question:
+                answer.focus_set()
+                return
+            result["question"] = question
+            dialog.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        cancel_button = ttk.Button(
+            buttons,
+            text="Cancelar",
+            command=cancel,
+            style="Quiet.TButton",
+        )
+        ask_button = ttk.Button(
+            buttons,
+            text="Perguntar",
+            command=finish,
+            style="Primary.TButton",
+        )
+        if width < 360:
+            ask_button.pack(fill="x", pady=(0, 6))
+            cancel_button.pack(fill="x")
+        else:
+            cancel_button.pack(side="right")
+            ask_button.pack(side="right", padx=(0, 6))
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        dialog.bind("<Control-Return>", lambda _event: finish())
+        dialog.bind("<Escape>", lambda _event: cancel())
+        dialog.grab_set()
+        answer.focus_force()
+        self.root.wait_window(dialog)
+        return result["question"]
+
     def persist_preferences(self):
         self.settings.update(
             mode=self.settings.get("mode", "companhia"),

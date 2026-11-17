@@ -97,7 +97,7 @@ class AutomationPreferencesTabMixin:
         files_card = ttk.Frame(automation_content, style="Card.TFrame", padding=13)
         files_card.pack(fill="x", pady=5)
         ttk.Label(files_card, text="Arquivos e organização", style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(files_card, text="Organize Downloads por tipo. A Nova mostra a lista e pede sua confirmação antes de mover qualquer arquivo.", style="Hint.TLabel", wraplength=450, justify="left").pack(anchor="w", pady=(3, 9))
+        ttk.Label(files_card, text="Organize Downloads por tipo. A Aurova mostra a lista e pede sua confirmação antes de mover qualquer arquivo.", style="Hint.TLabel", wraplength=450, justify="left").pack(anchor="w", pady=(3, 9))
         organize_auto = next(item for item in AUTOMATIONS if item["id"] == "organize_downloads")
         undo_auto = next(item for item in AUTOMATIONS if item["id"] == "undo_downloads")
         for item, button_text in ((organize_auto, "Pré-visualizar e organizar"), (undo_auto, "Desfazer última organização")):
@@ -163,7 +163,7 @@ class AutomationPreferencesTabMixin:
         def toggle_battery_alert():
             persist_toggle("low_battery_alert", battery_enabled)
         ttk.Checkbutton(wellbeing_card, text="Avisar quando a bateria chegar a 20%", variable=battery_enabled, command=toggle_battery_alert).pack(anchor="w", pady=2)
-        self._automation_status_labels["low_battery_alert"] = ttk.Label(wellbeing_card, text=automation_settings["last_run"].get("low_battery_alert", "Verificação periódica enquanto a Nova estiver aberta."), style="Hint.TLabel", wraplength=445)
+        self._automation_status_labels["low_battery_alert"] = ttk.Label(wellbeing_card, text=automation_settings["last_run"].get("low_battery_alert", "Verificação periódica enquanto a Aurova estiver aberta."), style="Hint.TLabel", wraplength=445)
         self._automation_status_labels["low_battery_alert"].pack(anchor="w", padx=(24, 0), pady=(0, 3))
 
         activity_card = ttk.Frame(automation_content, style="Card.TFrame", padding=13)
@@ -176,5 +176,5 @@ class AutomationPreferencesTabMixin:
 
         safety_card = ttk.Frame(automation_content, style="Card.TFrame", padding=13)
         safety_card.pack(fill="x", pady=(5, 0))
-        ttk.Label(safety_card, text="Como a Nova protege suas ações", style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(safety_card, text="As automações ficam em uma lista local fixa. Análises não alteram arquivos. Organizar Downloads ou capturas mostra a prévia e permite desfazer; esvaziar a Lixeira pede confirmação porque remove itens definitivamente. A Nova não segue links simbólicos, não substitui arquivos existentes e a IA não inicia automações.", style="Hint.TLabel", wraplength=450, justify="left").pack(anchor="w", pady=(4, 0))
+        ttk.Label(safety_card, text="Como a Aurova protege suas ações", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(safety_card, text="As automações ficam em uma lista local fixa. Análises não alteram arquivos. Organizar Downloads ou capturas mostra a prévia e permite desfazer; esvaziar a Lixeira pede confirmação porque remove itens definitivamente. A Aurova não segue links simbólicos, não substitui arquivos existentes e a IA não inicia automações.", style="Hint.TLabel", wraplength=450, justify="left").pack(anchor="w", pady=(4, 0))

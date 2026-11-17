@@ -90,9 +90,9 @@ def preview_uninstall(app, *, run=subprocess.run, env=None, timeout=60):
     if source == "Flatpak":
         return {"manager": source, "reference": reference, "packages": [reference],
                 "details": "A remoção usa --no-related para não remover runtimes relacionados automaticamente.",
-                "personal_data": "Preferências e arquivos pessoais não são apagados pela Nova."}
+                "personal_data": "Preferências e arquivos pessoais não são apagados pela Aurova."}
     return {"manager": source, "reference": reference, "packages": [reference],
-            "details": "O Snap remove os dados internos do aplicativo e normalmente salva um snapshot local por até 31 dias. A Nova não usa --purge.",
+            "details": "O Snap remove os dados internos do aplicativo e normalmente salva um snapshot local por até 31 dias. A Aurova não usa --purge.",
             "personal_data": "Confirme a remoção sabendo que os dados internos do Snap serão removidos do uso ativo."}
 
 

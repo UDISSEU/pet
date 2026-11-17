@@ -22,7 +22,7 @@ class FakeStyle:
         self.maps[name] = options
 
 
-class NovaAuroraThemeTests(unittest.TestCase):
+class AurovaAuroraThemeTests(unittest.TestCase):
     def test_palette_and_layout_tokens_are_centralized(self):
         self.assertEqual(COLORS["background"], "#111827")
         self.assertEqual(COLORS["surface"], "#1B273A")
@@ -43,6 +43,12 @@ class NovaAuroraThemeTests(unittest.TestCase):
         self.assertIn("TNotebook.Tab", style.configured)
         self.assertIn("Horizontal.TProgressbar", style.configured)
         self.assertIn("Primary.TButton", style.maps)
+        self.assertIn(("disabled", COLORS["background_secondary"]),
+                      style.maps["Secondary.TButton"]["background"])
+        self.assertIn(("disabled", COLORS["disabled"]),
+                      style.maps["Secondary.TButton"]["foreground"])
+        self.assertIn(("focus", COLORS["focus"]),
+                      style.maps["TEntry"]["bordercolor"])
         self.assertIn("Nav.Active.TButton", style.maps)
 
 

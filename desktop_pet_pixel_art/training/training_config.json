@@ -12,7 +12,7 @@
   "dataset_root": "training/datasets",
   "experiments_root": "training/experiments",
   "checkpoints_root": "training/checkpoints",
-  "run_name": "nova_model_0_1",
+  "run_name": "aurova_model_0_1",
   "validation_percent": 10,
   "max_examples": 5000,
   "max_scanned_records": 25000,

@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from nova_ai.model import ByteTokenizer, CheckpointStore, ModelHistory, ModelMetadata, Vocabulary
+from aurova_ai.model import ByteTokenizer, CheckpointStore, ModelHistory, ModelMetadata, Vocabulary
 
 from .evaluation import evaluate
 from .training_config import TrainingConfig
@@ -62,7 +62,7 @@ class TrainingManager:
             import torch
         except ImportError as exc:
             raise RuntimeError("PyTorch CPU é necessário; instale o extra de ML em ambiente isolado") from exc
-        from nova_ai.model.transformer import TinyTransformer
+        from aurova_ai.model.transformer import TinyTransformer
 
         original_thread_count = torch.get_num_threads()
         self._memory_preflight()

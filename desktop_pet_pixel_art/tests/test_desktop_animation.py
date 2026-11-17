@@ -16,8 +16,8 @@ from desktop_pet import DesktopPet
 
 
 class DesktopAnimationTests(unittest.TestCase):
-    def test_system_prompt_uses_nova_name(self):
-        self.assertIn("Você é Nova", SYSTEM_PROMPT)
+    def test_system_prompt_uses_aurova_name(self):
+        self.assertIn("Você é Aurova", SYSTEM_PROMPT)
     def test_resolve_movement_path_finds_idle_video(self):
         filename = MOVEMENT_VIDEOS["idle"]
         resolved = resolve_movement_path(filename)
@@ -116,7 +116,7 @@ class DesktopAnimationTests(unittest.TestCase):
                 self.assertEqual(
                     DesktopPet._video_with_fallback("talking"), "wave"
                 )
-    def test_clicking_a_resting_nova_uses_a_wake_line_and_wave(self):
+    def test_clicking_a_resting_aurova_uses_a_wake_line_and_wave(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet._pending_click_job = "click-timer"
         pet._interaction_speech_allowed = mock.Mock(return_value=True)
@@ -133,7 +133,7 @@ class DesktopAnimationTests(unittest.TestCase):
         pet._schedule_pose_return.assert_called_once_with(
             round(desktop_pet.VIDEO_REACTION_SECONDS * 1000), "greeting"
         )
-    def test_clicking_an_active_nova_uses_the_regular_click_reaction(self):
+    def test_clicking_an_active_aurova_uses_the_regular_click_reaction(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet._pending_click_job = "click-timer"
         pet._interaction_speech_allowed = mock.Mock(return_value=True)
@@ -208,8 +208,8 @@ class DesktopAnimationTests(unittest.TestCase):
 
         x, y, width, height = pet._question_dialog_geometry()
 
-        self.assertEqual((x, width, height), (248, 420, 230))
-        self.assertEqual(y, 180)
+        self.assertEqual((x, width, height), (248, 420, 280))
+        self.assertEqual(y, 155)
         self.assertGreaterEqual(x, pet.x + 140 + 8)
     def test_question_dialog_uses_left_side_at_right_screen_edge(self):
         pet = DesktopPet.__new__(DesktopPet)
@@ -221,8 +221,8 @@ class DesktopAnimationTests(unittest.TestCase):
 
         x, y, width, height = pet._question_dialog_geometry()
 
-        self.assertEqual((x, width, height), (572, 420, 230))
-        self.assertEqual(y, 570)
+        self.assertEqual((x, width, height), (572, 420, 280))
+        self.assertEqual(y, 655)
         self.assertLessEqual(x + width, pet.x - 8)
         self.assertGreaterEqual(y, 0)
         self.assertLessEqual(y + height, pet.screen_h)

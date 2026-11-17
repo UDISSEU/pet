@@ -35,7 +35,7 @@ class AnimationLoader:
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._load_all,
-            name="nova-animation-loader",
+            name="aurova-animation-loader",
             daemon=True,
         )
         self._thread.start()

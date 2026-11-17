@@ -1,12 +1,12 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Nova
+Name=Aurova
 GenericName=Companheira de desktop
-Comment=Iniciar a mascote Nova
-Exec="@APP_DIR@/launchers/run-nova.sh"
-Icon=@APP_DIR@/launchers/nova-icon.png
+Comment=Iniciar a mascote Aurova
+Exec="@APP_DIR@/launchers/run-aurova.sh"
+Icon=@APP_DIR@/launchers/aurova-icon.png
 Terminal=false
 Categories=Utility;Accessibility;
 StartupNotify=false
-StartupWMClass=Nova
+StartupWMClass=Aurova

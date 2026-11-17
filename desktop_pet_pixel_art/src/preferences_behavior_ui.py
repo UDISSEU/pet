@@ -36,7 +36,7 @@ class BehaviorPreferencesTabMixin:
         routine_note = getattr(context, 'routine_note', None)
         routine_surprise = getattr(context, 'routine_surprise', None)
         speech = getattr(context, 'speech', None)
-        mode_card = card(behavior_content, "Como a Nova deve se comportar?", "Você pode personalizar as opções abaixo depois de escolher um modo.")
+        mode_card = card(behavior_content, "Como a Aurova deve se comportar?", "Você pode personalizar as opções abaixo depois de escolher um modo.")
         mode_row = ttk.Frame(mode_card, style="Card.TFrame")
         mode_row.pack(fill="x", pady=(2, 0))
         modes = (
@@ -96,7 +96,7 @@ class BehaviorPreferencesTabMixin:
             wraplength=420,
         ).pack(anchor="w", pady=(1, 2))
 
-        quiet_card = card(behavior_content, "Horário de silêncio", "A Nova pausa falas, observações e lembretes durante esse período.")
+        quiet_card = card(behavior_content, "Horário de silêncio", "A Aurova pausa falas, observações e lembretes durante esse período.")
         quiet_row = ttk.Frame(quiet_card, style="Card.TFrame")
         quiet_row.pack(anchor="w")
         ttk.Label(quiet_row, text="Das").pack(side="left")
@@ -108,7 +108,7 @@ class BehaviorPreferencesTabMixin:
         focus_card = card(
             routine_content,
             "Sessão de foco",
-            "Escolha no que vai trabalhar. A Nova fica quieta até a pausa e usa a animação de descanso.",
+            "Escolha no que vai trabalhar. A Aurova fica quieta até a pausa e usa a animação de descanso.",
         )
         ttk.Label(focus_card, text="Sua prioridade", style="CardTitle.TLabel").pack(anchor="w", pady=(2, 3))
         ttk.Entry(focus_card, textvariable=focus_goal, style="Autonomy.TEntry").pack(fill="x", ipady=5)
@@ -121,7 +121,7 @@ class BehaviorPreferencesTabMixin:
         if self.focus_mode == "focus":
             focus_status_text = f"Foco em andamento: {self.focus_goal}"
         elif self.focus_mode == "break":
-            focus_status_text = "Você está no intervalo. A Nova também está descansando."
+            focus_status_text = "Você está no intervalo. A Aurova também está descansando."
         else:
             focus_status_text = "Ao terminar, ela avisa para você fazer uma pausa."
         focus_status = tk.StringVar(value=focus_status_text)
@@ -140,10 +140,10 @@ class BehaviorPreferencesTabMixin:
         routine_card = card(
             routine_content,
             "Pequenas rotinas",
-            "As mensagens aparecem apenas enquanto a Nova estiver aberta e fora do horário de silêncio.",
+            "As mensagens aparecem apenas enquanto a Aurova estiver aberta e fora do horário de silêncio.",
         )
         ttk.Checkbutton(
-            routine_card, text="Dar boas-vindas quando eu iniciar a Nova",
+            routine_card, text="Dar boas-vindas quando eu iniciar a Aurova",
             variable=routine_greeting,
         ).pack(anchor="w", pady=4)
         ttk.Checkbutton(

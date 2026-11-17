@@ -172,9 +172,9 @@ def _redact(line):
 
 def collect_logs(*, app_log=None, run=subprocess.run, which=shutil.which,
                  max_records=500, max_bytes=2_000_000):
-    """Read bounded Nova logs and user journal warnings; redact credentials."""
+    """Read bounded Aurova logs and user journal warnings; redact credentials."""
     rows = []
-    log_path = Path(app_log or Path.home() / ".local/state/desktop_pet/nova.log")
+    log_path = Path(app_log or Path.home() / ".local/state/desktop_pet/aurova.log")
     try:
         with log_path.open("rb") as stream:
             stream.seek(0, os.SEEK_END)
@@ -184,11 +184,11 @@ def collect_logs(*, app_log=None, run=subprocess.run, which=shutil.which,
             match = re.match(r"^(\S+)\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+([^:]+):\s?(.*)$", line)
             if match:
                 timestamp, level, source, message = match.groups()
-                rows.append({"date": timestamp, "severity": level, "category": "Nova",
+                rows.append({"date": timestamp, "severity": level, "category": "Aurova",
                              "source": source, "message": _redact(message)[:2000]})
             elif line.strip():
-                rows.append({"date": "", "severity": "INFO", "category": "Nova",
-                             "source": "Log da Nova", "message": _redact(line)[:2000]})
+                rows.append({"date": "", "severity": "INFO", "category": "Aurova",
+                             "source": "Log da Aurova", "message": _redact(line)[:2000]})
     except FileNotFoundError:
         pass
     except (OSError, UnicodeError):

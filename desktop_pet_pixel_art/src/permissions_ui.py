@@ -39,14 +39,14 @@ class PermissionsUIMixin:
                     return existing
             except tk.TclError:
                 pass
-        window = self._set_nova_window_icon(tk.Toplevel(self.root))
+        window = self._set_aurova_window_icon(tk.Toplevel(self.root))
         self._permissions_window = window
         self._activate_panel(window)
-        window.title("Permissões da Nova")
+        window.title("Permissões da Aurova")
         fit_window_to_screen(window, 560, 640, min_width=500, min_height=420)
         window.configure(bg=COLORS["background"])
-        make_header(window, "Permissões", "Controle o que a Nova e cada habilidade podem acessar.",
-                    eyebrow="NOVA  /  PRIVACIDADE",
+        make_header(window, "Permissões", "Controle o que a Aurova e cada habilidade podem acessar.",
+                    eyebrow="AUROVA  /  PRIVACIDADE",
                     back_command=lambda: self._panel_back(window))
         frame = tk.Frame(window, bg=COLORS["background"], padx=14, pady=12)
         frame.pack(fill="both", expand=True)
@@ -94,7 +94,7 @@ class PermissionsUIMixin:
                         variable.set(self.permission_manager.allowed(owner_id, permission))
                 ttk.Checkbutton(content, text=label, variable=variable, command=toggle).pack(anchor="w", padx=8, pady=3)
 
-        add_owner("nova.core", "Nova (recursos internos)", CORE_PERMISSIONS)
+        add_owner("aurova.core", "Aurova (recursos internos)", CORE_PERMISSIONS)
         for plugin_id in sorted(self.plugin_manager._plugins):
             plugin = self.plugin_manager._plugins[plugin_id]
             add_owner(plugin_id, f"Habilidade: {plugin.manifest.name} ({plugin_id})",

@@ -19,12 +19,12 @@ class RoutineProjectFollowupTests(unittest.TestCase):
             "routine_context": True,
             "proactive_project_followups": {},
         }
-        self.controller.nova_integration = mock.Mock()
+        self.controller.aurova_integration = mock.Mock()
         self.record = SimpleNamespace(
             memory_id="a" * 32,
             content="Projeto Aurora: painel de estudos",
         )
-        self.controller.nova_integration.project_memories.return_value = [self.record]
+        self.controller.aurova_integration.project_memories.return_value = [self.record]
         self.now = datetime(2026, 3, 10, 12, 0, tzinfo=timezone.utc)
 
     def test_explicit_project_memory_is_used_once_and_cooldown_persisted(self):
@@ -79,7 +79,7 @@ class RoutineProjectFollowupTests(unittest.TestCase):
             create=True,
         ) as show:
             self.controller._show_greeting_pose("greeting", self.now)
-        self.controller.nova_integration.project_memories.assert_not_called()
+        self.controller.aurova_integration.project_memories.assert_not_called()
         show.assert_called_once_with("greeting", "greeting", duration=6500)
 
     def test_memory_opt_out_prevents_project_lookup(self):
@@ -89,11 +89,11 @@ class RoutineProjectFollowupTests(unittest.TestCase):
             create=True,
         ) as show:
             self.controller._show_greeting_pose("greeting", self.now)
-        self.controller.nova_integration.project_memories.assert_not_called()
+        self.controller.aurova_integration.project_memories.assert_not_called()
         show.assert_called_once_with("greeting", "greeting", duration=6500)
 
     def test_missing_project_memory_preserves_the_regular_greeting(self):
-        self.controller.nova_integration.project_memories.return_value = []
+        self.controller.aurova_integration.project_memories.return_value = []
         with mock.patch.object(
             self.controller, "_show_spontaneous_pose", return_value=True,
             create=True,

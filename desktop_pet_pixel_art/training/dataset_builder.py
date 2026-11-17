@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from nova_ai.model import ByteTokenizer, Vocabulary
+from aurova_ai.model import ByteTokenizer, Vocabulary
 
 from .training_config import TrainingConfig
 
@@ -238,7 +238,7 @@ class DatasetBuilder:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Valida e prepara corpus local da Nova")
+    parser = argparse.ArgumentParser(description="Valida e prepara corpus local da Aurova")
     parser.add_argument("--config", default="training/training_config.json")
     parser.add_argument("--sources", nargs="*", help="arquivos .txt/.jsonl dentro de datasets/raw")
     args = parser.parse_args(argv)

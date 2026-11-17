@@ -1,10 +1,10 @@
-# ✨ Nova — mascote de desktop para Linux
+# ✨ Aurova — mascote de desktop para Linux
 
 Uma companheira virtual em pixel art que vive na área de trabalho, anima-se, conversa por IA e oferece ferramentas locais para foco, lembretes e organização. O projeto é feito em Python e Tkinter, com preferência por processamento local e confirmações antes de ações que alteram arquivos ou o sistema.
 
 > **Branch principal:** `main` · **Plataforma-alvo:** Linux
 
-## O que a Nova oferece
+## O que a Aurova oferece
 
 - **Mascote animada:** caminha, descansa, acena, dança, boceja e reage às interações.
 - **Conversa com IA:** usa exclusivamente o Ollama local; a mascote e os recursos locais funcionam sem ele.
@@ -30,7 +30,7 @@ Recursos que dependem de X11, como observar janelas e posicionar a mascote sobre
 │   └── workflows/            # CI: testes automatizados no GitHub Actions
 ├── desktop_pet_pixel_art/
 │   ├── assets/
-│   │   ├── movements/        # Vídeos usados nas animações da Nova
+│   │   ├── movements/        # Vídeos usados nas animações da Aurova
 │   │   ├── personagem/       # Sprites e animações da personagem
 │   │   ├── icons/            # Ícones da aplicação
 │   │   └── references/       # Referências visuais
@@ -48,16 +48,16 @@ Recursos que dependem de X11, como observar janelas e posicionar a mascote sobre
 │   ├── tools/                # Preparação guiada, ferramentas gráficas e soak tests
 │   ├── install.sh            # Cria o ambiente virtual e instala dependências
 │   └── requirements.txt      # Dependências Python
-├── movimentação Nova/       # Vídeos e imagens de referência da personagem
+├── movimentação Aurova/       # Vídeos e imagens de referência da personagem
 ├── movimento 2.0/           # Materiais de criação, sprites e referências
 └── README.md                 # Apresentação do projeto
 ```
 
-As pastas `movimentação Nova/` e `movimento 2.0/` guardam materiais visuais de origem e referência. Os recursos usados pelo aplicativo em execução ficam organizados em `desktop_pet_pixel_art/assets/`.
+As pastas `movimentação Aurova/` e `movimento 2.0/` guardam materiais visuais de origem e referência. Os recursos usados pelo aplicativo em execução ficam organizados em `desktop_pet_pixel_art/assets/`.
 
 ### Como as partes se conectam
 
-`src/desktop_pet.py` coordena a janela e o ciclo da aplicação; `desktop_pet_ai.py` contém os workers e o fluxo de conversa; `desktop_pet_ui.py` agrega mixins menores de interface. `AnimationLoader` carrega as animações em segundo plano e entrega os resultados à interface Tkinter. Na conversa, `ai.request_handler` encaminha o contexto a `AICore`, que usa `ModelRouter` e os módulos de `providers/`. A identidade, as regras e a personalidade conversacional ficam em `nova_ai/personality/`; `personality.py` e `ai/personality.py` preservam importações antigas.
+`src/desktop_pet.py` coordena a janela e o ciclo da aplicação; `desktop_pet_ai.py` contém os workers e o fluxo de conversa; `desktop_pet_ui.py` agrega mixins menores de interface. `AnimationLoader` carrega as animações em segundo plano e entrega os resultados à interface Tkinter. Na conversa, `ai.request_handler` encaminha o contexto a `AICore`, que usa `ModelRouter` e os módulos de `providers/`. A identidade, as regras e a personalidade conversacional ficam em `aurova_ai/personality/`; `personality.py` e `ai/personality.py` preservam importações antigas.
 
 Pedidos locais conhecidos, como algumas automações e ações de sistema, podem ser tratados sem chamar um modelo de IA. As operações de arquivo que modificam conteúdo apresentam uma prévia e pedem confirmação; a interface também exige confirmação para esvaziar a Lixeira ou executar determinadas ações de manutenção.
 
@@ -102,7 +102,7 @@ altera o Python global:
 
 ```bash
 cd desktop_pet_pixel_art
-./launchers/run-nova.sh
+./launchers/run-aurova.sh
 ```
 
 Se Python, `venv` ou Tkinter estiverem ausentes, instale os pacotes de sistema manualmente,
@@ -125,7 +125,7 @@ cd desktop_pet_pixel_art
 
 ```bash
 cd desktop_pet_pixel_art
-./launchers/run-nova.sh
+./launchers/run-aurova.sh
 ```
 
 ## Conversa com IA
@@ -152,7 +152,7 @@ opções podem ser ativadas separadamente em **Preferências > Memória**.
 - **Manutenção do sistema:** as ações com APT usam autenticação do Linux; operações que removem pacotes apresentam uma prévia.
 - **Spotify:** configure a integração nas preferências para pesquisar músicas e interagir com playlists.
 
-Os lembretes só são exibidos enquanto a aplicação está aberta. Recursos específicos de X11 dependem do ambiente gráfico; `python-xlib` é opcional e sua ausência não impede o uso geral da Nova.
+Os lembretes só são exibidos enquanto a aplicação está aberta. Recursos específicos de X11 dependem do ambiente gráfico; `python-xlib` é opcional e sua ausência não impede o uso geral da Aurova.
 
 ## Dados e privacidade
 

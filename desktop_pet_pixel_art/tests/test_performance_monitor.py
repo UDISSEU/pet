@@ -154,7 +154,7 @@ class MonitorLifecycleTests(unittest.TestCase):
             monitor.stop(timeout=2)
             self.assertFalse(monitor._thread.is_alive())
             context = performance_context(store, hours=1)
-            self.assertEqual(context["schema"], "nova-performance-context.v1")
+            self.assertEqual(context["schema"], "aurova-performance-context.v1")
             self.assertEqual(context["samples"], 1)
 
     def test_stop_cancels_an_in_progress_smart_collection(self):

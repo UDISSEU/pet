@@ -45,7 +45,7 @@ class DesktopAppTests(unittest.TestCase):
         from types import SimpleNamespace
 
         class Window:
-            _nova_back_in_progress = False
+            _aurova_back_in_progress = False
 
             def winfo_exists(self):
                 return True
@@ -67,7 +67,7 @@ class DesktopAppTests(unittest.TestCase):
 
     def test_panel_back_restores_the_same_previous_window(self):
         class Window:
-            _nova_back_in_progress = False
+            _aurova_back_in_progress = False
 
             def __init__(self):
                 self.destroyed = False
@@ -226,12 +226,12 @@ class DesktopAppTests(unittest.TestCase):
         for question in ("como abrir o Firefox?", "qual app abre o Firefox?"):
             with self.subTest(question=question):
                 self.assertIsNone(pet._matching_app(question))
-    def test_app_open_target_accepts_nova_address_and_trailing_politeness(self):
+    def test_app_open_target_accepts_aurova_address_and_trailing_politeness(self):
         chrome = {"name": "Google Chrome", "command": "google-chrome"}
         installed = [chrome]
         for question in (
-            "Nova, você consegue abrir o Chrome pra mim?",
-            "Nova, abre Google Chrome por favor",
+            "Aurova, você consegue abrir o Chrome pra mim?",
+            "Aurova, abre Google Chrome por favor",
         ):
             with self.subTest(question=question):
                 self.assertEqual(

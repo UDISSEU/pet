@@ -191,7 +191,7 @@ class DesktopControllerRegressionTests(unittest.TestCase):
             interface = device / "1-2:1.0"
             interface.mkdir(parents=True)
             (interface / "bInterfaceClass").write_text("08", encoding="ascii")
-            (device / "manufacturer").write_text("Nova", encoding="utf-8")
+            (device / "manufacturer").write_text("Aurova", encoding="utf-8")
             (device / "product").write_text("Drive", encoding="utf-8")
             bus_devices = root / "devices"
             bus_devices.mkdir()
@@ -207,14 +207,14 @@ class DesktopControllerRegressionTests(unittest.TestCase):
             with mock.patch.object(device_controller, "Path", side_effect=fake_path):
                 devices = DesktopPet._scan_usb_storage_devices()
 
-        self.assertEqual(devices, {"1-2": "Nova Drive"})
+        self.assertEqual(devices, {"1-2": "Aurova Drive"})
 
     def test_window_icon_assignment_remains_available(self):
         pet = DesktopPet.__new__(DesktopPet)
         pet._window_icon = mock.sentinel.icon
         window = mock.Mock()
 
-        self.assertIs(pet._set_nova_window_icon(window), window)
+        self.assertIs(pet._set_aurova_window_icon(window), window)
         window.iconphoto.assert_called_once_with(False, mock.sentinel.icon)
 
     def test_preferences_keep_existing_tab_order_and_selection_ids(self):
@@ -326,7 +326,7 @@ class DesktopControllerRegressionTests(unittest.TestCase):
         pet.focus_mode = "idle"
         pet.ai_request_active = False
         pet.dragging = False
-        pet._set_nova_window_icon = lambda window: window
+        pet._set_aurova_window_icon = lambda window: window
         pet._activate_panel = mock.Mock()
         pet._refresh_automation_activity = mock.Mock()
         refresh_called = mock.Mock()
@@ -431,7 +431,7 @@ class DesktopControllerRegressionTests(unittest.TestCase):
         pet.focus_mode = "idle"
         pet.ai_request_active = False
         pet.dragging = False
-        pet._set_nova_window_icon = lambda window: window
+        pet._set_aurova_window_icon = lambda window: window
         pet._activate_panel = mock.Mock()
         pet._refresh_automation_activity = mock.Mock()
         FakeWidget.instances.clear()

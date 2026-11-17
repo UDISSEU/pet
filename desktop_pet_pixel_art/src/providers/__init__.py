@@ -1,1 +1,1 @@
-"""Provedores de linguagem da Nova."""
+"""Provedores de linguagem da Aurova."""

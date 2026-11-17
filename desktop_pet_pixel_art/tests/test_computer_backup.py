@@ -1,4 +1,4 @@
-"""Focused tests for safe Nova settings backups and restoration."""
+"""Focused tests for safe Aurova settings backups and restoration."""
 
 import hashlib
 import json
@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 from computer_backup import (
-    BACKUP_SUFFIX, FORMAT_ID, _canonical, create_backup, delete_backup,
+    BACKUP_SUFFIX, FORMAT_ID, LEGACY_BACKUP_SUFFIX, LEGACY_FORMAT_ID, _canonical,
+    create_backup, delete_backup,
     export_backup, list_backups, preview_restore, read_backup,
     rename_backup, restore_backup, save_backup_directory,
     validate_backup_directory,
@@ -51,6 +52,19 @@ class ComputerBackupTests(unittest.TestCase):
         rename_backup(path, self.backups, "Before update")
         self.assertEqual(read_backup(path, self.backups)["label"], "Before update")
         self.assertEqual(list_backups(self.backups)[0]["integrity"], "Íntegro")
+
+    def test_legacy_named_backups_remain_readable_and_listed(self):
+        import computer_backup
+
+        current = self.create()
+        package = json.loads(current.read_text(encoding="utf-8"))
+        package["format"] = LEGACY_FORMAT_ID
+        computer_backup._seal(package)
+        legacy = self.backups / ("legacy" + LEGACY_BACKUP_SUFFIX)
+        legacy.write_text(json.dumps(package), encoding="utf-8")
+
+        self.assertEqual(read_backup(legacy, self.backups)["format"], LEGACY_FORMAT_ID)
+        self.assertIn(str(legacy), [item["path"] for item in list_backups(self.backups)])
 
     def test_corrupt_and_incompatible_backups_are_reported(self):
         path = self.create()
@@ -123,7 +137,7 @@ class ComputerBackupTests(unittest.TestCase):
     def test_backup_directory_choice_is_persisted(self):
         import computer_backup
         config_path = self.root / "backup_location.json"
-        chosen = self.root / "external-drive" / "Nova"
+        chosen = self.root / "external-drive" / "Aurova"
         with mock.patch.object(computer_backup, "backup_location_settings_path", return_value=config_path):
             self.assertEqual(save_backup_directory(chosen), chosen)
             self.assertEqual(computer_backup.load_backup_directory(), chosen)

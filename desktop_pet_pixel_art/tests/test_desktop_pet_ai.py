@@ -83,7 +83,7 @@ class TestDesktopPetAI(unittest.TestCase):
         integration.personality_instructions.return_value = (
             "Prefira respostas breves e diretas."
         )
-        pet.nova_integration = integration
+        pet.aurova_integration = integration
         settings = {"adaptive_learning_enabled": True}
 
         with mock.patch("desktop_pet_ai.answer_request", return_value="resposta") as request:
@@ -96,19 +96,19 @@ class TestDesktopPetAI(unittest.TestCase):
             "pergunta atual", None, enabled=True
         )
         self.assertEqual(
-            request.call_args.kwargs["settings"]["nova_personality_instructions"],
+            request.call_args.kwargs["settings"]["aurova_personality_instructions"],
             "Prefira respostas breves e diretas.",
         )
         self.assertEqual(request.call_args.kwargs["memories"], ["memória"])
 
     def test_computer_context_uses_existing_conversation_with_accuracy_guardrails(self):
         pet = _Pet({})
-        context = {"schema": "nova-computer-context.v1", "sources": {"system": {"state": "unavailable"}}}
+        context = {"schema": "aurova-computer-context.v1", "sources": {"system": {"state": "unavailable"}}}
         with mock.patch("desktop_pet_ai.answer_request", return_value="Não há dados suficientes.") as request:
             pet._ask_worker(pet.history, computer_context=context)
         self.assertEqual(request.call_args.args[0], [{"role": "user", "content": "pergunta atual"}])
         self.assertTrue(any("dados observados do computador" in item.casefold() for item in request.call_args.kwargs["memories"]))
-        self.assertIn("Não invente valores", request.call_args.kwargs["settings"]["nova_personality_instructions"])
+        self.assertIn("Não invente valores", request.call_args.kwargs["settings"]["aurova_personality_instructions"])
 
     def test_answer_is_persisted_only_when_enabled(self):
         pet = _Pet({"conversation_history_enabled": True})

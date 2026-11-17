@@ -1,7 +1,7 @@
 import random
 import time
 from config import THUMBS_UP_ANIMATION_SECONDS, VANISHING_ANIMATION_SECONDS
-from nova_ai.personality.speech import (
+from aurova_ai.personality.speech import (
     can_speak_spontaneously,
     pick_line,
     record_spontaneous_speech,

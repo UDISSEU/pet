@@ -29,6 +29,12 @@ SENSITIVE = {
     "system.app.launch", "system.maintenance", "spotify.control", "network.access",
     "reminder.write",
 }
+_LEGACY_CORE_PLUGIN_ID = "nova.core"
+_CORE_PLUGIN_ID = "aurova.core"
+
+
+def _canonical_plugin_id(plugin_id):
+    return _CORE_PLUGIN_ID if plugin_id == _LEGACY_CORE_PLUGIN_ID else plugin_id
 
 
 def _validated_data(data):
@@ -98,23 +104,34 @@ class PermissionManager:
             return
 
         mark_valid(self.path)
-        self._grants = grants
-        self._history = history
+        self._grants = {
+            plugin_id: permissions for plugin_id, permissions in grants.items()
+            if plugin_id not in {_LEGACY_CORE_PLUGIN_ID, _CORE_PLUGIN_ID}
+        }
+        legacy_grants = grants.get(_LEGACY_CORE_PLUGIN_ID, {})
+        current_grants = grants.get(_CORE_PLUGIN_ID, {})
+        if legacy_grants or current_grants:
+            self._grants[_CORE_PLUGIN_ID] = {**legacy_grants, **current_grants}
+        self._history = [
+            {**item, "plugin": _canonical_plugin_id(item["plugin"])}
+            for item in history
+        ]
 
     def allowed(self, plugin_id, permission):
         with self._lock:
-            plugin = self._grants.get(str(plugin_id), {})
+            plugin = self._grants.get(_canonical_plugin_id(str(plugin_id)), {})
             return bool(plugin.get(permission, False)) if isinstance(plugin, dict) else False
 
     def has_decision(self, plugin_id, permission):
         with self._lock:
-            return any(item.get("plugin") == str(plugin_id)
+            plugin_id = _canonical_plugin_id(str(plugin_id))
+            return any(item.get("plugin") == plugin_id
                        and item.get("permission") == str(permission)
                        for item in self._history)
 
     def permissions_for(self, plugin_id):
         with self._lock:
-            row = self._grants.get(str(plugin_id), {})
+            row = self._grants.get(_canonical_plugin_id(str(plugin_id)), {})
             return dict(row) if isinstance(row, dict) else {}
 
     def authorize(self, plugin_id, permission, *, confirmed=False):
@@ -122,6 +139,7 @@ class PermissionManager:
             raise ValueError("Identificador de plugin inválido.")
         if not isinstance(permission, str) or permission not in KNOWN_PERMISSIONS:
             raise ValueError("Permissão desconhecida.")
+        plugin_id = _canonical_plugin_id(plugin_id)
         if permission in SENSITIVE and not confirmed:
             return False
         with self._lock:
@@ -147,6 +165,7 @@ class PermissionManager:
             raise ValueError("Identificador de plugin inválido.")
         if not isinstance(permission, str) or permission not in KNOWN_PERMISSIONS:
             raise ValueError("Permissão desconhecida.")
+        plugin_id = _canonical_plugin_id(plugin_id)
         with self._lock:
             plugin = self._grants.setdefault(plugin_id, {})
             previous = plugin.get(permission)

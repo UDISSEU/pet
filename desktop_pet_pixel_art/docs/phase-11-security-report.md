@@ -21,13 +21,13 @@ Data: 5 de novembro de 2026
 
 ## Testes e resultados
 
-`python3 -m unittest tests.nova_ai.test_actions`: **24 aprovados**. Inclui Downloads como symlink, categoria Documentos como symlink, destino externo, origem trocada por symlink, conflito de destino, adulteração de token/plano, `../`, undo adulterado, interrupção entre movimentos e organização/restauração normal. Todos usam diretórios temporários.
+`python3 -m unittest tests.aurova_ai.test_actions`: **24 aprovados**. Inclui Downloads como symlink, categoria Documentos como symlink, destino externo, origem trocada por symlink, conflito de destino, adulteração de token/plano, `../`, undo adulterado, interrupção entre movimentos e organização/restauração normal. Todos usam diretórios temporários.
 
-`python3 -m py_compile src/nova_ai/actions/file_manager.py src/nova_ai/actions/action_validator.py`: aprovado.
+`python3 -m py_compile src/aurova_ai/actions/file_manager.py src/aurova_ai/actions/action_validator.py`: aprovado.
 
 `git diff --check`: aprovado.
 
-Tentativa solicitada de suíte pytest: `python3 -m pytest -v` não iniciou porque pytest não está instalado (`No module named pytest`). A alternativa `python3 -m unittest discover -s tests` executou 113 casos, mas terminou com 26 erros, 1 falha e 2 skips: os testes `nova_ai` são carregados sob o nome que sombreia o pacote fonte nesse modo de descoberta, e os testes de desktop/soak não podem importar porque `cv2` (OpenCV) está ausente. A descoberta isolada `python3 -m unittest discover -s tests/nova_ai -v` passou: **67 aprovados, 2 skips** (PyTorch opcional ausente). Não foram ocultadas essas limitações ambientais.
+Tentativa solicitada de suíte pytest: `python3 -m pytest -v` não iniciou porque pytest não está instalado (`No module named pytest`). A alternativa `python3 -m unittest discover -s tests` executou 113 casos, mas terminou com 26 erros, 1 falha e 2 skips: os testes `aurova_ai` são carregados sob o nome que sombreia o pacote fonte nesse modo de descoberta, e os testes de desktop/soak não podem importar porque `cv2` (OpenCV) está ausente. A descoberta isolada `python3 -m unittest discover -s tests/aurova_ai -v` passou: **67 aprovados, 2 skips** (PyTorch opcional ausente). Não foram ocultadas essas limitações ambientais.
 
 ## Limitações
 

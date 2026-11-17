@@ -15,7 +15,7 @@ from ai.request_handler import (
 from config import MAX_HISTORY_MESSAGES
 from event_bus import Event, EventType
 from ollama_client import save_history
-from nova_ai.personality.speech import pick_line
+from aurova_ai.personality.speech import pick_line
 from providers.base_provider import ProviderError
 from providers.provider_factory import create_provider
 
@@ -41,11 +41,11 @@ class DesktopPetAIMixin:
         try:
             if permissions is not None:
                 self._authorize_core_action("ai.use")
-                permissions.require("nova.core", "ai.use")
+                permissions.require("aurova.core", "ai.use")
             memory_enabled = request_settings.get("memory_enabled", True) is True
             if not memory_enabled:
                 memories = []
-            integration = getattr(self, "nova_integration", None)
+            integration = getattr(self, "aurova_integration", None)
             if integration is not None:
                 question = next((item.get("content", "") for item in reversed(history)
                                  if item.get("role") == "user"), "")
@@ -55,7 +55,7 @@ class DesktopPetAIMixin:
                     memories,
                     enabled=memory_enabled,
                 )
-                request_settings["nova_personality_instructions"] = (
+                request_settings["aurova_personality_instructions"] = (
                     integration.personality_instructions(request_settings, question)
                 )
             if computer_context is not None:
@@ -67,10 +67,10 @@ class DesktopPetAIMixin:
                     "Separe observações explícitas de hipóteses, explique limitações e diga claramente "
                     "quando faltarem dados. Não invente valores. Sugira passos seguros; não solicite "
                     "nem execute ações administrativas ou destrutivas sem autorização explícita. "
-                    "Mantenha a personalidade acolhedora da Nova."
+                    "Mantenha a personalidade acolhedora da Aurova."
                 )
-                base_personality = str(request_settings.get("nova_personality_instructions", ""))
-                request_settings["nova_personality_instructions"] = (
+                base_personality = str(request_settings.get("aurova_personality_instructions", ""))
+                request_settings["aurova_personality_instructions"] = (
                     base_personality[:max(0, 4_000 - len(guardrails) - 2)]
                     + "\n\n" + guardrails
                 )
@@ -160,7 +160,7 @@ class DesktopPetAIMixin:
                 try:
                     history_store.update(
                         action_id, "Falhou" if failed else "Concluída",
-                        result="O provedor não respondeu." if failed else "Resposta enviada à conversa da Nova.",
+                        result="O provedor não respondeu." if failed else "Resposta enviada à conversa da Aurova.",
                         error_code=("conversation_busy" if answer.startswith("Já estou respondendo")
                                     else "provider_unavailable") if failed else None,
                     )

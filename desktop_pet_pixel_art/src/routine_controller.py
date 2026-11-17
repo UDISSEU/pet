@@ -5,8 +5,8 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from autonomy import is_quiet_now, save_settings, valid_reminder_time
 from config import APP_COMMENTS, REMINDER_ANIMATION_SECONDS, THUMBS_UP_ANIMATION_SECONDS, VIDEO_REACTION_SECONDS
-from nova_ai.memory.errors import MemoryStorageError
-from nova_ai.personality.speech import pick_line, record_spontaneous_speech
+from aurova_ai.memory.errors import MemoryStorageError
+from aurova_ai.personality.speech import pick_line, record_spontaneous_speech
 
 
 def _project_topic(content):
@@ -27,7 +27,7 @@ class RoutineControllerMixin:
         self.settings["last_seen_date"] = today.isoformat()
         if not save_settings(self.settings, getattr(self, "settings_path", None)):
             logging.getLogger(__name__).warning(
-                "Não foi possível salvar a data da última visita da Nova."
+                "Não foi possível salvar a data da última visita da Aurova."
             )
 
     def maybe_curious(self):
@@ -172,7 +172,7 @@ class RoutineControllerMixin:
         if (not self.settings.get("routine_context")
                 or self.settings.get("memory_enabled", True) is not True):
             return None
-        integration = getattr(self, "nova_integration", None)
+        integration = getattr(self, "aurova_integration", None)
         if integration is None:
             return None
         try:

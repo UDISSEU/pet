@@ -1,4 +1,4 @@
-"""Janela mensal simples do calendário local da Nova."""
+"""Janela mensal simples do calendário local da Aurova."""
 
 import calendar
 from datetime import date
@@ -24,8 +24,8 @@ def open_calendar_window(parent, *, on_back=None, on_open=None):
     window.configure(bg=COLORS["background"])
 
     make_header(
-        window, "Calendário", "Consulte as datas sem sair da Nova.",
-        eyebrow="NOVA  /  ORGANIZAÇÃO",
+        window, "Calendário", "Consulte as datas sem sair da Aurova.",
+        eyebrow="AUROVA  /  ORGANIZAÇÃO",
         back_command=(lambda: on_back(window)) if on_back else window.destroy,
     )
     if on_open:

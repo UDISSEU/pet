@@ -390,7 +390,7 @@ def diagnose_system_health(snapshot):
 
 
 def build_computer_consultant_context(system_snapshot=None, network_snapshot=None):
-    """Build a compact factual payload for a future Nova conversation tool."""
+    """Build a compact factual payload for a future Aurova conversation tool."""
     context = {"schema": "computer-health-context.v1"}
     if system_snapshot:
         context["system"] = {

@@ -1,4 +1,4 @@
-"""Priority-aware state coordinator for existing Nova poses and animations."""
+"""Priority-aware state coordinator for existing Aurova poses and animations."""
 from dataclasses import dataclass
 from enum import Enum
 import logging

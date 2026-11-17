@@ -7,6 +7,7 @@ import fcntl
 import queue
 import re
 import signal
+import shutil
 import subprocess
 import threading
 import time
@@ -324,7 +325,7 @@ def parse_flatpak_upgradable_apps(output):
         commit = fields[2].strip() if len(fields) > 2 else ""
         updates[app_id] = (
             version if version else
-            f"Nova revisão {commit[:12]}" if commit else "Nova revisão"
+            f"Revisão {commit[:12]}" if commit else "Revisão disponível"
         )
     return updates
 
@@ -555,6 +556,7 @@ def query_installed_app_sources(
     checked_at = (now or datetime.now().astimezone()).astimezone()
     query_env = dict(os.environ if env is None else env)
     query_env["LC_ALL"] = "C"
+    unavailable_sources = set()
 
     def run(command, **kwargs):
         if cancel_event is not None and cancel_event.is_set():
@@ -643,45 +645,63 @@ def query_installed_app_sources(
     if apt_installation_complete and apt_updates_complete:
         checked_sources.add("APT/DEB")
 
-    flatpak_output, flatpak_error = run(
-        [
-            "flatpak", "list", "--app",
-            "--columns=application,name,version,origin",
-        ],
-        timeout=60, env=env,
+    flatpak_unavailable = (
+        query_runner is None
+        and shutil.which("flatpak", path=query_env.get("PATH")) is None
     )
-    flatpak_update_output, flatpak_update_error = run(
-        [
-            "flatpak", "remote-ls", "--updates",
-            "--columns=ref,version,commit",
-        ],
-        timeout=120, env=env,
-    )
+    if flatpak_unavailable:
+        flatpak_output, flatpak_error = "", None
+        flatpak_update_output, flatpak_update_error = "", None
+        unavailable_sources.add("Flatpak")
+    else:
+        flatpak_output, flatpak_error = run(
+            [
+                "flatpak", "list", "--app",
+                "--columns=application,name,version,origin",
+            ],
+            timeout=60, env=env,
+        )
+        flatpak_update_output, flatpak_update_error = run(
+            [
+                "flatpak", "remote-ls", "--updates",
+                "--columns=ref,version,commit",
+            ],
+            timeout=120, env=env,
+        )
     if flatpak_error:
         errors.append(f"Flatpak (aplicativos): {flatpak_error}")
     if flatpak_update_error:
         errors.append(f"Flatpak (atualizações): {flatpak_update_error}")
-    flatpak_installation_complete = not flatpak_error
-    flatpak_updates_complete = not flatpak_update_error
+    flatpak_installation_complete = not flatpak_error and not flatpak_unavailable
+    flatpak_updates_complete = not flatpak_update_error and not flatpak_unavailable
     if flatpak_installation_complete and flatpak_updates_complete:
         checked_sources.add("Flatpak")
 
-    snap_output, snap_error = run(
-        ["snap", "list"], timeout=60, env=env,
+    snap_unavailable = (
+        query_runner is None
+        and shutil.which("snap", path=query_env.get("PATH")) is None
     )
-    if not snap_error and not snap_output.strip():
-        snap_error = "a consulta retornou saída vazia inesperada"
-    snap_update_output, snap_update_error = run(
-        ["snap", "refresh", "--list"], timeout=120, env=env,
-    )
-    if not snap_update_error and not snap_update_output.strip():
-        snap_update_error = "a consulta retornou saída vazia inesperada"
+    if snap_unavailable:
+        snap_output, snap_error = "", None
+        snap_update_output, snap_update_error = "", None
+        unavailable_sources.add("Snap")
+    else:
+        snap_output, snap_error = run(
+            ["snap", "list"], timeout=60, env=env,
+        )
+        if not snap_error and not snap_output.strip():
+            snap_error = "a consulta retornou saída vazia inesperada"
+        snap_update_output, snap_update_error = run(
+            ["snap", "refresh", "--list"], timeout=120, env=env,
+        )
+        if not snap_update_error and not snap_update_output.strip():
+            snap_update_error = "a consulta retornou saída vazia inesperada"
     if snap_error:
         errors.append(f"Snap (aplicativos): {snap_error}")
     if snap_update_error:
         errors.append(f"Snap (atualizações): {snap_update_error}")
-    snap_installation_complete = not snap_error
-    snap_updates_complete = not snap_update_error
+    snap_installation_complete = not snap_error and not snap_unavailable
+    snap_updates_complete = not snap_update_error and not snap_unavailable
     if snap_installation_complete and snap_updates_complete:
         checked_sources.add("Snap")
 
@@ -734,6 +754,7 @@ def query_installed_app_sources(
         "snap_update_output": snap_update_output if not snap_update_error else "",
         "snap_applications": snap_applications,
         "checked_sources": checked_sources,
+        "unavailable_sources": unavailable_sources,
         "source_results": source_results,
         "inventory_complete_sources": {
             source for source, result in source_results.items()
@@ -1274,10 +1295,10 @@ def parse_flatpak_upgradable(updates_output, installed_output):
         if candidate and candidate == installed_version and candidate_commit != installed_commit:
             candidate = f"{candidate} (nova revisão)"
         elif not candidate and candidate_commit:
-            candidate = f"Nova revisão {candidate_commit[:12]}"
+            candidate = f"Revisão {candidate_commit[:12]}"
         packages.append((
             f"Flatpak · {name}",
             installed_version or "—",
-            candidate or "Nova versão",
+            candidate or "Versão disponível",
         ))
     return packages

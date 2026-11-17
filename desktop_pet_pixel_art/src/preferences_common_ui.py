@@ -32,9 +32,9 @@ def setup_list(
     listing.configure(xscrollcommand=update_horizontal_scrollbar)
     # Keep the paired widgets reachable by filtered list renderers. The helper
     # still returns its historical three values for existing callers.
-    listing._nova_empty_state = empty_state
-    listing._nova_list_frame = list_frame
-    listing._nova_horizontal_scrollbar = list_scrollbar
+    listing._aurova_empty_state = empty_state
+    listing._aurova_list_frame = list_frame
+    listing._aurova_horizontal_scrollbar = list_scrollbar
     listing.pack(fill="both", expand=True, padx=8, pady=(7, 0))
 
     def refresh():
@@ -66,8 +66,8 @@ def render_filtered_list(listing, items, format_item, predicate):
     listing.delete(0, "end")
     for item in visible:
         listing.insert("end", format_item(item))
-    empty_state = listing._nova_empty_state
-    list_frame = listing._nova_list_frame
+    empty_state = listing._aurova_empty_state
+    list_frame = listing._aurova_list_frame
     if visible:
         empty_state.pack_forget()
         list_frame.pack(fill="both", expand=True)

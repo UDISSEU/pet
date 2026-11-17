@@ -6,8 +6,8 @@
 |---|---|
 | Suíte completa (`unittest discover`) | **365 testes passaram; 0 falharam; 3 ignorados**, em 30,044 s |
 | Testes gráficos com Xvfb | **1 teste passou**, em 2,198 s |
-| Janela de preparação da Nova com Xvfb | Abriu e fechou sem erro |
-| `sh -n install.sh launchers/run-nova.sh` | Passou |
+| Janela de preparação da Aurova com Xvfb | Abriu e fechou sem erro |
+| `sh -n install.sh launchers/run-aurova.sh` | Passou |
 | `pip check` no `.venv` do projeto | `No broken requirements found.` |
 | `git diff --check` | Passou |
 | Ollama local | Respondeu a `ollama list`; `llama3.2:1b` instalado |
@@ -43,13 +43,13 @@ As falhas de disco, conexão e permissão são simuladas em testes; não foi pre
 
 ## Personalidade e preferências
 
-Os testes unitários confirmam que preferências exigem consentimento, persistem, alteram as instruções de personalidade e não substituem a identidade ou regras centrais da Nova.
+Os testes unitários confirmam que preferências exigem consentimento, persistem, alteram as instruções de personalidade e não substituem a identidade ou regras centrais da Aurova.
 
 Também foi feita uma comparação prática, sem persistir alterações no perfil, enviando a mesma pergunta ao `llama3.2:1b` local com as instruções reais de verbosidade concisa e detalhada. Na execução controlada (`temperature=0`), as respostas tiveram 87 e 88 palavras, respectivamente, e ambas foram cortadas no limite de geração. Uma tentativa anterior variou mais, mas a resposta detalhada também foi truncada. **Conclusão: a suíte prova que a preferência altera as instruções enviadas, mas a evidência prática atual não comprova uma mudança consistente de estilo na resposta gerada pelo modelo.** A qualidade factual das respostas pequenas também não foi suficiente para tratar esse ensaio como validação funcional aprovada.
 
 ## Animações e interface
 
-Os testes automatizados verificam a seleção de vídeos para estados e direções, expressões simuladas, temporizadores de poses, quadros finais de animações de ação única e transições da Nova. O teste gráfico de janelas passou sob Xvfb.
+Os testes automatizados verificam a seleção de vídeos para estados e direções, expressões simuladas, temporizadores de poses, quadros finais de animações de ação única e transições da Aurova. O teste gráfico de janelas passou sob Xvfb.
 
 Isso valida o mapeamento e o funcionamento básico da interface, **não uma revisão visual humana da reprodução das animações**. Não foi feita captura ou inspeção visual de cada estado animado.
 

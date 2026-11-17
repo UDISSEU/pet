@@ -87,8 +87,8 @@ class FirstAccessTests(unittest.TestCase):
             store = InstallationStateStore(Path(directory) / "installation.json")
             with mock.patch("first_run.check_environment", return_value=_REPORT), \
                  mock.patch("first_run._show_welcome_window", return_value=True) as welcome:
-                self.assertTrue(run_first_access_if_needed("/app/nova.png", state_store=store))
-            welcome.assert_called_once_with("/app/nova.png", _REPORT)
+                self.assertTrue(run_first_access_if_needed("/app/aurova.png", state_store=store))
+            welcome.assert_called_once_with("/app/aurova.png", _REPORT)
             state = store.load()
             self.assertTrue(state["setup_completed"])
             self.assertEqual(state["ollama_status"], "not_installed")

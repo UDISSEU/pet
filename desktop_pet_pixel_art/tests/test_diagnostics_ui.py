@@ -50,7 +50,7 @@ class DiagnosticsGuidanceTests(unittest.TestCase):
         guidance = diagnostic_recommendations(report(
             dependencies={"Pillow": True, "OpenCV": False, "NumPy": True, "psutil": True},
         ))
-        self.assertTrue(any("Feche a Nova" in item and "./install.sh" in item for item in guidance))
+        self.assertTrue(any("Feche a Aurova" in item and "./install.sh" in item for item in guidance))
         self.assertTrue(any("OpenCV" in item for item in guidance))
 
     def test_model_repair_requires_preferences_confirmation(self):
@@ -113,7 +113,7 @@ class DiagnosticsWindowTests(unittest.TestCase):
                 widget for widget in window.winfo_children()[0].winfo_children()
                 if isinstance(widget, tk.Frame)
                 for widget in widget.winfo_children()
-                if isinstance(widget, tk.Button) and widget.cget("text") == "← Voltar"
+                if isinstance(widget, ttk.Button) and widget.cget("text") == "← Voltar"
             )
             self.assertTrue(back_button.winfo_ismapped())
             self.assertGreaterEqual(back_button.winfo_rootx(), window.winfo_rootx())

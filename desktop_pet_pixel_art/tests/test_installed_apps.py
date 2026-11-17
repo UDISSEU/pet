@@ -112,7 +112,7 @@ class InstalledAppsUITests(unittest.TestCase):
         try:
             root = tk.Tk()
         except tk.TclError as exc:
-            if os.environ.get("NOVA_REQUIRE_TK") == "1":
+            if os.environ.get("AUROVA_REQUIRE_TK") == "1":
                 self.fail(f"Tk display unavailable in CI: {exc}")
             self.skipTest(f"Tk display unavailable: {exc}")
 
@@ -308,7 +308,7 @@ class InstalledAppsUITests(unittest.TestCase):
         try:
             root = tk.Tk()
         except tk.TclError as exc:
-            if os.environ.get("NOVA_REQUIRE_TK") == "1":
+            if os.environ.get("AUROVA_REQUIRE_TK") == "1":
                 self.fail(f"Tk display unavailable in CI: {exc}")
             self.skipTest(f"Tk display unavailable: {exc}")
 

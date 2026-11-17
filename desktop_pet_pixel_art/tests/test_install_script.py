@@ -20,10 +20,17 @@ class InstallScriptTests(unittest.TestCase):
             app_dir.mkdir()
             fake_bin.mkdir()
             home.mkdir()
+            applications = data_home / "applications"
+            applications.mkdir(parents=True)
+            legacy_desktop = applications / "nova.desktop"
+            legacy_desktop.write_text(
+                f"Exec={app_dir}/launchers/run-nova.sh\n",
+                encoding="utf-8",
+            )
             shutil.copy(ROOT / "install.sh", app_dir / "install.sh")
             (app_dir / "launchers").mkdir()
-            (app_dir / "launchers" / "nova.desktop.in").write_text(
-                "[Desktop Entry]\nExec=@APP_DIR@/launchers/run-nova.sh\n",
+            (app_dir / "launchers" / "aurova.desktop.in").write_text(
+                "[Desktop Entry]\nExec=@APP_DIR@/launchers/run-aurova.sh\n",
                 encoding="utf-8",
             )
             (app_dir / "requirements.txt").write_text("", encoding="utf-8")
@@ -71,7 +78,8 @@ class InstallScriptTests(unittest.TestCase):
             self.assertFalse((incomplete_venv / "partial-install").exists())
             self.assertTrue((incomplete_venv / "bin" / "python").is_file())
             self.assertTrue((incomplete_venv / "pyvenv.cfg").is_file())
-            self.assertTrue((data_home / "applications" / "nova.desktop").is_file())
+            self.assertTrue((data_home / "applications" / "aurova.desktop").is_file())
+            self.assertFalse(legacy_desktop.exists())
 
     def test_missing_python_prints_manual_apt_commands_on_mint_based_systems(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -112,7 +120,7 @@ class InstallScriptTests(unittest.TestCase):
             fake_bin = temporary_path / "bin"
             launchers.mkdir(parents=True)
             fake_bin.mkdir()
-            shutil.copy(ROOT / "launchers" / "run-nova.sh", launchers / "run-nova.sh")
+            shutil.copy(ROOT / "launchers" / "run-aurova.sh", launchers / "run-aurova.sh")
             for command, executable in (("dirname", "/usr/bin/dirname"), ("grep", "/usr/bin/grep")):
                 wrapper = fake_bin / command
                 wrapper.write_text(
@@ -124,7 +132,7 @@ class InstallScriptTests(unittest.TestCase):
             environment = os.environ.copy()
             environment["PATH"] = str(fake_bin)
             result = subprocess.run(
-                ["/bin/sh", str(launchers / "run-nova.sh")],
+                ["/bin/sh", str(launchers / "run-aurova.sh")],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -150,15 +158,15 @@ class InstallScriptTests(unittest.TestCase):
 
             shutil.copy(ROOT / "install.sh", app_dir / "install.sh")
             (app_dir / "launchers").mkdir()
-            (app_dir / "launchers" / "nova.desktop.in").write_text(
-                "[Desktop Entry]\nExec=@APP_DIR@/launchers/run-nova.sh\n",
+            (app_dir / "launchers" / "aurova.desktop.in").write_text(
+                "[Desktop Entry]\nExec=@APP_DIR@/launchers/run-aurova.sh\n",
                 encoding="utf-8",
             )
             (app_dir / "requirements.txt").write_text("", encoding="utf-8")
 
             virtualenv = outside_dir / "virtualenv"
             (virtualenv / "bin").mkdir(parents=True)
-            marker = virtualenv / ".nova-desktop-file-path"
+            marker = virtualenv / ".aurova-desktop-file-path"
             marker.write_text("/outside/launcher.desktop\n", encoding="utf-8")
             (virtualenv / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
             call_log = temporary_path / "external-calls.log"
@@ -193,7 +201,7 @@ class InstallScriptTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("link simbólico", result.stderr)
-            self.assertNotIn(".nova-desktop-file-path", result.stderr)
+            self.assertNotIn(".aurova-desktop-file-path", result.stderr)
             self.assertFalse(call_log.exists())
             self.assertTrue((app_dir / ".venv").is_symlink())
             self.assertEqual(marker.read_text(encoding="utf-8"), "/outside/launcher.desktop\n")

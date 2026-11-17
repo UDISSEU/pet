@@ -1,6 +1,6 @@
-"""Compatibility exports for the Nova mascot's dialogue system."""
+"""Compatibility exports for the Aurova mascot's dialogue system."""
 
-from nova_ai.personality.speech import (
+from aurova_ai.personality.speech import (
     APP_COMMENTS,
     GENERIC_COMMENTS,
     JOKES,

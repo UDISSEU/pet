@@ -1,5 +1,5 @@
-"""Compatibility exports for the canonical Nova conversational persona."""
+"""Compatibility exports for the canonical Aurova conversational persona."""
 
-from nova_ai.personality.conversation import BehavioralState, Personality
+from aurova_ai.personality.conversation import BehavioralState, Personality
 
 __all__ = ["BehavioralState", "Personality"]

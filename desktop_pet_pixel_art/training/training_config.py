@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from nova_ai.model.model_config import ModelConfig
+from aurova_ai.model.model_config import ModelConfig
 
 
 @dataclass(frozen=True)
@@ -14,7 +14,7 @@ class TrainingConfig:
     dataset_root: Path = Path("training/datasets")
     experiments_root: Path = Path("training/experiments")
     checkpoints_root: Path = Path("training/checkpoints")
-    run_name: str = "nova_model_0_1"
+    run_name: str = "aurova_model_0_1"
     validation_percent: int = 10
     max_examples: int = 5000
     max_scanned_records: int = 25_000

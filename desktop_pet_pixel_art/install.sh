@@ -3,16 +3,20 @@ set -eu
 
 APP_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-DESKTOP_FILE="$APPLICATIONS_DIR/nova.desktop"
+DESKTOP_FILE="$APPLICATIONS_DIR/aurova.desktop"
+LEGACY_DESKTOP_FILE="$APPLICATIONS_DIR/nova.desktop"
 VENV_DIR="$APP_DIR/.venv"
 if [ -L "$VENV_DIR" ]; then
     printf 'O caminho .venv é um link simbólico; não vou acessá-lo: %s\n' "$VENV_DIR" >&2
     exit 1
 fi
-INSTALL_MARKER="$VENV_DIR/.nova-desktop-file-path"
+INSTALL_MARKER="$VENV_DIR/.aurova-desktop-file-path"
+LEGACY_INSTALL_MARKER="$VENV_DIR/.nova-desktop-file-path"
 SAVED_DESKTOP_FILE=
 if [ -f "$INSTALL_MARKER" ]; then
     IFS= read -r SAVED_DESKTOP_FILE < "$INSTALL_MARKER" || SAVED_DESKTOP_FILE=
+elif [ -f "$LEGACY_INSTALL_MARKER" ]; then
+    IFS= read -r SAVED_DESKTOP_FILE < "$LEGACY_INSTALL_MARKER" || SAVED_DESKTOP_FILE=
 fi
 YES=0
 ACTION=install
@@ -68,7 +72,8 @@ confirm() {
 
 launcher_belongs_to_app() {
     [ -f "$1" ] &&
-        grep -Fq "$APP_DIR/launchers/run-nova.sh" "$1"
+        { grep -Fq "$APP_DIR/launchers/run-aurova.sh" "$1" ||
+            grep -Fq "$APP_DIR/launchers/run-nova.sh" "$1"; }
 }
 
 if [ "$ACTION" = uninstall ]; then
@@ -77,14 +82,16 @@ if [ "$ACTION" = uninstall ]; then
         LAUNCHER_TO_REMOVE=$SAVED_DESKTOP_FILE
     elif launcher_belongs_to_app "$DESKTOP_FILE"; then
         LAUNCHER_TO_REMOVE=$DESKTOP_FILE
+    elif launcher_belongs_to_app "$LEGACY_DESKTOP_FILE"; then
+        LAUNCHER_TO_REMOVE=$LEGACY_DESKTOP_FILE
     fi
     if [ -e "$VENV_DIR" ] || [ -n "$LAUNCHER_TO_REMOVE" ]; then
-        if ! confirm "Remover o ambiente virtual da Nova e seu lançador?"; then
+        if ! confirm "Remover o ambiente virtual da Aurova e seu lançador?"; then
             printf '%s\n' "Desinstalação cancelada."
             exit 1
         fi
     else
-        printf '%s\n' "Nenhuma instalação da Nova foi encontrada."
+        printf '%s\n' "Nenhuma instalação da Aurova foi encontrada."
         exit 0
     fi
     if [ -e "$VENV_DIR" ] || [ -L "$VENV_DIR" ]; then
@@ -93,7 +100,7 @@ if [ "$ACTION" = uninstall ]; then
     if [ -n "$LAUNCHER_TO_REMOVE" ]; then
         rm -f -- "$LAUNCHER_TO_REMOVE"
     fi
-    printf '%s\n' "Nova removida. Configurações e dados pessoais foram preservados."
+    printf '%s\n' "Aurova removida. Configurações e dados pessoais foram preservados."
     exit 0
 fi
 
@@ -156,7 +163,12 @@ if [ -e "$DESKTOP_FILE" ] && ! launcher_belongs_to_app "$DESKTOP_FILE"; then
     printf 'O lançador existente não pertence a esta instalação: %s\n' "$DESKTOP_FILE" >&2
     exit 1
 fi
-if [ -e "$VENV_DIR" ] || launcher_belongs_to_app "$DESKTOP_FILE"; then
+if [ -e "$LEGACY_DESKTOP_FILE" ] && ! launcher_belongs_to_app "$LEGACY_DESKTOP_FILE"; then
+    printf 'O lançador legado existente não pertence a esta instalação: %s\n' "$LEGACY_DESKTOP_FILE" >&2
+    exit 1
+fi
+if [ -e "$VENV_DIR" ] || launcher_belongs_to_app "$DESKTOP_FILE" ||
+    launcher_belongs_to_app "$LEGACY_DESKTOP_FILE"; then
     printf '%s\n' "Instalação anterior detectada."
     if ! confirm "Atualizar/reutilizar a instalação existente?"; then
         printf '%s\n' "Instalação cancelada."
@@ -175,14 +187,19 @@ PYTHONPATH="$APP_DIR/src" "$VENV_DIR/bin/python" -c \
 
 mkdir -p "$APPLICATIONS_DIR"
 SED_APP_DIR="$(printf '%s\n' "$APP_DIR" | sed 's/[\\&|]/\\&/g')"
-sed "s|@APP_DIR@|$SED_APP_DIR|g" "$APP_DIR/launchers/nova.desktop.in" > "$DESKTOP_FILE"
+sed "s|@APP_DIR@|$SED_APP_DIR|g" "$APP_DIR/launchers/aurova.desktop.in" > "$DESKTOP_FILE"
 chmod 644 "$DESKTOP_FILE"
 if [ -n "$SAVED_DESKTOP_FILE" ] && [ "$SAVED_DESKTOP_FILE" != "$DESKTOP_FILE" ] &&
     launcher_belongs_to_app "$SAVED_DESKTOP_FILE"; then
     rm -f -- "$SAVED_DESKTOP_FILE"
 fi
+if [ "$LEGACY_DESKTOP_FILE" != "$DESKTOP_FILE" ] &&
+    launcher_belongs_to_app "$LEGACY_DESKTOP_FILE"; then
+    rm -f -- "$LEGACY_DESKTOP_FILE"
+fi
 printf '%s\n' "$DESKTOP_FILE" > "$INSTALL_MARKER"
 chmod 600 "$INSTALL_MARKER"
-printf 'Nova instalada em %s\n' "$DESKTOP_FILE"
+rm -f -- "$LEGACY_INSTALL_MARKER"
+printf 'Aurova instalada em %s\n' "$DESKTOP_FILE"
 printf '%s\n' "Verificação de dependências e importação de inicialização concluída."
 printf '%s\n' "Nenhum serviço Ollama foi iniciado e nenhum modelo foi baixado."

@@ -1,4 +1,4 @@
-"""Small typed, thread-safe event bus used by Nova services."""
+"""Small typed, thread-safe event bus used by Aurova services."""
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum

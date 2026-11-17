@@ -10,7 +10,7 @@ Os coletores sem interface ficam em módulos pequenos:
 - `startup_manager.py`: lançadores de inicialização do usuário.
 - `computer_diagnostics.py`: amostras de rede/saúde e verificações solicitadas.
 - `computer_maintenance.py`: SMART, logs limitados e análise/remoção assistida.
-- `computer_backup.py`: formato, integridade e restauração de configurações permitidas. Veja [formato de backup](nova-backup-format.md).
+- `computer_backup.py`: formato, integridade e restauração de configurações permitidas. Veja [formato de backup](aurova-backup-format.md).
 - `performance_monitor.py`: coleta histórica limitada e alertas.
 - `computer_consultant.py`: contexto factual limitado e histórico de ações sem credenciais.
 
@@ -18,13 +18,13 @@ Os coletores sem interface ficam em módulos pequenos:
 
 ## Dependências e permissões
 
-`psutil` é a dependência Python usada para métricas. `lsblk`, `smartctl` e `journalctl` são opcionais e descobertos em tempo de execução; sem eles, a página informa indisponibilidade. SMART pode exigir permissão adicional do sistema; a Nova não eleva privilégios nem usa `sudo`. Acesso a informações e alterações passa pelo Permission Manager. Exclusão assistida e restauração mostram confirmação e validam arquivos/caminhos. Ferramentas de rede são chamadas com argumentos fixos, sem shell e sem comandos formados a partir de nomes de aplicativos.
+`psutil` é a dependência Python usada para métricas. `lsblk`, `smartctl` e `journalctl` são opcionais e descobertos em tempo de execução; sem eles, a página informa indisponibilidade. SMART pode exigir permissão adicional do sistema; a Aurova não eleva privilégios nem usa `sudo`. Acesso a informações e alterações passa pelo Permission Manager. Exclusão assistida e restauração mostram confirmação e validam arquivos/caminhos. Ferramentas de rede são chamadas com argumentos fixos, sem shell e sem comandos formados a partir de nomes de aplicativos.
 
 Os registros de limpeza são candidatos, não uma promessa de espaço recuperado; a análise tem limites de entradas/tempo e a remoção revalida propriedade, tipo e links simbólicos. Logs consultados são limitados e passam por filtros de segredos conhecidos. O formato de backup contém apenas chaves de configuração permitidas, é validado e gravado atomicamente; não restaura código nem caminhos arbitrários.
 
 ## Executar e validar
 
-Inicie a aplicação pelo lançador documentado no README (`./launchers/run-nova.sh`) ou diretamente no ambiente de desenvolvimento com `.venv/bin/python src/desktop_pet.py`. Os testes direcionados da área podem ser executados da raiz:
+Inicie a aplicação pelo lançador documentado no README (`./launchers/run-aurova.sh`) ou diretamente no ambiente de desenvolvimento com `.venv/bin/python src/desktop_pet.py`. Os testes direcionados da área podem ser executados da raiz:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m unittest \

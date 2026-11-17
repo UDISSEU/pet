@@ -1,4 +1,4 @@
-"""Versioned, integrity-checked backups of an explicit Nova configuration allowlist."""
+"""Versioned, integrity-checked backups of an explicit Aurova configuration allowlist."""
 
 import base64
 import hashlib
@@ -17,11 +17,13 @@ from pathlib import Path
 from json_persistence import atomic_json_write, ensure_private_directory, validate_storage_path
 
 logger = logging.getLogger(__name__)
-FORMAT_ID = "nova-user-config-backup"
+FORMAT_ID = "aurova-user-config-backup"
+LEGACY_FORMAT_ID = "nova-user-config-backup"
 FORMAT_VERSION = 1
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 8 * 1024 * 1024
-BACKUP_SUFFIX = ".nova-backup.json"
+BACKUP_SUFFIX = ".aurova-backup.json"
+LEGACY_BACKUP_SUFFIX = ".nova-backup.json"
 _LOGICAL_FILES = ("settings.json", "personality.json")
 _LABEL_PATTERN = re.compile(r"[^\w .()\-]", re.UNICODE)
 
@@ -39,7 +41,7 @@ def load_backup_directory():
         path = backup_location_settings_path()
         validate_storage_path(path, label="localização de backup")
         data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("format") == FORMAT_ID and isinstance(data.get("directory"), str):
+        if data.get("format") in (FORMAT_ID, LEGACY_FORMAT_ID) and isinstance(data.get("directory"), str):
             return validate_backup_directory(data["directory"], create=False)
     except (OSError, ValueError, json.JSONDecodeError, AttributeError):
         pass
@@ -74,7 +76,7 @@ def validate_backup_directory(directory, *, create=True):
 
 def _source_paths(profile_manager):
     if profile_manager is None:
-        raise ValueError("O gerenciador de perfil da Nova não está disponível.")
+        raise ValueError("O gerenciador de perfil da Aurova não está disponível.")
     paths = {
         "settings.json": Path(profile_manager.settings_path()),
         "personality.json": Path(profile_manager.personality_state_path()),
@@ -87,7 +89,7 @@ def _source_paths(profile_manager):
     validate_storage_path(base, label="raiz de perfis")
     base = base.resolve()
     for logical, path in paths.items():
-        validate_storage_path(path, label="configuração da Nova")
+        validate_storage_path(path, label="configuração da Aurova")
         if path.name != allowed_names[logical]:
             raise ValueError("O perfil forneceu um destino fora da lista segura de configurações.")
         try: path.resolve(strict=False).relative_to(base)
@@ -97,7 +99,7 @@ def _source_paths(profile_manager):
 
 
 def _read_safe_source(path):
-    validate_storage_path(path, label="configuração da Nova")
+    validate_storage_path(path, label="configuração da Aurova")
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -178,8 +180,8 @@ def create_backup(profile_manager, directory=None, *, label="Backup manual"):
         "files": entries,
     })
     target = destination / f"{package['created_at'][:10]}-{package['backup_id'][:8]}{BACKUP_SUFFIX}"
-    atomic_json_write(target, package, label="backup da Nova")
-    logger.info("Backup da Nova criado: %s (%d bytes)", target.name,
+    atomic_json_write(target, package, label="backup da Aurova")
+    logger.info("Backup da Aurova criado: %s (%d bytes)", target.name,
                 sum(entry["size"] for entry in entries))
     return target
 
@@ -197,8 +199,8 @@ def _safe_backup_file(path, directory):
     root = validate_backup_directory(directory, create=False)
     candidate = Path(path)
     if (not candidate.is_absolute() or candidate.parent != root
-            or not candidate.name.endswith(BACKUP_SUFFIX)
-            or candidate.name in (BACKUP_SUFFIX, ".", "..")):
+            or not candidate.name.endswith((BACKUP_SUFFIX, LEGACY_BACKUP_SUFFIX))
+            or candidate.name in (BACKUP_SUFFIX, LEGACY_BACKUP_SUFFIX, ".", "..")):
         raise ValueError("O backup deve ser um arquivo direto do diretório configurado.")
     validate_storage_path(candidate, label="arquivo de backup")
     info = candidate.lstat()
@@ -221,7 +223,7 @@ def read_backup(path, directory=None):
 
 
 def _validate_package(package):
-    if not isinstance(package, dict) or package.get("format") != FORMAT_ID:
+    if not isinstance(package, dict) or package.get("format") not in (FORMAT_ID, LEGACY_FORMAT_ID):
         raise ValueError("Formato de backup desconhecido.")
     if set(package) != {"format", "format_version", "created_at", "backup_id", "label", "files", "integrity"}:
         raise ValueError("O backup contém campos desconhecidos.")
@@ -278,7 +280,7 @@ def list_backups(directory=None):
     root = validate_backup_directory(directory or default_backup_directory())
     backups = []
     for path in sorted(root.iterdir(), key=lambda p: p.name, reverse=True)[:200]:
-        if not path.name.endswith(BACKUP_SUFFIX):
+        if not path.name.endswith((BACKUP_SUFFIX, LEGACY_BACKUP_SUFFIX)):
             continue
         try:
             package = read_backup(path, root)
@@ -301,14 +303,14 @@ def rename_backup(path, directory, label):
     _seal(package)
     target = _safe_backup_file(path, directory)
     atomic_json_write(target, package, label="identificação do backup")
-    logger.info("Identificação de backup da Nova atualizada: %s", target.name)
+    logger.info("Identificação de backup da Aurova atualizada: %s", target.name)
     return target
 
 
 def delete_backup(path, directory):
     target = _safe_backup_file(path, directory)
     target.unlink()
-    logger.info("Backup da Nova removido: %s", target.name)
+    logger.info("Backup da Aurova removido: %s", target.name)
 
 
 def export_backup(path, directory, destination):
@@ -333,7 +335,7 @@ def export_backup(path, directory, destination):
         try: os.unlink(temp_name)
         except OSError: pass
         raise
-    logger.info("Backup da Nova exportado: %s (%s)", target.name, package["backup_id"])
+    logger.info("Backup da Aurova exportado: %s (%s)", target.name, package["backup_id"])
     return target
 
 
@@ -393,7 +395,7 @@ def restore_backup(path, directory, profile_manager):
                     raise ValueError("Destino de restauração inseguro.")
                 destination.unlink()
                 mutated.add(destination)
-        logger.info("Backup da Nova restaurado: %s; segurança: %s", Path(path).name, current_backup.name)
+        logger.info("Backup da Aurova restaurado: %s; segurança: %s", Path(path).name, current_backup.name)
     except BaseException:
         for _destination, temporary in staged:
             try: temporary.unlink(missing_ok=True)
@@ -414,7 +416,7 @@ def restore_backup(path, directory, profile_manager):
 
 def _read_raw_current(path):
     """Read the original JSON only for preserving local secrets during restore."""
-    validate_storage_path(path, label="configuração da Nova")
+    validate_storage_path(path, label="configuração da Aurova")
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_size > MAX_FILE_BYTES:
         raise PermissionError(f"Arquivo de configuração inseguro ou sem acesso: {path.name}")

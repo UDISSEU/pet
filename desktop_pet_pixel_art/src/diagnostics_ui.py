@@ -21,14 +21,14 @@ def diagnostic_recommendations(report, memory_health=None):
         guidance.append("Use Python 3.10 ou superior e execute ./install.sh novamente.")
     if missing_dependencies:
         guidance.append(
-            "Feche a Nova e execute ./install.sh para preparar as dependências: "
+            "Feche a Aurova e execute ./install.sh para preparar as dependências: "
             + ", ".join(missing_dependencies)
             + "."
         )
     if report.ollama_status == "not_installed":
         guidance.append(
             "Para usar conversa por IA, instale o Ollama em https://ollama.com/download "
-            "e inicie o serviço manualmente. A Nova não instala serviços do sistema."
+            "e inicie o serviço manualmente. A Aurova não instala serviços do sistema."
         )
     elif report.ollama_status == "installed_not_running":
         guidance.append(
@@ -48,7 +48,7 @@ def diagnostic_recommendations(report, memory_health=None):
     if report.database_status in ("corrupt", "unrecognized", "unsafe", "unavailable",
                                   "profile_registry_invalid"):
         guidance.append(
-            "A memória existente precisa de atenção. A Nova preservou os dados e não "
+            "A memória existente precisa de atenção. A Aurova preservou os dados e não "
             "tentará recriar nem apagar o banco automaticamente."
         )
     if memory_health is not None and memory_health.get("status") != "healthy":
@@ -77,7 +77,7 @@ def open_diagnostics_window(
     memory_checker=None,
 ):
     window = tk.Toplevel(parent)
-    window.title("Diagnóstico da Nova")
+    window.title("Diagnóstico da Aurova")
     window.transient(parent)
     fit_window_to_screen(window, 600, 570, min_width=500, min_height=420)
     window.configure(bg=COLORS["background"])
@@ -86,8 +86,8 @@ def open_diagnostics_window(
 
     make_header(
         window, "Diagnóstico local",
-        "Verifique os componentes e a instalação da Nova.",
-        eyebrow="NOVA  /  DIAGNÓSTICO",
+        "Verifique os componentes e a instalação da Aurova.",
+        eyebrow="AUROVA  /  DIAGNÓSTICO",
         back_command=(
             (lambda: on_back(window)) if on_back is not None else window.destroy
         ),
@@ -219,7 +219,7 @@ def open_diagnostics_window(
             try:
                 report = checker()
             except Exception:
-                logger.exception("Falha ao verificar o ambiente da Nova")
+                logger.exception("Falha ao verificar o ambiente da Aurova")
                 result_queue.put((None, None, True))
                 return
             memory_health = None
@@ -227,12 +227,12 @@ def open_diagnostics_window(
                 try:
                     memory_health = memory_checker()
                 except Exception:
-                    logger.exception("Falha ao verificar a saúde do SQLite da Nova")
+                    logger.exception("Falha ao verificar a saúde do SQLite da Aurova")
                     memory_health = {"status": "unavailable"}
             result_queue.put((report, memory_health, None))
 
         threading.Thread(
-            target=worker, daemon=True, name="nova-environment-diagnostic",
+            target=worker, daemon=True, name="aurova-environment-diagnostic",
         ).start()
         pending_poll["after_id"] = window.after(100, poll_results)
 

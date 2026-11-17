@@ -1,1 +1,1 @@
-"""Núcleo de conversa da Nova."""
+"""Núcleo de conversa da Aurova."""

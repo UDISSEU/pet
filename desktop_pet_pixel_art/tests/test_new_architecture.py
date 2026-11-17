@@ -121,6 +121,25 @@ class ArchitectureTests(unittest.TestCase):
             manager.revoke("skill", "file.delete")
             self.assertFalse(manager.allowed("skill", "file.delete"))
 
+    def test_legacy_core_permission_grants_are_preserved_after_brand_rename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "permissions.json"
+            path.write_text(json.dumps({
+                "grants": {"nova.core": {"ai.use": True}},
+                "history": [{
+                    "plugin": "nova.core", "permission": "ai.use", "granted": True,
+                }],
+            }), encoding="utf-8")
+
+            manager = PermissionManager(path)
+
+            self.assertTrue(manager.allowed("aurova.core", "ai.use"))
+            self.assertTrue(manager.allowed("nova.core", "ai.use"))
+            manager.revoke("nova.core", "ai.use")
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(stored["grants"], {"aurova.core": {"ai.use": False}})
+            self.assertEqual(stored["history"][-1]["plugin"], "aurova.core")
+
     def test_permission_loader_rejects_invalid_data_and_preserves_original(self):
         invalid_documents = (
             "{not valid json}",
@@ -380,11 +399,11 @@ class ArchitectureTests(unittest.TestCase):
             pet = DesktopPet.__new__(DesktopPet)
             pet.event_bus = EventBus()
             pet.permission_manager = PermissionManager(Path(directory) / "permissions.json")
-            pet.permission_manager.authorize("nova.core", "ai.use")
-            pet.permission_manager.authorize("nova.core", "file.read")
+            pet.permission_manager.authorize("aurova.core", "ai.use")
+            pet.permission_manager.authorize("aurova.core", "file.read")
             pet.settings = {"ai_provider": "ollama"}
             pet._authorize_core_action = lambda permission, confirmed=False: pet.permission_manager.require(
-                "nova.core", permission, confirmed=confirmed)
+                "aurova.core", permission, confirmed=confirmed)
             ready = threading.Barrier(2)
             received = []
             pet.event_bus.subscribe(EventType.AI_RESPONSE_RECEIVED, received.append)
@@ -611,15 +630,15 @@ class ArchitectureTests(unittest.TestCase):
             self.assertEqual(observed, [])
             pet.event_bus.drain()
             self.assertEqual(len(observed), 1)
-            self.assertTrue(pet.permission_manager.allowed("nova.core", "file.read"))
+            self.assertTrue(pet.permission_manager.allowed("aurova.core", "file.read"))
 
     def test_revoked_app_permission_blocks_launch_worker(self):
         from desktop_pet import DesktopPet
         with tempfile.TemporaryDirectory() as directory:
             pet = DesktopPet.__new__(DesktopPet)
             pet.permission_manager = PermissionManager(Path(directory) / "permissions.json")
-            pet.permission_manager.authorize("nova.core", "system.app.launch", confirmed=True)
-            pet.permission_manager.revoke("nova.core", "system.app.launch")
+            pet.permission_manager.authorize("aurova.core", "system.app.launch", confirmed=True)
+            pet.permission_manager.revoke("aurova.core", "system.app.launch")
             pet._app_launch_results = queue.Queue()
             launcher = mock.Mock()
             pet._launch_app = launcher
@@ -676,7 +695,7 @@ class ArchitectureTests(unittest.TestCase):
             pet.event_bus = EventBus()
             pet.plugin_manager = mock.Mock()
             pet.permission_manager = PermissionManager(Path(directory) / "permissions.json")
-            pet.permission_manager.authorize("nova.core", "file.read")
+            pet.permission_manager.authorize("aurova.core", "file.read")
             pet._ui_callbacks = queue.Queue()
             pet._ui_callbacks.put((lambda: self.fail("callback ran after close"), (), {}))
             pet._device_monitor_stop = threading.Event()

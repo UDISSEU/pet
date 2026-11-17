@@ -1,4 +1,4 @@
-"""Explicitly registered trusted in-process skills for Nova."""
+"""Explicitly registered trusted in-process skills for Aurova."""
 from dataclasses import dataclass, field
 import json
 import logging

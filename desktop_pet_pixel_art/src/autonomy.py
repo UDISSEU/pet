@@ -1,4 +1,4 @@
-"""Persistência e regras simples de autonomia da Nova."""
+"""Persistência e regras simples de autonomia da Aurova."""
 
 import configparser
 import fcntl
@@ -126,7 +126,7 @@ def load_settings(path=SETTINGS_PATH):
     result["user_name"] = result["user_name"].strip()[:60]
     if not isinstance(result.get("adaptive_learning_enabled"), bool):
         result["adaptive_learning_enabled"] = False
-    from nova_ai.personality.preference_learner import PreferenceLearner
+    from aurova_ai.personality.preference_learner import PreferenceLearner
     result["adaptive_learning_state"] = PreferenceLearner.normalize_state(
         result.get("adaptive_learning_state")
     )

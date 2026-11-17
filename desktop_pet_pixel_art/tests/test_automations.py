@@ -20,7 +20,7 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(automations.recognize_automation("organizar Downloads")['id'], "organize_downloads")
         self.assertEqual(automations.recognize_automation("esvaziar a lixeira")['id'], "empty_trash")
         self.assertEqual(automations.recognize_automation("procurar arquivos duplicados")['id'], "duplicates")
-        for phrase in ("como está meu código", "organizar meu código", "me ajuda com downloads", "oi Nova"):
+        for phrase in ("como está meu código", "organizar meu código", "me ajuda com downloads", "oi Aurova"):
             with self.subTest(phrase=phrase):
                 self.assertIsNone(automations.recognize_automation(phrase))
 

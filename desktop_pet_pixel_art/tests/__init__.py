@@ -1,1 +1,1 @@
-"""Nova application test suite."""
+"""Aurova application test suite."""

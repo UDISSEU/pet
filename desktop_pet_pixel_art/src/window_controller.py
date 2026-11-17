@@ -5,8 +5,8 @@ from config import BASE_HEIGHT, VANISHING_ANIMATION_SECONDS, WIDTH
 
 
 class WindowControllerMixin:
-    def _set_nova_window_icon(self, window):
-        """Give user-facing windows Nova's icon."""
+    def _set_aurova_window_icon(self, window):
+        """Give user-facing windows Aurova's icon."""
         try:
             if self._window_icon is not None:
                 window.iconphoto(False, self._window_icon)

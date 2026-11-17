@@ -4,7 +4,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, simpledialog, ttk
 from autonomy import save_settings
-from nova_ai.memory.errors import (
+from aurova_ai.memory.errors import (
     DuplicateMemoryError,
     MemoryNotFoundError,
     MemoryStorageError,
@@ -133,9 +133,9 @@ class MemoryPreferencesTabMixin:
             ).pack(side="left", padx=(8, 0))
 
         memory_card = card(
-            memory_content, "O que a Nova deve lembrar?",
+            memory_content, "O que a Aurova deve lembrar?",
             "Memórias manuais antigas pertencem ao perfil principal. Outros perfis usam "
-            "armazenamento separado. Desativar o uso impede que a Nova recupere estas "
+            "armazenamento separado. Desativar o uso impede que a Aurova recupere estas "
             "memórias, mas não as apaga.",
         )
         memory_enabled = tk.BooleanVar(
@@ -266,7 +266,7 @@ class MemoryPreferencesTabMixin:
         if profile_manager is not None:
             set_memory_controls(active_profile_id == "legacy")
 
-        integration = getattr(self, "nova_integration", None)
+        integration = getattr(self, "aurova_integration", None)
         if integration is not None:
             structured_card = card(
                 memory_content,
@@ -279,6 +279,16 @@ class MemoryPreferencesTabMixin:
             structured_filter = tk.StringVar(value="Todas as categorias")
             structured_search = tk.StringVar()
             structured_status = tk.StringVar(value="")
+            structured_categories = {
+                "profile": "Perfil",
+                "preference": "Preferências",
+                "project": "Projetos",
+                "episodic": "Episódicas",
+                "semantic": "Semânticas",
+                "procedural": "Procedimentos",
+                "conversation": "Conversas",
+                "learning": "Aprendizados",
+            }
             ttk.Label(
                 structured_card, textvariable=structured_status, style="Hint.TLabel",
             ).pack(anchor="w", pady=(6, 0))
@@ -286,9 +296,16 @@ class MemoryPreferencesTabMixin:
             structured_toolbar = ttk.Frame(structured_card, style="Card.TFrame")
             structured_toolbar.pack(fill="x", pady=(8, 0))
             ttk.Entry(structured_toolbar, textvariable=structured_search, style="Autonomy.TEntry").pack(side="left", fill="x", expand=True, ipady=4)
+            category_labels = {
+                "Todas as categorias": "Todas as categorias",
+                **{
+                    label: category
+                    for category, label in structured_categories.items()
+                },
+            }
             structured_category_filter = ttk.Combobox(
                 structured_toolbar, textvariable=structured_filter, state="readonly",
-                values=("Todas as categorias", "profile", "preference", "project", "episodic", "semantic", "procedural", "conversation", "learning"),
+                values=tuple(category_labels),
                 width=19,
             )
             structured_category_filter.pack(side="left", padx=(8, 0))
@@ -302,7 +319,7 @@ class MemoryPreferencesTabMixin:
                         structured_status.set(f"Erro ao ler memórias: {exc}")
                         return
                 needle = structured_search.get().casefold().strip()
-                category = structured_filter.get()
+                category = category_labels[structured_filter.get()]
                 def matches(memory):
                     return (
                         (category == "Todas as categorias" or memory.kind.value == category)
@@ -319,17 +336,27 @@ class MemoryPreferencesTabMixin:
                         "uncertain": "incerta",
                         "system_observation": "observação do sistema",
                     }.get(memory.provenance, memory.provenance)
+                    relevance_label = (
+                        "alta relevância"
+                        if memory.relevance >= 0.75 else "relevância comum"
+                    )
                     return (
-                        f"[{memory.kind.value} · {provenance_label} · "
-                        f"confiança {memory.confidence:.0%}] {memory.content}"
+                        f"{'✦' if memory.relevance >= 0.75 else '·'} "
+                        f"{memory.content}  ·  "
+                        f"{structured_categories[memory.kind.value]} / "
+                        f"{relevance_label} / {provenance_label}"
                     )
 
                 render_filtered_list(
                     structured_list, structured_memories, format_structured_memory, matches,
                 )
                 structured_status.set(
-                    f"{len(visible)} de {len(structured_memories)} memória(s) neste perfil."
+                    f"{len(visible)} de {len(structured_memories)} memórias · "
+                    f"{sum(memory.relevance >= 0.75 for memory in structured_memories)} "
+                    "com alta relevância · "
+                    f"{len({memory.kind for memory in structured_memories})} categorias"
                 )
+                update_structured_detail()
 
             structured_search.trace_add("write", lambda *_args: refresh_structured_memories(reload=False))
             structured_category_filter.bind("<<ComboboxSelected>>", lambda _event: refresh_structured_memories(reload=False))
@@ -337,15 +364,15 @@ class MemoryPreferencesTabMixin:
             kind_row = ttk.Frame(structured_card, style="Card.TFrame")
             kind_row.pack(fill="x", pady=(8, 4))
             ttk.Label(kind_row, text="Categoria", style="Hint.TLabel").pack(side="left")
-            memory_kind = tk.StringVar(value="profile")
+            memory_kind_values = {
+                label: category for category, label in structured_categories.items()
+            }
+            memory_kind = tk.StringVar(value=structured_categories["profile"])
             kind_picker = ttk.Combobox(
                 kind_row,
                 textvariable=memory_kind,
                 state="readonly",
-                values=(
-                    "profile", "preference", "project", "episodic", "semantic",
-                    "procedural", "conversation", "learning",
-                ),
+                values=tuple(memory_kind_values),
                 width=18,
             )
             kind_picker.pack(side="right")
@@ -368,7 +395,7 @@ class MemoryPreferencesTabMixin:
                     return
                 try:
                     integration.memory.add(
-                        memory_kind.get(),
+                        memory_kind_values[memory_kind.get()],
                         content,
                         source="user",
                         consent=True,
@@ -393,8 +420,7 @@ class MemoryPreferencesTabMixin:
             )
             structured_list, _refresh_structured_list, _remove_structured_item = setup_list(
                 structured_card, [], lambda memory: (
-                    f"[{memory.kind.value} · {memory.provenance} · "
-                    f"confiança {memory.confidence:.0%}] {memory.content}"
+                    f"{memory.content} · {structured_categories[memory.kind.value]}"
                 ),
                 "Nenhuma memória estruturada salva",
                 height=3,
@@ -403,12 +429,58 @@ class MemoryPreferencesTabMixin:
                 ),
             )
 
+            structured_detail = tk.StringVar(
+                value="Selecione uma lembrança para explorar seus detalhes."
+            )
+            ttk.Label(
+                structured_card, textvariable=structured_detail, style="Hint.TLabel",
+                wraplength=430, justify="left",
+            ).pack(fill="x", pady=(8, 0))
+
             structured_actions = ttk.Frame(structured_card, style="Card.TFrame")
             structured_actions.pack(fill="x", pady=(8, 0))
 
             def selected_structured_memory():
                 selected = structured_list.curselection()
                 return visible_structured_memories[selected[0]] if selected else None
+
+            def format_memory_date(value):
+                try:
+                    return datetime.fromisoformat(value).astimezone().strftime(
+                        "%d/%m/%Y às %H:%M"
+                    )
+                except (TypeError, ValueError):
+                    return "Não registrada"
+
+            def update_structured_detail(_event=None):
+                memory = selected_structured_memory()
+                if memory is None:
+                    structured_detail.set(
+                        "Selecione uma lembrança para explorar seus detalhes."
+                    )
+                    return
+                provenance_label = {
+                    "user_provided": "confirmada por você",
+                    "inference": "inferência",
+                    "uncertain": "incerta",
+                    "system_observation": "observação do sistema",
+                }.get(memory.provenance, memory.provenance)
+                expires = (
+                    format_memory_date(memory.expires_at)
+                    if memory.expires_at else "Sem expiração"
+                )
+                structured_detail.set(
+                    f"{structured_categories[memory.kind.value]} · {provenance_label}\n"
+                    f"Criada: {format_memory_date(memory.created_at)} · "
+                    f"Atualizada: {format_memory_date(memory.updated_at)}\n"
+                    f"Confiança: {memory.confidence:.0%} · "
+                    f"Relevância: {memory.relevance:.0%} · "
+                    f"Consentimento: {'registrado' if memory.consent_granted else 'não registrado'}\n"
+                    f"Origem: {memory.source} · Expiração: {expires}\n\n"
+                    f"{memory.content}"
+                )
+
+            structured_list.bind("<<ListboxSelect>>", update_structured_detail)
 
             def edit_structured_memory():
                 memory = selected_structured_memory()
@@ -502,21 +574,37 @@ class MemoryPreferencesTabMixin:
             ),
         ).pack(anchor="w", pady=(0, 8))
         history_status = tk.StringVar(value="")
-        ttk.Label(history_card, textvariable=history_status, style="Hint.TLabel").pack(anchor="w")
+        ttk.Label(
+            history_card, textvariable=history_status, style="Hint.TLabel",
+            wraplength=460, justify="left",
+        ).pack(anchor="w")
         history_filters = ttk.Frame(history_card, style="Card.TFrame")
         history_filters.pack(fill="x", pady=(8, 4))
         history_query = tk.StringVar()
         history_role = tk.StringVar(value="Todas as pessoas")
-        ttk.Entry(history_filters, textvariable=history_query, style="Autonomy.TEntry").pack(side="left", fill="x", expand=True, ipady=4)
+        ttk.Label(
+            history_filters, text="Pesquisar conversa", style="Hint.TLabel",
+        ).pack(anchor="w", pady=(0, 3))
+        ttk.Entry(
+            history_filters, textvariable=history_query, style="Autonomy.TEntry",
+        ).pack(fill="x", ipady=4)
+        history_filter_row = ttk.Frame(history_filters, style="Card.TFrame")
+        history_filter_row.pack(fill="x", pady=(6, 0))
         history_role_picker = ttk.Combobox(
-            history_filters, textvariable=history_role, state="readonly",
-            values=("Todas as pessoas", "Você", "Nova"), width=18,
+            history_filter_row, textvariable=history_role, state="readonly",
+            values=("Todas as pessoas", "Você", "Aurova"), width=20,
         )
-        history_role_picker.pack(side="left", padx=(8, 0))
+        history_role_picker.pack(side="left", fill="x", expand=True)
+        history_period = tk.StringVar(value="Todos os períodos")
+        history_period_picker = ttk.Combobox(
+            history_filter_row, textvariable=history_period, state="readonly",
+            values=("Todos os períodos",), width=18,
+        )
+        history_period_picker.pack(side="left", fill="x", expand=True, padx=(8, 0))
         history_list_frame = ttk.Frame(history_content, style="Card.TFrame", padding=4)
-        history_list_frame.pack(fill="both", expand=True, pady=(0, 10))
+        history_list_frame.pack(fill="x", pady=(0, 10))
         history_view = tk.Text(
-            history_list_frame, height=10, wrap="word", relief="flat", bd=0,
+            history_list_frame, height=6, wrap="word", relief="flat", bd=0,
             padx=10, pady=8, spacing1=2, spacing3=5,
             bg=COLORS["surface"], fg=COLORS["ink"], font=("TkDefaultFont", 9),
             cursor="arrow", takefocus=True,
@@ -529,6 +617,9 @@ class MemoryPreferencesTabMixin:
         history_scrollbar.pack(side="right", fill="y")
         history_view.tag_configure(
             "history_header", foreground=COLORS["cyan"], font=("TkDefaultFont", 9, "bold"),
+        )
+        history_view.tag_configure(
+            "history_day", foreground=COLORS["purple"], font=("TkDefaultFont", 9, "bold"),
         )
         history_view.tag_configure("history_selected", background=COLORS["surface_elevated"])
         history_entries = []
@@ -581,8 +672,8 @@ class MemoryPreferencesTabMixin:
                             when = "Data/hora não registrada"
                     else:
                         when = "Data/hora não registrada"
-                    who = "Você" if item.get("role") == "user" else "Nova"
-                    content = f"{who} · {when}\n\n{item.get('content', '')}"
+                    who = "Você enviou" if item.get("role") == "user" else "Aurova respondeu"
+                    content = f"Conversa · {who} · {when}\n\n{item.get('content', '')}"
                 except (IndexError, ValueError):
                     pass
             history_detail.configure(state="normal")
@@ -604,19 +695,40 @@ class MemoryPreferencesTabMixin:
         history_view.bind("<Button-1>", select_history_message)
 
         def refresh_history():
+            available_periods = sorted({
+                local_stamp.strftime("%Y-%m")
+                for item in self.history
+                if isinstance(item, dict)
+                and isinstance((stamp := item.get("timestamp")), str)
+                and (local_stamp := parse_history_timestamp(stamp)) is not None
+            }, reverse=True)
+            period_options = ("Todos os períodos", *available_periods)
+            previous_period = history_period.get()
+            history_period_picker.configure(values=period_options)
+            if previous_period not in period_options:
+                history_period.set("Todos os períodos")
+            selected_period = history_period.get()
             history_view.configure(state="normal")
             history_view.delete("1.0", "end")
             history_entries.clear()
+            last_day = None
             for index in range(len(self.history) - 1, -1, -1):
                 item = self.history[index]
                 if not isinstance(item, dict):
                     continue
                 stamp = item.get("timestamp")
-                try:
-                    when = datetime.fromisoformat(stamp).astimezone().strftime("%d/%m/%Y %H:%M")
-                except (TypeError, ValueError):
+                local_stamp = parse_history_timestamp(stamp)
+                if local_stamp is not None:
+                    when = local_stamp.strftime("%d/%m/%Y %H:%M")
+                    day = local_stamp.strftime("%d/%m/%Y")
+                    month = local_stamp.strftime("%Y-%m")
+                else:
                     when = "Sem data/hora"
-                who = "Você" if item.get("role") == "user" else "Nova"
+                    day = "Data não registrada"
+                    month = ""
+                if selected_period != "Todos os períodos" and month != selected_period:
+                    continue
+                who = "Você" if item.get("role") == "user" else "Aurova"
                 if history_role.get() != "Todas as pessoas" and who != history_role.get():
                     continue
                 message = item.get("content", "")
@@ -625,6 +737,9 @@ class MemoryPreferencesTabMixin:
                 message = message.strip() or "(mensagem vazia)"
                 if history_query.get().casefold().strip() not in f"{who} {when} {message}".casefold():
                     continue
+                if day != last_day:
+                    history_view.insert("end", f"── {day} ──\n", "history_day")
+                    last_day = day
                 start = history_view.index("end-1c")
                 first_line = int(start.split(".")[0])
                 history_view.insert("end", f"{who} · {when}\n", "history_header")
@@ -637,7 +752,8 @@ class MemoryPreferencesTabMixin:
             profile = getattr(self, "profile_manager", None)
             profile_name = profile.active_profile.name if profile else "principal"
             history_status.set(
-                f"{len(history_entries)} de {len(self.history)} mensagem(ns) · perfil {profile_name}; "
+                f"Conversa · {len(history_entries)} de {len(self.history)} mensagens · "
+                f"{history_period.get().replace('-', '/')} · perfil {profile_name}; "
                 + (
                     "salvamento ativado."
                     if history_enabled.get() else "novas mensagens não serão salvas."
@@ -648,6 +764,12 @@ class MemoryPreferencesTabMixin:
                 )
             )
             show_selected_history_message()
+
+        def parse_history_timestamp(stamp):
+            try:
+                return datetime.fromisoformat(stamp).astimezone()
+            except (TypeError, ValueError, OverflowError):
+                return None
 
         def delete_history_message():
             if self.ai_request_active:
@@ -693,4 +815,5 @@ class MemoryPreferencesTabMixin:
         history_refresh_callback["callback"] = refresh_history
         history_query.trace_add("write", lambda *_args: refresh_history())
         history_role_picker.bind("<<ComboboxSelected>>", lambda _event: refresh_history())
+        history_period_picker.bind("<<ComboboxSelected>>", lambda _event: refresh_history())
         refresh_history()

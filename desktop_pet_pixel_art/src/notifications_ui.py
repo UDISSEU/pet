@@ -19,16 +19,16 @@ class NotificationsUIMixin:
                     return existing
             except tk.TclError:
                 pass
-        window = self._set_nova_window_icon(tk.Toplevel(self.root))
+        window = self._set_aurova_window_icon(tk.Toplevel(self.root))
         self._notifications_window = window
         self._activate_panel(window)
-        window.title("Notificações da Nova")
+        window.title("Notificações da Aurova")
         fit_window_to_screen(
             window, 560, 540, min_width=500, min_height=380, vertical_margin=16,
         )
         window.configure(bg=COLORS["background"])
-        make_header(window, "Notificações", "Acompanhe avisos e ajuste como a Nova se comunica.",
-                    eyebrow="NOVA  /  CENTRAL DE AVISOS",
+        make_header(window, "Notificações", "Acompanhe avisos e ajuste como a Aurova se comunica.",
+                    eyebrow="AUROVA  /  CENTRAL DE AVISOS",
                     back_command=lambda: self._panel_back(window))
         body = tk.Frame(window, bg=COLORS["background"], padx=14, pady=8)
         body.pack(fill="both", expand=True)

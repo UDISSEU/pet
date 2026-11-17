@@ -1,5 +1,6 @@
 """Focused coverage for autostart overrides and storage scanning."""
 
+import os
 import tempfile
 import threading
 import time
@@ -12,6 +13,7 @@ from unittest import mock
 from computer_services import analyze_directory, collect_storage_overview
 from computer_center_ui import ComputerCenterUIMixin
 from startup_manager import discover_startup_entries, set_startup_enabled
+from ui_theme import apply_theme, fit_window_to_screen
 
 
 class StartupManagerTests(unittest.TestCase):
@@ -191,12 +193,7 @@ class ComputerCenterUITests(unittest.TestCase):
         except tk.TclError as exc:
             self.skipTest(f"Tk display unavailable: {exc}")
         root.withdraw()
-        style = ttk.Style(root)
-        style.configure("Title.TLabel")
-        style.configure("PageHint.TLabel")
-        style.configure("Card.TFrame")
-        style.configure("CardTitle.TLabel")
-        style.configure("Maintenance.Treeview")
+        apply_theme(root)
 
         class Harness(ComputerCenterUIMixin):
             def __init__(self):
@@ -209,7 +206,7 @@ class ComputerCenterUITests(unittest.TestCase):
             def _authorize_core_action(self, *_args, **_kwargs):
                 return True
 
-            def _set_nova_window_icon(self, window):
+            def _set_aurova_window_icon(self, window):
                 return window
 
             def _activate_panel(self, _window):
@@ -248,6 +245,25 @@ class ComputerCenterUITests(unittest.TestCase):
                 and "processador" in str(widget.cget("text")).casefold()
                 for widget in descendants(window)
             )))
+            capture_dir = os.environ.get("AUROVA_GUI_CAPTURE_DIR") or os.environ.get("NOVA_GUI_CAPTURE_DIR")
+            if capture_dir:
+                from PIL import ImageGrab
+
+                Path(capture_dir).mkdir(parents=True, exist_ok=True)
+                root.deiconify()
+                window.deiconify()
+                fit_window_to_screen(
+                    window, 780, 700, min_width=600, min_height=480,
+                )
+                root.update()
+                bounds = (
+                    window.winfo_rootx(), window.winfo_rooty(),
+                    window.winfo_rootx() + window.winfo_width(),
+                    window.winfo_rooty() + window.winfo_height(),
+                )
+                ImageGrab.grab(bbox=bounds).save(
+                    Path(capture_dir) / "computer-center.png"
+                )
             next(button for button in buttons() if button.cget("text") == "Inicialização").invoke()
             self.assertTrue(wait_for(lambda: any(
                 isinstance(widget, ttk.Treeview)

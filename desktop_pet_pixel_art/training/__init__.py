@@ -1,4 +1,4 @@
-"""Ferramentas explícitas para preparar e treinar o Nova Model localmente."""
+"""Ferramentas explícitas para preparar e treinar o Aurova Model localmente."""
 
 __all__ = ["DatasetBuilder", "TrainingConfig", "TrainingManager"]
 

@@ -312,7 +312,7 @@ class PerformanceMonitor:
 
     def start(self):
         if self._thread and self._thread.is_alive(): return
-        self._thread = threading.Thread(target=self._run, name="nova-performance-monitor", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="aurova-performance-monitor", daemon=True)
         self._thread.start()
 
     def stop(self, timeout=2.0):
@@ -418,6 +418,6 @@ def performance_context(store, *, hours=24):
         metrics[name] = {"current": values[-1] if values else None,
                          "maximum": max(values) if values else None,
                          "average": sum(values) / len(values) if values else None}
-    return {"schema": "nova-performance-context.v1", "period_hours": hours,
+    return {"schema": "aurova-performance-context.v1", "period_hours": hours,
             "samples": len(samples), "metrics": metrics, "alerts": alerts[:10],
             "limitations": ["Métricas são amostras locais; conectividade externa não é sondada automaticamente."]}
