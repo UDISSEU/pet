@@ -185,6 +185,10 @@ def load_settings(path=SETTINGS_PATH):
     result["apps"] = cleaned_apps
     if result.get("mode") not in ("quietinha", "companhia", "proativa"):
         result["mode"] = "companhia"
+    if data.get("quietina_chatter_initialized") is not True:
+        if result["mode"] == "quietinha":
+            result["auto_speech"] = True
+        result["quietina_chatter_initialized"] = True
     if result.get("humor_style") not in ("tranquila", "equilibrada", "brincalhona"):
         result["humor_style"] = "equilibrada"
     for key in ("announce_charger", "announce_usb"):

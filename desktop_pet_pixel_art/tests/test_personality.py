@@ -70,6 +70,12 @@ class TestPersonality(unittest.TestCase):
             with self.subTest(category=category):
                 self.assertGreaterEqual(len(lines), 6)
 
+    def test_idle_chatter_has_a_larger_varied_line_bank(self):
+        idle_lines = SPEECH_POOLS["idle_chatter"]
+
+        self.assertGreaterEqual(len(idle_lines), 30)
+        self.assertEqual(len(idle_lines), len(set(idle_lines)))
+
     def test_empty_or_unknown_categories_use_a_safe_fallback(self):
         with mock.patch.dict(SPEECH_POOLS, {"empty": ()}):
             line = pick_line("empty", history=[], rng=random.Random(2))
@@ -107,6 +113,27 @@ class TestPersonality(unittest.TestCase):
         self.assertFalse(settings["routine_break_tip"])
         self.assertEqual(settings["last_seen_date"], "")
         self.assertEqual(settings["interaction_count"], 0)
+
+    def test_quiet_mode_enables_occasional_chatter_once_and_keeps_opt_out(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.json"
+            path.write_text(json.dumps({
+                "mode": "quietinha",
+                "auto_speech": False,
+            }), encoding="utf-8")
+
+            migrated = load_settings(path)
+            self.assertTrue(migrated["auto_speech"])
+            self.assertTrue(migrated["quietina_chatter_initialized"])
+
+            path.write_text(json.dumps({
+                "mode": "quietinha",
+                "auto_speech": False,
+                "quietina_chatter_initialized": True,
+            }), encoding="utf-8")
+            opted_out = load_settings(path)
+
+        self.assertFalse(opted_out["auto_speech"])
 
     def test_valid_visit_metadata_is_preserved_and_count_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
 import desktop_pet
 import animation_controller
 import device_controller
+import interaction_controller
 import preferences_ai_ui
 import preferences_apps_ui
 import preferences_automation_ui
@@ -164,6 +165,108 @@ class DesktopControllerRegressionTests(unittest.TestCase):
         self.assertIsNone(pet._last_drag_pointer_x)
         self.assertEqual(pet.state, "walk")
         pet._handle_simple_click.assert_called_once_with()
+
+    def test_mouse_release_waits_for_pickup_bubble_before_drop_line(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._ignore_next_click = False
+        pet.was_drag = True
+        pet.dragging = True
+        pet.state = "held"
+        pet.drag_target_tilt = 8.0
+        pet._last_drag_pointer_x = 20
+        pet._drag_focus_widget = None
+        pet._post_drag_state = mock.Mock(return_value="walk")
+        pet._record_interaction = mock.Mock()
+        pet._pickup_spoken = True
+        pet._pickup_until = 103.5
+        pet.root = mock.Mock()
+
+        with mock.patch.object(
+            interaction_controller.time, "monotonic", return_value=100.0
+        ):
+            pet.stop_drag(None)
+
+        pet.root.after.assert_called_once_with(3500, pet._speak_drop)
+
+    def test_quiet_mode_allows_infrequent_idle_chatter(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._closing = False
+        pet.settings = {"mode": "quietinha"}
+        pet.state = "walk"
+        pet.focus_mode = "idle"
+        pet.busy = False
+        pet.dragging = False
+        pet.bubble_text = None
+        pet.ai_request_active = False
+        pet.auto_speech_var = mock.Mock()
+        pet.auto_speech_var.get.return_value = True
+        pet._is_quiet_time = mock.Mock(return_value=False)
+        pet.is_covered = mock.Mock(return_value=False)
+        pet._show_personality_line = mock.Mock()
+        pet.root = mock.Mock()
+
+        with mock.patch.object(
+            speech_controller.random, "randint", return_value=240000
+        ):
+            pet.random_speech()
+
+        self.assertFalse(pet._can_speak_spontaneously())
+        self.assertTrue(pet._can_speak_spontaneously(allow_quiet_mode=True))
+        self.assertEqual(pet._speech_cooldown_seconds(), 300)
+        pet._show_personality_line.assert_called_once_with(
+            "idle_chatter", duration=3500, spontaneous=True,
+            allow_quiet_mode=True,
+        )
+        pet.root.after.assert_called_once_with(240000, pet.random_speech)
+
+    def test_quiet_mode_still_speaks_when_picked_up(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._closing = False
+        pet.settings = {"mode": "quietinha"}
+        pet.focus_mode = "idle"
+        pet.busy = False
+        pet.dragging = True
+        pet.ai_request_active = False
+        pet.is_covered = mock.Mock(return_value=False)
+        pet._is_quiet_time = mock.Mock(return_value=False)
+        pet.was_drag = False
+        pet._pending_click_job = None
+        pet._pickup_spoken = False
+        pet._last_drag_pointer_x = 20
+        pet._last_drag_event_at = 100.0
+        pet.drag_offset = (0, 0)
+        pet._show_personality_line = mock.Mock(return_value=True)
+        pet.root = mock.Mock()
+        pet.root.winfo_pointerx.return_value = 40
+        pet.root.winfo_pointery.return_value = 50
+
+        with mock.patch.object(
+            interaction_controller.time, "monotonic", return_value=101.0
+        ):
+            pet.do_drag(None)
+
+        pet._show_personality_line.assert_called_once_with(
+            "pickup", duration=3500
+        )
+        self.assertTrue(pet._pickup_spoken)
+
+    def test_quiet_mode_can_speak_when_dropped(self):
+        pet = DesktopPet.__new__(DesktopPet)
+        pet._closing = False
+        pet.settings = {"mode": "quietinha"}
+        pet.focus_mode = "idle"
+        pet.busy = False
+        pet.dragging = False
+        pet.ai_request_active = False
+        pet.is_covered = mock.Mock(return_value=False)
+        pet._is_quiet_time = mock.Mock(return_value=False)
+        pet._show_personality_line = mock.Mock()
+
+        pet._speak_drop()
+
+        pet._show_personality_line.assert_called_once_with(
+            "drop", duration=2500
+        )
 
     def test_personality_line_keeps_public_speech_path(self):
         pet = DesktopPet.__new__(DesktopPet)

@@ -374,7 +374,7 @@ class DesktopPet(
         self.behind_var = tk.BooleanVar(value=self.settings.get("behind", False))
         self.stay_in_place_var = tk.BooleanVar(value=self.settings.get("stay_in_place", False))
         defaults = {
-            "quietinha": (False, False, False, False),
+            "quietinha": (True, False, False, False),
             "companhia": (True, True, False, True),
             "proativa": (True, True, True, True),
         }[self.settings["mode"]]
@@ -395,11 +395,7 @@ class DesktopPet(
         self.root.after(
             round(STARTUP_IDLE_SECONDS * 1000), self._finish_startup_idle
         )
-        first_speech_delay = (
-            random.randint(90000, 150000)
-            if self.settings["mode"] == "proativa"
-            else random.randint(180000, 300000)
-        )
+        first_speech_delay = self._random_speech_interval_ms()
         self.root.after(first_speech_delay, self.random_speech)
         self.root.after(random.randint(15000, 30000), self.observe_apps)
         self.root.after(random.randint(30000, 60000), self.peekaboo)
@@ -1575,7 +1571,7 @@ class DesktopPet(
         self.history_path = self.profile_manager.history_path(profile.profile_id)
         self.history = load_history(self.history_path)
         defaults = {
-            "quietinha": (False, False, False, False),
+            "quietinha": (True, False, False, False),
             "companhia": (True, True, False, True),
             "proativa": (True, True, True, True),
         }[self.settings["mode"]]

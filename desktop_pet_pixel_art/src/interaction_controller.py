@@ -40,9 +40,16 @@ class InteractionControllerMixin:
                 self.root.after_cancel(self._pending_click_job)
                 self._pending_click_job = None
             self._pickup_spoken = False
-            if self._interaction_speech_allowed(allow_drag=True):
-                self._show_personality_line("pickup", duration=1400)
-                self._pickup_until = time.monotonic() + 1.4
+            if self._interaction_speech_allowed(
+                allow_drag=True, allow_quiet_mode=True
+            ):
+                pickup_duration_ms = 3500
+                self._show_personality_line(
+                    "pickup", duration=pickup_duration_ms
+                )
+                self._pickup_until = (
+                    time.monotonic() + pickup_duration_ms / 1000
+                )
                 self._pickup_spoken = True
         self.was_drag = True
         now = time.monotonic()
@@ -87,7 +94,7 @@ class InteractionControllerMixin:
             self._handle_simple_click()
 
     def _speak_drop(self):
-        if self._interaction_speech_allowed():
+        if self._interaction_speech_allowed(allow_quiet_mode=True):
             self._show_personality_line("drop", duration=2500)
 
     def _post_drag_state(self):

@@ -11,15 +11,29 @@ from aurova_ai.personality.speech import (
 class SpeechControllerMixin:
     def random_speech(self):
         if (self.auto_speech_var.get() and self.state == "walk"
-                and self._can_speak_spontaneously()):
-            self._show_personality_line("idle_chatter", duration=3500, spontaneous=True)
-        interval = (90000, 150000) if self.settings["mode"] == "proativa" else (180000, 300000)
-        self.root.after(random.randint(*interval), self.random_speech)
+                and self._can_speak_spontaneously(allow_quiet_mode=True)):
+            self._show_personality_line(
+                "idle_chatter", duration=3500, spontaneous=True,
+                allow_quiet_mode=True,
+            )
+        self.root.after(self._random_speech_interval_ms(), self.random_speech)
 
-    def _can_speak_spontaneously(self, allow_focus=False):
+    def _random_speech_interval_ms(self):
+        intervals = {
+            "quietinha": (240000, 360000),
+            "companhia": (180000, 300000),
+            "proativa": (90000, 150000),
+        }
+        interval = intervals.get(self.settings.get("mode"), (180000, 300000))
+        return random.randint(*interval)
+
+    def _can_speak_spontaneously(self, allow_focus=False, allow_quiet_mode=False):
         return (
             not self._closing
-            and self.settings.get("mode") != "quietinha"
+            and (
+                allow_quiet_mode
+                or self.settings.get("mode") != "quietinha"
+            )
             and not self._is_quiet_time()
             and (
                 self.focus_mode == "idle"
@@ -34,17 +48,24 @@ class SpeechControllerMixin:
 
     def _speech_cooldown_seconds(self):
         """Keep unsolicited comments sparse; proactive mode remains configurable."""
-        return 90 if self.settings.get("mode") == "proativa" else 180
+        mode = self.settings.get("mode")
+        if mode == "proativa":
+            return 90
+        if mode == "quietinha":
+            return 300
+        return 180
 
     def _spontaneous_ready(self):
         return can_speak_spontaneously(cooldown=self._speech_cooldown_seconds())
 
     def _show_personality_line(
         self, category, duration=5000, spontaneous=False, allow_focus=False,
-        bypass_cooldown=False, **context,
+        allow_quiet_mode=False, bypass_cooldown=False, **context,
     ):
         if spontaneous:
-            if (not self._can_speak_spontaneously(allow_focus=allow_focus)
+            if (not self._can_speak_spontaneously(
+                    allow_focus=allow_focus, allow_quiet_mode=allow_quiet_mode
+            )
                     or (not bypass_cooldown and not self._spontaneous_ready())):
                 return False
         elif self._closing:
@@ -114,10 +135,15 @@ class SpeechControllerMixin:
         self._schedule_pose_callback(3500, "curious", self.finish_curious)
         return True
 
-    def _interaction_speech_allowed(self, allow_drag=False):
+    def _interaction_speech_allowed(
+        self, allow_drag=False, allow_quiet_mode=False
+    ):
         return (
             not self._closing
-            and self.settings.get("mode") != "quietinha"
+            and (
+                allow_quiet_mode
+                or self.settings.get("mode") != "quietinha"
+            )
             and not self._is_quiet_time()
             and self.focus_mode == "idle"
             and not self.busy

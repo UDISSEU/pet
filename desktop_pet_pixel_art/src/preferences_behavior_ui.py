@@ -40,13 +40,13 @@ class BehaviorPreferencesTabMixin:
         mode_row = ttk.Frame(mode_card, style="Card.TFrame")
         mode_row.pack(fill="x", pady=(2, 0))
         modes = (
-            ("quietinha", "Quietinha", "Fica mais discreta"),
+            ("quietinha", "Quietinha", "Falas ocasionais, com longos intervalos"),
             ("companhia", "Companhia", "Interage de vez em quando"),
             ("proativa", "Proativa", "Toma mais iniciativas"),
         )
         def choose_mode(value):
             presets = {
-                "quietinha": (False, False, False, False),
+                "quietinha": (True, False, False, False),
                 "companhia": (True, True, True, False),
                 "proativa": (True, True, True, True),
             }
