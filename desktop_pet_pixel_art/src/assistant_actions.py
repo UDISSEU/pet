@@ -61,6 +61,19 @@ def local_personality_intent(question, hour=None):
     if not normalized:
         return None
 
+    if re.search(r"\b(obrigad[oa]s?|valeu|agradeco|muito obrigada?)\b", normalized):
+        return "thanks", "wave"
+    if re.fullmatch(
+        r"(tchau|ate mais|ate logo|ate breve|ate a proxima|vou nessa|fui|falou)[!.? ]*",
+        normalized,
+    ):
+        return "goodbye", "wave"
+    if re.search(
+        r"\b(me incentiva|me da uma forca|me anima|preciso de incentivo|preciso de uma palavra|me encoraja)\b",
+        normalized,
+    ):
+        return "encouragement", "thumbs_up"
+
     if re.search(r"\b(bom dia|bom-dia)\b", normalized):
         return "greeting_morning", "wave"
     if re.search(r"\b(boa tarde)\b", normalized):

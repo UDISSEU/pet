@@ -242,6 +242,7 @@ class DesktopPetUIMixin(PreferencesUIMixin, PanelNavigationMixin, DashboardUIMix
                 self.aurova_integration.memory_health
                 if self.aurova_integration is not None else None
             ),
+            integration_error=getattr(self, "_aurova_integration_error", None),
         )
 
     def show_calendar(self):

@@ -1,23 +1,29 @@
 import json
 import logging
-import os
-import tempfile
+from pathlib import Path
 import urllib.error
 import urllib.request
 
 from assistant_actions import current_datetime_context
 from config import HISTORY_PATH, OLLAMA_MODEL, OLLAMA_URL, SYSTEM_PROMPT
 from json_persistence import (
+    atomic_json_write,
     block_replacement,
     mark_valid,
     may_replace,
     preserve_corrupt_file,
+    validate_storage_path,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def load_history(path=HISTORY_PATH):
+    try:
+        path = validate_storage_path(path, label="histórico da conversa")
+    except OSError as exc:
+        block_replacement(path, type(exc).__name__)
+        return []
     if path.exists():
         try:
             history = json.loads(path.read_text(encoding="utf-8"))
@@ -43,30 +49,17 @@ def load_history(path=HISTORY_PATH):
 
 
 def save_history(history, path=HISTORY_PATH):
+    try:
+        path = validate_storage_path(path, label="histórico da conversa")
+    except OSError as exc:
+        block_replacement(path, type(exc).__name__)
+        return False
     if not may_replace(path):
         logger.error("Gravação do histórico bloqueada para preservar %s", path.name)
         return False
-    temporary_path = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary_file:
-            temporary_path = temporary_file.name
-            json.dump(history, temporary_file, ensure_ascii=False, indent=2)
-            temporary_file.flush()
-            os.fsync(temporary_file.fileno())
-        os.replace(temporary_path, path)
+        atomic_json_write(path, history, label="histórico da conversa")
     except (OSError, TypeError, ValueError) as exc:
-        if temporary_path:
-            try:
-                os.unlink(temporary_path)
-            except OSError:
-                pass
         logger.warning("Não foi possível salvar o histórico em %s: %s", path, exc)
         return False
     return True

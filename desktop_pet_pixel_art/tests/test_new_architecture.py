@@ -64,6 +64,22 @@ class ArchitectureTests(unittest.TestCase):
         self.assertEqual(bus.drain(), 1)
         self.assertEqual(len(received), 1)
 
+    def test_critical_event_queue_is_independent_of_normal_queue_capacity(self):
+        bus = EventBus()
+        bus._queue_limit = 1
+        received = []
+        bus.subscribe(EventType.PET_STATE_CHANGED, received.append)
+        bus.subscribe(EventType.AI_RESPONSE_RECEIVED, received.append)
+
+        self.assertTrue(bus.post(Event(EventType.PET_STATE_CHANGED, {"current": "walk"})))
+        self.assertTrue(bus.post(Event(EventType.AI_RESPONSE_RECEIVED, {"answer": "ok"})))
+        self.assertEqual(bus.drain(), 2)
+        self.assertEqual(
+            [event.type for event in received],
+            [EventType.PET_STATE_CHANGED, EventType.AI_RESPONSE_RECEIVED],
+        )
+        bus.close()
+
     def test_worker_publish_is_delivered_only_when_owner_drains(self):
         import threading
         bus = EventBus()

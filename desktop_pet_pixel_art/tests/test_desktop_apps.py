@@ -143,6 +143,22 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(backups[0].read_text(encoding="utf-8"), "not json")
             self.assertTrue(save_settings(load_settings(path), path))
             self.assertEqual(backups[0].read_text(encoding="utf-8"), "not json")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_settings_writer_rejects_symlink_targets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            protected = root / "protected.json"
+            protected.write_text('{"keep": true}', encoding="utf-8")
+            settings_path = root / "settings.json"
+            settings_path.symlink_to(protected)
+
+            self.assertFalse(
+                save_settings(load_settings(settings_path), settings_path)
+            )
+            self.assertEqual(
+                protected.read_text(encoding="utf-8"), '{"keep": true}'
+            )
     def test_stale_settings_save_does_not_clear_saved_user_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "settings.json"

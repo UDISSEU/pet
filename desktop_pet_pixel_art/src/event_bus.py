@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 import logging
-import queue
 import threading
 import uuid
 from collections import deque
@@ -33,6 +32,20 @@ class EventType(str, Enum):
     APPLICATION_SHUTDOWN = "application.shutdown"
 
 
+_PRIORITY_EVENTS = frozenset({
+    EventType.APP_LAUNCH_RESULT,
+    EventType.AI_REQUEST_STARTED,
+    EventType.AI_RESPONSE_RECEIVED,
+    EventType.AI_REQUEST_FAILED,
+    EventType.TASK_STARTED,
+    EventType.TASK_FINISHED,
+    EventType.TASK_FAILED,
+    EventType.PLUGIN_ACTIVATED,
+    EventType.PLUGIN_DEACTIVATED,
+    EventType.PLUGIN_FAILED,
+})
+
+
 @dataclass(frozen=True)
 class Event:
     type: EventType
@@ -52,7 +65,11 @@ class EventBus:
         self._owner_thread = threading.get_ident()
         self._subscribers = {}
         self._closed = False
-        self._queue = queue.Queue(maxsize=1000)
+        self._queue = deque()
+        self._priority_queue = deque()
+        self._queue_limit = 1000
+        self._priority_queue_limit = 1000
+        self._post_sequence = 0
         self._seen_ids = set()
         self._seen_order = deque(maxlen=2048)
         self._dispatch_depth = 0
@@ -112,11 +129,25 @@ class EventBus:
         with self._lock:
             if self._closed:
                 return False
-            try:
-                self._queue.put_nowait(event)
-            except queue.Full:
-                logger.error("Fila do EventBus cheia; descartando %s", event.type.value)
+            destination = (
+                self._priority_queue
+                if event.type in _PRIORITY_EVENTS
+                else self._queue
+            )
+            capacity = (
+                self._priority_queue_limit
+                if destination is self._priority_queue else self._queue_limit
+            )
+            if len(destination) >= capacity:
+                logger.error(
+                    "Fila prioritária do EventBus cheia; descartando %s"
+                    if destination is self._priority_queue
+                    else "Fila do EventBus cheia; descartando %s",
+                    event.type.value,
+                )
                 return False
+            self._post_sequence += 1
+            destination.append((self._post_sequence, event))
         return True
 
     def drain(self, limit=100):
@@ -124,10 +155,17 @@ class EventBus:
             raise RuntimeError("A fila do EventBus deve ser consumida pela thread que o criou.")
         count = 0
         while count < limit:
-            try:
-                event = self._queue.get_nowait()
-            except queue.Empty:
-                break
+            with self._lock:
+                priority_head = self._priority_queue[0] if self._priority_queue else None
+                normal_head = self._queue[0] if self._queue else None
+                if priority_head is None and normal_head is None:
+                    break
+                if normal_head is None or (
+                    priority_head is not None and priority_head[0] < normal_head[0]
+                ):
+                    _sequence, event = self._priority_queue.popleft()
+                else:
+                    _sequence, event = self._queue.popleft()
             self.publish(event)
             count += 1
         return count
@@ -136,8 +174,5 @@ class EventBus:
         with self._lock:
             self._closed = True
             self._subscribers.clear()
-            while True:
-                try:
-                    self._queue.get_nowait()
-                except queue.Empty:
-                    break
+            self._priority_queue.clear()
+            self._queue.clear()

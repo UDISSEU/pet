@@ -42,7 +42,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import messagebox
@@ -197,13 +197,15 @@ class DesktopPet(
             logger.exception("Histórico de ações do computador indisponível")
         self._pending_computer_action_id = None
         self.aurova_integration = None
+        self._aurova_integration_error = None
         try:
             self.aurova_integration = DesktopAurovaIntegration(
                 permission_manager=self.permission_manager,
                 profile_manager=self.profile_manager,
                 action_log=self.computer_action_history,
             )
-        except Exception:
+        except Exception as exc:
+            self._aurova_integration_error = type(exc).__name__
             logger.exception("Núcleo Aurova indisponível; mantendo a aplicação legado")
         self._cognitive_cancel_token = None
         self._pending_cognitive_action_id = None
@@ -340,11 +342,13 @@ class DesktopPet(
         self.ai_request_active = False
         self._dismiss_job = None
         self._hidden = False
-        self._animation_loader = AnimationLoader(MOVEMENT_VIDEOS)
+        self._animation_loader = AnimationLoader(MOVEMENT_VIDEOS, lazy=True)
         self._resolved_animations = set()
+        self._animation_cache = OrderedDict()
         self._startup_idle_elapsed = False
         self._startup_walk_enabled = False
         idle_preview = self._animation_loader.preview("idle")
+        self._idle_preview = idle_preview
         self.video_frames = {
             name: [idle_preview] for name in MOVEMENT_VIDEOS
         }
@@ -388,6 +392,8 @@ class DesktopPet(
         self._context_popup = None
 
         self.render_and_show()
+        startup_direction = "walk_left" if self.walk_dx < 0 else "walk_right"
+        self._animation_loader.request(startup_direction)
         self._animation_loader.start()
         self._last_tick_at = time.monotonic()
         self._next_tick_at = self._last_tick_at + TICK_MS / 1000

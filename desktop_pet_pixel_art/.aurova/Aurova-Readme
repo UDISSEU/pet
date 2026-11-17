@@ -1,0 +1,138 @@
+# Aurova — futuro e objetivos
+
+> Documento reservado de planejamento. Ele não faz parte do README público nem da navegação padrão do projeto. Consulte-o somente quando a pessoa usuária pedir pelo futuro, pela visão ou pelos objetivos da Aurova.
+
+## Visão
+
+A Aurova é uma assistente virtual criada para auxiliar as pessoas e facilitar o dia a dia de um jeito descontraído. Seu visual próprio e marcante deve diferenciá-la de outras IAs e fazer dela uma presença familiar no computador.
+
+No futuro, a Aurova deverá compreender pedidos complexos, pensar em etapas, encontrar soluções por conta própria e levar tarefas até um resultado útil. A pessoa poderá trabalhar junto com ela: por exemplo, pedir que complete uma planilha no Excel, organize informações, monte um documento, desenvolva uma ideia ou continue um projeto iniciado. A planilha é apenas um exemplo do tipo de colaboração que se deseja tornar possível.
+
+A ambição central de longo prazo é que a Aurova opere praticamente todo o computador e consiga fazer quase tudo que a pessoa pedir. A pessoa deverá poder informar o objetivo sem precisar orientar cada clique ou cada etapa: a Aurova planeja o caminho, usa os aplicativos e ferramentas necessários, acompanha o progresso, verifica o resultado e corrige a estratégia quando algo não funciona. Ela deverá conduzir tarefas comuns quase sozinha e chamar a pessoa quando faltar uma informação importante ou quando uma decisão exigir sua confirmação. Durante o trabalho, mantém a pessoa informada e permite pausar ou cancelar a execução.
+
+Sua identidade deve ser reconhecível e própria, enquanto seu jeito de conversar se adapta às preferências de cada pessoa. A Aurova deve ser sempre prestativa, respeitosa e agradável de usar. Quanto maior sua capacidade de agir, mais claros devem ser o acompanhamento das ações, as permissões e o controle da pessoa sobre o que acontece.
+
+## Objetivos
+
+### 1. Conversa natural e consistente
+
+- Manter uma identidade própria, uma voz descontraída, cordial e clara e um humor usado com naturalidade.
+- Evitar respostas repetitivas, intimidade presumida, pressão para responder e comentários que suponham o estado emocional da pessoa.
+- Adaptar tom, ritmo, nível de detalhe e forma de colaboração às preferências de cada pessoa.
+- Distinguir fatos conhecidos, hipóteses e informações ausentes; admitir incerteza com clareza.
+- Revisar o repertório de falas e as avaliações de resposta conforme surgirem exemplos concretos de uso.
+
+### 2. Raciocínio, planejamento e resolução de tarefas
+
+- Decompor solicitações complexas em etapas claras e escolher ferramentas adequadas para cada etapa.
+- Comparar soluções possíveis, antecipar problemas e continuar trabalhando quando uma primeira tentativa falhar.
+- Verificar resultados com evidências observáveis antes de informar que uma tarefa foi concluída.
+- Pedir contexto quando uma ambiguidade puder levar a um resultado significativamente diferente.
+- Aprender a executar fluxos de trabalho completos sem perder a capacidade de explicar o plano e o resultado em linguagem simples.
+
+### 3. Trabalho colaborativo e criação
+
+- Ajudar a criar e editar planilhas, documentos, apresentações, código e outros materiais usados no computador.
+- Entender pedidos como “complete o restante” dentro do arquivo e da tarefa que a pessoa indicar.
+- Examinar o conteúdo necessário, identificar lacunas, propor alterações e apresentar uma prévia quando isso ajudar a pessoa a revisar o trabalho.
+- Permitir colaboração iterativa: a pessoa pode corrigir, acrescentar instruções ou pedir outra versão durante a tarefa.
+- Preservar o trabalho original e manter formas claras de revisar ou desfazer alterações.
+
+### 4. Operação ampla do computador
+
+- Evoluir de ações locais específicas para operar aplicativos e fluxos de trabalho variados a pedido da pessoa.
+- Receber o objetivo final e conduzir por conta própria as etapas intermediárias, sem exigir instruções passo a passo para cada operação cotidiana.
+- Interagir com arquivos, janelas, aplicativos e configurações através de interfaces confiáveis e apropriadas.
+- Acompanhar ações longas, indicar o que está fazendo e apresentar um resumo do que mudou.
+- Construir compatibilidade gradualmente, verificando cada ambiente e integração antes de anunciar suporte.
+- Oferecer mecanismos de pausa, cancelamento e revisão acessíveis durante operações com várias etapas.
+
+### 5. Controle e privacidade
+
+- Manter conversas, memórias, aprendizado de preferências e rotinas espontâneas sob controles claros e independentes.
+- Explicar quais dados são usados, onde ficam guardados e como consultar, corrigir ou apagar esses dados.
+- Não enviar conteúdo para serviços externos sem uma opção explícita e uma explicação compreensível.
+- Tratar memórias e conteúdo fornecido pelo usuário como dados, nunca como autorização para executar ações.
+- Não ativar gravação de conversa, uso de nuvem ou aprendizado de preferências por padrão.
+
+### 6. Ações seguras e transparentes
+
+- Mostrar o que será feito antes de operações importantes e pedir confirmação quando houver alteração de arquivos, aplicativos ou configurações.
+- Informar o resultado observado; nunca declarar uma ação concluída sem confirmação.
+- Oferecer cancelamento, desfazer ou recuperação sempre que forem tecnicamente viáveis.
+- Manter permissões específicas, inicialmente negadas, e tornar sua revogação acessível.
+- Restringir automações a capacidades explícitas e compreensíveis, sem comandos arbitrários ocultos.
+
+### 7. Leveza e confiabilidade
+
+- Carregar recursos sob demanda e limitar memória, threads e trabalho em segundo plano.
+- Continuar funcionando como mascote quando o Ollama, X11 ou outro recurso opcional estiver ausente.
+- Isolar falhas para que um erro em animação, integração ou automação não encerre toda a aplicação.
+- Manter dados do usuário intactos durante atualizações, migrações e recuperação de arquivos inválidos.
+- Acompanhar mudanças importantes com verificações automatizadas e documentação atualizada.
+
+### 8. Acessibilidade e integração com o desktop
+
+- Tornar textos, controles, notificações e horários claros e configuráveis.
+- Melhorar compatibilidade com ambientes Linux e sessões gráficas diferentes sem presumir suporte que não foi verificado.
+- Evitar que falas, notificações ou poses interrompam sessões de foco, horários silenciosos ou atividades em tela cheia.
+- Permitir que a pessoa reduza ou desligue cada tipo de interação espontânea.
+
+## Caminho de evolução
+
+As etapas abaixo são objetivos de planejamento, não compromissos de entrega nem funcionalidades já disponíveis.
+
+### Próximos passos
+
+1. Reunir exemplos reais de falas úteis, repetitivas ou inadequadas e revisar o repertório com esse feedback.
+2. Acompanhar qualidade de resposta com cenários fixos, revisão humana e registro local opcional.
+3. Identificar pontos lentos e consumo de memória antes de otimizar componentes adicionais.
+4. Melhorar o raciocínio em múltiplas etapas e a capacidade de planejar tarefas que usam recursos já disponíveis.
+5. Construir um fluxo colaborativo inicial para criar e editar materiais com prévia, revisão e recuperação.
+6. Reduzir duplicação entre módulos e definir limites claros entre interface, conversa, memória e automações.
+7. Documentar recuperação, migração e exportação dos dados de forma que a pessoa consiga entender cada etapa.
+
+### Depois que a base estiver estável
+
+- Considerar personalização de voz, frequência de falas e tipos de rotina com controles simples.
+- Avaliar melhorias de compatibilidade com Wayland e outros ambientes Linux a partir de testes em sessões reais.
+- Explorar integrações opcionais por capacidade e permissão, com prévia e confirmação para ações que alterem o sistema.
+- Projetar uma experiência clara para importar, exportar e restaurar preferências e memórias locais.
+- Expandir a colaboração para aplicativos de produtividade, começando por fluxos de edição em que seja possível revisar diferenças e recuperar a versão anterior.
+- Avaliar mecanismos de extensão somente com um modelo de confiança explícito; código externo não deve ser tratado como isolado sem uma sandbox real.
+
+### Horizonte de longo prazo
+
+- Ampliar a autonomia da Aurova para conduzir tarefas de ponta a ponta, com acompanhamento claro e supervisão adequada ao impacto de cada ação.
+- Permitir que integrações escolhidas pela pessoa funcionem de modo modular e possam ser removidas sem perder os demais recursos.
+- Manter alternativas locais como caminho principal; qualquer integração que envolva rede deve informar o destino e o tipo de dado enviado antes de uso.
+- Sustentar compatibilidade de dados entre versões com migrações reversíveis e cópias de segurança verificáveis.
+- Aproximar-se da meta de operar o computador inteiro por comandos, ampliando as capacidades por etapas e cobrindo aplicativos, arquivos e tarefas cotidianas.
+- Fazer quase tudo que a pessoa solicitar no computador, planejando e executando tarefas completas de forma autônoma e pedindo ajuda apenas quando houver uma dúvida relevante, um limite técnico ou uma confirmação necessária.
+- Permitir que a Aurova conclua trabalhos longos de ponta a ponta, monitore o próprio progresso e apresente resultados que a pessoa possa verificar.
+- Fazer da colaboração criativa uma capacidade central: a pessoa define a intenção e a Aurova ajuda a transformar a ideia em um resultado concreto.
+
+## Como avaliar uma proposta
+
+Antes de adicionar uma capacidade, verificar se ela:
+
+1. Resolve um problema que a pessoa reconhece.
+2. Tem comportamento observável, limites claros e uma forma simples de desligar.
+3. Explica permissões, uso de dados e efeitos antes de uma ação relevante.
+4. Continua segura e compreensível quando uma dependência falha.
+5. Não aumenta significativamente o consumo ou a complexidade sem benefício demonstrável.
+6. Pode ser validada por testes, revisão manual ou medições adequadas ao tipo de mudança.
+
+Se uma proposta falhar nesses critérios, ela deve ser simplificada, adiada ou descartada.
+
+## Fora dos objetivos
+
+- Executar ações destrutivas, administrativas ou externas sem confirmação adequada.
+- Enviar conversas, memórias ou arquivos para a nuvem silenciosamente.
+- Alegar consciência, sentimentos humanos, percepção da tela ou conhecimento que a aplicação não possui.
+- Substituir a decisão da pessoa por metas de produtividade ou interrupções frequentes.
+- Adicionar funcionalidades apenas para aumentar o número de recursos, sem benefício demonstrável.
+
+## Regra de atualização deste documento
+
+Este arquivo descreve uma direção desejada, não o estado atual do aplicativo. Atualize-o somente quando houver uma nova prioridade ou decisão de produto. Ao consultá-lo, diferencie claramente objetivos futuros de capacidades que já existem.

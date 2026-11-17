@@ -12,7 +12,7 @@ from ui_theme import COLORS, fit_window_to_screen, make_header
 logger = logging.getLogger(__name__)
 
 
-def diagnostic_recommendations(report, memory_health=None):
+def diagnostic_recommendations(report, memory_health=None, integration_error=None):
     guidance = []
     missing_dependencies = [
         name for name, available in report.dependencies.items() if not available
@@ -56,6 +56,11 @@ def diagnostic_recommendations(report, memory_health=None):
             "A verificação do SQLite encontrou um estado degradado. Preserve os backups "
             "e investigue o banco antes de restaurar ou remover arquivos."
         )
+    if integration_error:
+        guidance.append(
+            "O núcleo de memória e cognição não iniciou corretamente. "
+            "A Aurova continua no modo básico; consulte o log local e tente reiniciar."
+        )
     if report.graphics_status != "ready":
         guidance.append(
             "Alguns assets de animação estão ausentes. Verifique os arquivos da instalação "
@@ -75,6 +80,7 @@ def open_diagnostics_window(
     parent, *, on_open_ai=None, on_back=None, on_open=None,
     checker=check_environment,
     memory_checker=None,
+    integration_error=None,
 ):
     window = tk.Toplevel(parent)
     window.title("Diagnóstico da Aurova")
@@ -153,7 +159,9 @@ def open_diagnostics_window(
             f"({report.graphics_status})\n"
             f"Hardware: {format_memory(report.memory_total_bytes)}, "
             f"{report.cpu_count or 'CPU desconhecida'} CPUs lógicas, "
-            f"{format_disk_space(report.free_disk_bytes)}"
+            f"{format_disk_space(report.free_disk_bytes)}\n"
+            f"Núcleo de memória e cognição: "
+            f"{'indisponível (' + integration_error + ')' if integration_error else 'disponível'}"
         )
         if memory_health is not None:
             status_text.set(
@@ -167,7 +175,9 @@ def open_diagnostics_window(
         guidance_text_widget.insert(
             "1.0",
             "\n\n".join(
-                f"• {item}" for item in diagnostic_recommendations(report, memory_health)
+                f"• {item}" for item in diagnostic_recommendations(
+                    report, memory_health, integration_error,
+                )
             ),
         )
         guidance_text_widget.configure(state="disabled")

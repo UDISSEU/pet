@@ -62,9 +62,25 @@ class PersistenceTests(unittest.TestCase):
             self.assertFalse(save_history([], unreadable_path))
             self.assertEqual(unreadable_path.read_text(encoding="utf-8"), "[]")
 
-            invalid_save_path = Path(tmpdir) / "missing" / "history.json"
+            invalid_save_path = Path(tmpdir) / "directory.json"
+            invalid_save_path.mkdir()
             with self.assertLogs(ollama_client.logger, level="WARNING"):
                 self.assertFalse(save_history([], invalid_save_path))
+
+    def test_history_reader_and_writer_reject_symlink_targets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            protected = root / "protected.json"
+            protected.write_text('[{"role":"user","content":"keep"}]', encoding="utf-8")
+            history_path = root / "history.json"
+            history_path.symlink_to(protected)
+
+            self.assertEqual(load_history(history_path), [])
+            self.assertFalse(save_history([], history_path))
+            self.assertEqual(
+                protected.read_text(encoding="utf-8"),
+                '[{"role":"user","content":"keep"}]',
+            )
     def test_ask_local_ai_parses_successful_response(self):
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(

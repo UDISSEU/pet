@@ -7,14 +7,17 @@ import logging
 import os
 import shlex
 import shutil
-import tempfile
+import stat
 from datetime import datetime
 from pathlib import Path
 from json_persistence import (
+    atomic_json_write,
     block_replacement,
+    ensure_private_directory,
     mark_valid,
     may_replace,
     preserve_corrupt_file,
+    validate_storage_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,6 +86,11 @@ DEFAULT_SETTINGS = {
 
 
 def load_settings(path=SETTINGS_PATH):
+    try:
+        path = validate_storage_path(path, label="configurações")
+    except OSError as exc:
+        block_replacement(path, type(exc).__name__)
+        return dict(DEFAULT_SETTINGS)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -286,16 +294,30 @@ def _valid_iso_timestamp(value):
 
 
 def save_settings(settings, path=SETTINGS_PATH):
-    path = Path(path) if path is not None else SETTINGS_PATH
+    try:
+        path = validate_storage_path(
+            Path(path) if path is not None else SETTINGS_PATH,
+            label="configurações",
+        )
+    except OSError:
+        return False
     if not may_replace(path):
         logger.error("Gravação das configurações bloqueada para preservar %s", path.name)
         return False
-    temporary_path = None
     lock_fd = None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(path.parent, label="configurações")
         lock_path = path.with_name(f".{path.name}.lock")
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        validate_storage_path(lock_path, label="bloqueio das configurações")
+        lock_fd = os.open(
+            lock_path,
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        lock_info = os.fstat(lock_fd)
+        if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid():
+            raise OSError("Bloqueio das configurações inválido")
+        os.fchmod(lock_fd, 0o600)
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
         payload = dict(settings)
@@ -330,22 +352,9 @@ def save_settings(settings, path=SETTINGS_PATH):
                 if isinstance(saved_name, str) and saved_name.strip():
                     payload["user_name"] = saved_name
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent,
-            prefix=f".{path.name}.", suffix=".tmp", delete=False,
-        ) as stream:
-            temporary_path = stream.name
-            json.dump(payload, stream, ensure_ascii=False, indent=2)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary_path, path)
+        atomic_json_write(path, payload, label="configurações")
         return True
     except (OSError, TypeError, ValueError):
-        if temporary_path:
-            try:
-                os.unlink(temporary_path)
-            except OSError:
-                pass
         return False
     finally:
         if lock_fd is not None:

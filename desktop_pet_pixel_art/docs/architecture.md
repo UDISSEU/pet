@@ -20,7 +20,7 @@
 - `preferences_ui.py`: janela de preferências, persistência e navegação entre abas.
 - `preferences_*_ui.py`: construção separada das abas de automações, IA, comportamento/rotina, computador, memórias/histórico e lembretes/aplicativos. `preferences_common_ui.py` compartilha os widgets de listas.
 - `animation.py`: decodifica vídeos, prepara quadros e remove o fundo claro.
-- `animation_loader.py`: carrega as sequências completas em segundo plano, mantém a prévia caso um vídeo individual falhe, cancela cooperativamente o trabalho em andamento ao fechar e não acessa widgets Tkinter.
+- `animation_loader.py`: decodifica animações sob demanda em segundo plano, mantém a prévia durante o carregamento ou caso um vídeo falhe, cancela cooperativamente o trabalho em andamento ao fechar e não acessa widgets Tkinter. A interface mantém um cache limitado a três sequências completas.
 - `app_intents.py`: reconhece e associa pedidos de abertura de aplicativos sem executar comandos.
 - `autonomy.py`: leitura e gravação de preferências, horários silenciosos, lembretes e busca de lançadores Linux `.desktop`.
 - `json_persistence.py`: faz cópias não destrutivas de JSONs inválidos e bloqueia gravação quando não consegue preservar o original.
@@ -28,8 +28,9 @@
 - `automations.py`: allowlist fixa, reconhecimento local de frases, relatórios de espaço e arquivos, busca por conteúdo duplicado, organização de Downloads/capturas e limpeza confirmada da Lixeira. O reconhecimento não consulta IA nem executa ações; mudanças de arquivos exigem prévia e confirmação.
 - `calendar_view.py`: calendário mensal local; não sincroniza com contas externas.
 - `config.py`: caminhos dos assets, animações e parâmetros padrão.
-- `ollama_client.py`: API e persistência do histórico JSON legado.
+- `ollama_client.py`: carregamento e persistência do histórico JSON legado; chamadas de conversa passam pelo contrato em `providers/`.
 - `providers/`: contrato comum e adaptador Ollama, acessado pela API HTTP local.
+- `package_updates.py`: construção validada de comandos de atualização e leitura de progresso/versões dos gerenciadores APT, Flatpak e Snap; `system_updates.py` mantém o inventário instalado.
 - `ai/`: contexto, prompts, roteamento e pedidos; `AICore` conecta a conversa exclusivamente ao Ollama local. `request_handler.py` converte erros conhecidos em mensagens para a interface e mantém detalhes de exceções inesperadas fora dos logs.
 - `aurova_ai/personality/`: fonte canônica da identidade, das regras, do estado e do estilo conversacional e da fala local. `personality.py` e `ai/personality.py` mantêm exports compatíveis.
 - `x11_helper.py`: observação da janela ativa e geometria de janelas em ambientes X11. O módulo falha de forma segura se X11 ou `python-xlib` não estiverem disponíveis.

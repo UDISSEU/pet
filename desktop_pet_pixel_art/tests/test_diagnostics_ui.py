@@ -68,6 +68,12 @@ class DiagnosticsGuidanceTests(unittest.TestCase):
         )
         self.assertTrue(any("Preserve os backups" in item for item in guidance))
 
+    def test_failed_cognitive_integration_is_reported_as_degraded_mode(self):
+        guidance = diagnostic_recommendations(
+            report(), integration_error="MemoryStorageError",
+        )
+        self.assertTrue(any("modo básico" in item for item in guidance))
+
 
 class DiagnosticsWindowTests(unittest.TestCase):
     def test_back_button_is_visible_and_calls_navigation_callback(self):

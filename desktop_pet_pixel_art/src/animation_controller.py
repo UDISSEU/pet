@@ -78,6 +78,15 @@ class AnimationControllerMixin:
         if now is None:
             now = time.monotonic()
         video = self._video_for_current_pose(now)
+        loader = getattr(self, "_animation_loader", None)
+        if loader is not None and getattr(loader, "lazy", False):
+            resolved = getattr(self, "_resolved_animations", set())
+            if video not in resolved:
+                loader.request(video)
+                # Keep drawing the preview while this clip is decoded.
+                video = "idle"
+            elif hasattr(self, "_animation_cache") and video in self._animation_cache:
+                self._animation_cache.move_to_end(video, last=True)
         frames = self.video_frames[video]
         if not frames:
             raise ValueError(f"A animação {video} está sem quadros.")
@@ -304,6 +313,23 @@ class AnimationControllerMixin:
                 continue
             self._resolved_animations.add(name)
             self.video_frames[name] = frames
+            cache = getattr(self, "_animation_cache", None)
+            if cache is not None:
+                cache[name] = frames
+                cache.move_to_end(name, last=True)
+                current = self._video_for_current_pose()
+                while len(cache) > 3:
+                    evict = next(
+                        (candidate for candidate in cache
+                         if candidate not in {"idle", current}),
+                        None,
+                    )
+                    if evict is None:
+                        break
+                    del cache[evict]
+                    self._resolved_animations.discard(evict)
+                    self.video_frames[evict] = [self._idle_preview]
+                    loader.forget(evict)
             changed = True
         self._maybe_enable_startup_walk()
         if changed and not self._closing:
