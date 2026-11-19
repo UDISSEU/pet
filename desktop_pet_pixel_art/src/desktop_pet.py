@@ -1265,6 +1265,8 @@ class DesktopPet(
         })
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
         self.ai_request_active = True
+        self._ai_cancel = threading.Event()
+        self._start_ai_progress(self._ai_cancel)
         self.state = "thinking"
         self._show_idea_icon = False
         self._thinking_started_at = time.monotonic()
@@ -1277,12 +1279,13 @@ class DesktopPet(
         worker = threading.Thread(
             target=self._ask_worker,
             args=(list(self.history), memories, dict(self.settings), user_name),
-            kwargs={"computer_context": context}, daemon=True,
+            kwargs={"computer_context": context, "cancel_event": self._ai_cancel}, daemon=True,
         )
         try:
             worker.start()
         except (OSError, RuntimeError) as exc:
             self.ai_request_active = False
+            self._close_ai_progress()
             self._pending_computer_action_id = None
             if action_history_id is not None and self.computer_action_history is not None:
                 self.computer_action_history.update(
@@ -1515,6 +1518,9 @@ class DesktopPet(
         cancel_ai = getattr(self, "_ai_cancel", None)
         if cancel_ai is not None:
             cancel_ai.set()
+        cancel_confirmation = getattr(self, "_cancel_operational_confirmation", None)
+        if callable(cancel_confirmation):
+            cancel_confirmation()
         cognitive_cancel = getattr(self, "_cognitive_cancel_token", None)
         if cognitive_cancel is not None:
             cognitive_cancel.cancel()
@@ -1874,6 +1880,8 @@ class DesktopPet(
         self.history = self.history[-MAX_HISTORY_MESSAGES:]
         request_history = list(self.history)
         self.ai_request_active = True
+        self._ai_cancel = threading.Event()
+        self._start_ai_progress(self._ai_cancel)
         self.state = "thinking"
         self._show_idea_icon = False
         self._thinking_started_at = time.monotonic()
@@ -1891,6 +1899,7 @@ class DesktopPet(
         threading.Thread(
             target=self._ask_worker,
             args=(request_history, memories, dict(self.settings), user_name),
+            kwargs={"cancel_event": self._ai_cancel},
             daemon=True,
         ).start()
 

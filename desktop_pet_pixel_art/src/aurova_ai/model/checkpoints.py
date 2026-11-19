@@ -1,6 +1,7 @@
 """Leitura e gravação explícitas de checkpoints PyTorch em CPU."""
 
 import json
+import io
 import os
 from pathlib import Path
 
@@ -12,13 +13,16 @@ class CheckpointStore:
     MAX_FILE_BYTES = 64 * 1024 * 1024
 
     @classmethod
-    def save(cls, path, model, metadata: ModelMetadata | None = None):
+    def save(cls, path, model, metadata: ModelMetadata | None = None, *, storage=None):
         try:
             import torch
         except ImportError as exc:
             raise RuntimeError("PyTorch CPU é necessário para salvar checkpoints") from exc
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if storage is None:
+            from training.operational.storage import manager_for_training_path
+            storage = manager_for_training_path(destination)
         meta = metadata or ModelMetadata.new()
         metadata_values = meta.to_dict()
         if metadata_values["parameter_count"] not in (0, model.config.parameter_count):
@@ -30,6 +34,14 @@ class CheckpointStore:
             "model_config_json": json.dumps(model.config.to_dict(), sort_keys=True),
             "state_dict": {key: value.detach().cpu() for key, value in model.state_dict().items()},
         }
+        if storage is not None:
+            buffer = io.BytesIO()
+            torch.save(payload, buffer)
+            content = buffer.getvalue()
+            if len(content) > cls.MAX_FILE_BYTES:
+                raise ValueError("checkpoint excede o limite de tamanho")
+            storage.write_bytes(storage.relative_path(destination), content)
+            return
         temporary = destination.with_name(destination.name + ".tmp")
         try:
             with temporary.open("wb") as stream:

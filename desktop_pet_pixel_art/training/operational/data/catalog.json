@@ -1,0 +1,194 @@
+{
+  "schema_version": "1.0.0",
+  "tools": [
+    {
+      "name": "system.clock",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Lê data/hora local",
+      "parameters": {},
+      "result": "datetime ISO e resumo",
+      "permissions": "system.clock.read",
+      "risk": "baixo",
+      "read_only": true,
+      "requires_confirmation": false,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "system.monitor",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Lê métricas agregadas de CPU, memória e disco",
+      "parameters": {},
+      "result": "métricas permitidas",
+      "permissions": "system.cpu.read + system.memory.read + system.disk.read",
+      "risk": "baixo",
+      "read_only": true,
+      "requires_confirmation": false,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "files.search",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Busca nomes em diretório autorizado",
+      "parameters": {
+        "root": "string opcional",
+        "query": "string obrigatório",
+        "limit": "integer 1..100 opcional"
+      },
+      "result": "lista limitada de correspondências",
+      "permissions": "file.read + política de diretórios",
+      "risk": "médio: exposição de nomes",
+      "read_only": true,
+      "requires_confirmation": false,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "files.list_directory",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Lista arquivos em diretório autorizado",
+      "parameters": {
+        "directory": "string obrigatório",
+        "limit": "integer opcional"
+      },
+      "result": "lista limitada de entradas",
+      "permissions": "file.read + política de diretórios",
+      "risk": "médio: exposição de nomes",
+      "read_only": true,
+      "requires_confirmation": false,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "files.preview_downloads",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Prévia reversível da organização em Downloads",
+      "parameters": {},
+      "result": "plano assinado de movimentos",
+      "permissions": "file.read + Downloads",
+      "risk": "baixo: leitura",
+      "read_only": true,
+      "requires_confirmation": false,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "files.organize_downloads",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Move arquivos da prévia para categorias; reversível",
+      "parameters": {
+        "plan": "array obtido da prévia"
+      },
+      "result": "resumo e plano de desfazer",
+      "permissions": "file.organize + file.read + confirmação",
+      "risk": "alto: movimenta arquivos",
+      "read_only": false,
+      "requires_confirmation": true,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "files.organize.undo",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Desfaz movimentos válidos da organização",
+      "parameters": {
+        "plan": "array obtido da operação"
+      },
+      "result": "resumo de reversão",
+      "permissions": "file.move + file.read + confirmação",
+      "risk": "alto: movimenta arquivos",
+      "read_only": false,
+      "requires_confirmation": true,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "apps.list",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Lista launchers de aplicativos instalados",
+      "parameters": {},
+      "result": "IDs .desktop",
+      "permissions": "system.app.read",
+      "risk": "baixo",
+      "read_only": true,
+      "requires_confirmation": false,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "apps.launch",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Abre launcher .desktop do catálogo",
+      "parameters": {
+        "app_id": "string ID do catálogo"
+      },
+      "result": "resultado do pedido de abertura",
+      "permissions": "system.app.launch + confirmação",
+      "risk": "alto: inicia aplicativo",
+      "read_only": false,
+      "requires_confirmation": true,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "reminders.list",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Lista lembretes locais",
+      "parameters": {},
+      "result": "lembretes do perfil local",
+      "permissions": "reminder.read",
+      "risk": "médio: dado pessoal local",
+      "read_only": true,
+      "requires_confirmation": false,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "reminders.create",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Cria lembrete cancelável",
+      "parameters": {
+        "text": "string até 500 caracteres",
+        "due_at": "ISO 8601 com fuso"
+      },
+      "result": "lembrete criado",
+      "permissions": "reminder.write + confirmação",
+      "risk": "médio: grava dado local",
+      "read_only": false,
+      "requires_confirmation": true,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "reminders.cancel",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Cancela logicamente lembrete",
+      "parameters": {
+        "reminder_id": "string obrigatório"
+      },
+      "result": "confirmação",
+      "permissions": "reminder.write + confirmação",
+      "risk": "médio: altera dado local",
+      "read_only": false,
+      "requires_confirmation": true,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    },
+    {
+      "name": "reminders.reactivate",
+      "location": "src/aurova_ai/actions/",
+      "purpose": "Reativa lembrete cancelado",
+      "parameters": {
+        "reminder_id": "string obrigatório"
+      },
+      "result": "confirmação",
+      "permissions": "reminder.write + confirmação",
+      "risk": "médio: altera dado local",
+      "read_only": false,
+      "requires_confirmation": true,
+      "implementation": "functional",
+      "tests": "tests/aurova_ai/test_actions.py"
+    }
+  ]
+}

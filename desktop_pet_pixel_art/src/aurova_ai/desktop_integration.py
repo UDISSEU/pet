@@ -13,6 +13,8 @@ from aurova_ai.profiles import UserProfileManager
 from aurova_ai.actions import create_default_tool_registry
 from aurova_ai.actions.base import CancellationToken
 from aurova_ai.cognition import CognitiveEngine, DecisionKind, IntentName
+from providers.tool_schemas import build_tool_schemas
+from providers.tool_contract import dispatch_tool_calls
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +126,22 @@ class DesktopAurovaIntegration:
             if isinstance(mapping, list):
                 self.last_undo_mapping = mapping
         return result
+
+    def operational_tool_schemas(self):
+        """Expose schemas only for registered local tools; this grants no authority."""
+        return build_tool_schemas(self.actions)
+
+    def request_operational_turn(self, router, messages, system_prompt):
+        """Get a model proposal while retaining the current provider/router contract."""
+        return router.generate_turn(messages, system_prompt,
+                                    tools=self.operational_tool_schemas())
+
+    def execute_operational_turn(self, turn, *, approved=False, cancellation=None):
+        """Pass structured proposals through the existing cognitive dispatcher."""
+        if self.cognition.dispatcher is None:
+            raise RuntimeError("Dispatcher operacional ou Permission Manager indisponível")
+        return dispatch_tool_calls(turn, self.cognition.dispatcher,
+                                   approved=approved, cancellation=cancellation)
 
     def undo_last_organization(self, *, approved):
         if approved is not True or not isinstance(self.last_undo_mapping, list):

@@ -36,7 +36,7 @@ class IntentClassifier:
     _ORGANIZE_VERBS = {
         "organize", "organizar", "organiza", "organizar", "arrume", "arrumar",
         "arruma", "separe", "separar", "separa", "classifique", "classificar",
-        "classifica", "organise", "sort",
+        "classifica", "organise", "sort", "deixar", "deixe", "deixando",
     }
 
     def classify(self, text, *, model=None):

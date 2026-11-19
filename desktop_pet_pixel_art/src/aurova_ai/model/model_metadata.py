@@ -39,10 +39,21 @@ class ModelMetadata:
 class ModelHistory:
     """Histórico SQLite local. A base só é criada ao instanciar explicitamente."""
 
-    def __init__(self, database_path):
+    def __init__(self, database_path, *, storage=None, max_database_bytes=8 * 1024 * 1024):
         self.database_path = Path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.database_path) as connection:
+        if storage is None:
+            from training.operational.storage import manager_for_training_path
+            storage = manager_for_training_path(self.database_path)
+        self.storage = storage
+        self.max_database_bytes = max_database_bytes
+        guard = storage.reserve_bytes(max_database_bytes) if storage is not None else _null_guard()
+        with guard, sqlite3.connect(self.database_path) as connection:
+            if storage is not None:
+                pages = max(1, max_database_bytes // 4096)
+                actual = connection.execute(f"PRAGMA max_page_count={pages}").fetchone()[0]
+                if actual > pages:
+                    raise OSError("histórico existente ultrapassa o limite de armazenamento reservado")
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS training_runs (
                     id INTEGER PRIMARY KEY,
@@ -64,7 +75,8 @@ class ModelHistory:
             raise ValueError("valores do histórico inválidos")
         if metadata.parameter_count not in (0, config.parameter_count):
             raise ValueError("contagem de parâmetros incompatível com a configuração")
-        with sqlite3.connect(self.database_path) as connection:
+        guard = self.storage.reserve_bytes(self.max_database_bytes) if self.storage is not None else _null_guard()
+        with guard, sqlite3.connect(self.database_path) as connection:
             cursor = connection.execute(
                 "INSERT INTO training_runs(created_at, architecture, config_json, parameter_count, training_steps, final_loss, dataset_description) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -84,3 +96,8 @@ class ModelHistory:
                 "SELECT * FROM training_runs ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+
+class _null_guard:
+    def __enter__(self): return self
+    def __exit__(self, *_args): return False

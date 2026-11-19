@@ -13,7 +13,14 @@ class AICore:
         self.router = router or ModelRouter(self.settings)
         self.context_manager = context_manager or ContextManager()
 
-    def process_message(self, history, memories=None, user_name=""):
+    def process_message(self, history, memories=None, user_name="", *, cancel_event=None):
+        messages, prompt = self.prepare_request(history, memories=memories, user_name=user_name)
+        if cancel_event is None:
+            return self.router.generate(messages, prompt)
+        return self.router.generate(messages, prompt, cancel_event=cancel_event)
+
+    def prepare_request(self, history, memories=None, user_name=""):
+        """Build the same bounded context and identity prompt for text or tool turns."""
         messages, selected_memories = self.context_manager.build(history, memories)
         if selected_memories:
             # JSON keeps user controlled values visibly data-shaped, even if they
@@ -43,4 +50,4 @@ class AICore:
             prompt += "\n\n" + personality_instructions[:4_000]
         if user_name.strip():
             prompt += f"\n\nO nome da pessoa usuária é {user_name.strip()[:60]}. Use-o naturalmente ao conversar."
-        return self.router.generate(messages, prompt)
+        return messages, prompt

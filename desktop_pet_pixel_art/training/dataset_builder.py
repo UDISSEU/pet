@@ -12,6 +12,7 @@ from pathlib import Path
 from aurova_ai.model import ByteTokenizer, Vocabulary
 
 from .training_config import TrainingConfig
+from .operational.storage import StorageManager
 
 
 @dataclass(frozen=True)
@@ -109,12 +110,25 @@ class DatasetBuilder:
             for line in stream:
                 yield line.rstrip("\n")
 
-    def _encode_split(self, source_path, destination_path, tokenizer):
+    @staticmethod
+    def _iter_partition(path, split):
+        with Path(path).open("r", encoding="utf-8") as source:
+            for line in source:
+                record = json.loads(line)
+                if record["split"] == split:
+                    yield record["text"]
+
+    def _encode_split(self, source_path, destination_path, tokenizer, split, storage):
         sequence_count = 0
         context = self.config.model.max_seq_len
-        with source_path.open("r", encoding="utf-8") as source, destination_path.open("w", encoding="utf-8") as output:
+        max_bytes = self.config.max_examples * (self.config.max_line_chars * 10 + 2048)
+        with source_path.open("r", encoding="utf-8") as source, storage.open_text(
+                storage.relative_path(destination_path), max_bytes=max_bytes) as output:
             for line in source:
-                text = line.rstrip("\n")
+                record = json.loads(line)
+                if record["split"] != split:
+                    continue
+                text = record["text"]
                 ids = tokenizer.encode(text, add_special_tokens=True)
                 for start in range(0, max(0, len(ids) - 1), context):
                     chunk = ids[start:start + context + 1]
@@ -138,6 +152,8 @@ class DatasetBuilder:
             )
 
         dataset_root = cfg.dataset_root
+        storage = StorageManager(cfg.storage_root)
+        storage.relative_path(dataset_root / ".quota-check")
         processed_parent = dataset_root / "processed"
         validation_parent = dataset_root / "validation"
         processed_parent.mkdir(parents=True, exist_ok=True)
@@ -146,19 +162,18 @@ class DatasetBuilder:
                  "accepted_documents": 0, "scanned_records": 0}
         seen_hashes = set()
 
+        dataset_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".dataset-stage-", dir=dataset_root) as temp_name:
             stage_root = Path(temp_name)
             stage_train_dir = stage_root / "processed"
             stage_validation_dir = stage_root / "validation"
             stage_train_dir.mkdir()
             stage_validation_dir.mkdir()
-            train_text = stage_root / "train.txt"
-            validation_text = stage_root / "validation.txt"
-            train_text.touch()
-            validation_text.touch()
+            partition_path = stage_root / "partition.jsonl"
             train_docs = validation_docs = 0
 
-            with train_text.open("w", encoding="utf-8") as train_out, validation_text.open("w", encoding="utf-8") as validation_out:
+            partition_max = cfg.max_examples * (cfg.max_line_chars * 4 + 128)
+            with storage.open_text(storage.relative_path(partition_path), max_bytes=partition_max) as partition:
                 for text in self._iter_texts(files, stats):
                     if stats["accepted_documents"] >= cfg.max_examples:
                         break
@@ -173,29 +188,26 @@ class DatasetBuilder:
                         and (index == 0 or (train_docs > 0 and int(digest[:8], 16) % 100 < cfg.validation_percent))
                     )
                     if use_validation:
-                        validation_out.write(text + "\n")
+                        split = "validation"
                         validation_docs += 1
                     else:
-                        train_out.write(text + "\n")
+                        split = "train"
                         train_docs += 1
+                    partition.write(json.dumps({"split": split, "text": text}, ensure_ascii=False) + "\n")
                     stats["accepted_documents"] += 1
 
             if not train_docs or not validation_docs:
                 raise ValueError("são necessários pelo menos dois textos únicos para treino e validação")
 
-            vocabulary = Vocabulary.build(
-                self._iter_plain_text(train_text), max_size=cfg.model.vocab_size
-            )
+            vocabulary = Vocabulary.build(self._iter_partition(partition_path, "train"), max_size=cfg.model.vocab_size)
             tokenizer = ByteTokenizer(vocabulary)
             vocabulary_path = stage_train_dir / "vocabulary.json"
-            vocabulary_path.write_text(
-                json.dumps(vocabulary.to_dict(), ensure_ascii=False, separators=(",", ":")) + "\n",
-                encoding="utf-8",
-            )
+            storage.write_text(storage.relative_path(vocabulary_path),
+                json.dumps(vocabulary.to_dict(), ensure_ascii=False, separators=(",", ":")) + "\n")
             train_path = stage_train_dir / "train.jsonl"
             validation_path = stage_validation_dir / "validation.jsonl"
-            train_sequences = self._encode_split(train_text, train_path, tokenizer)
-            validation_sequences = self._encode_split(validation_text, validation_path, tokenizer)
+            train_sequences = self._encode_split(partition_path, train_path, tokenizer, "train", storage)
+            validation_sequences = self._encode_split(partition_path, validation_path, tokenizer, "validation", storage)
             if not train_sequences or not validation_sequences:
                 raise ValueError("os textos não produziram sequências tokenizadas suficientes")
 
@@ -216,9 +228,8 @@ class DatasetBuilder:
                 "active_vocabulary_size": vocabulary.active_size,
                 "context_tokens": cfg.model.max_seq_len,
             }
-            (stage_train_dir / "manifest.json").write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-            )
+            storage.write_text(storage.relative_path(stage_train_dir / "manifest.json"),
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
 
             os.replace(stage_train_dir, final_train_dir)
             os.replace(stage_validation_dir, final_validation_dir)

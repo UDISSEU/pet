@@ -138,6 +138,13 @@ class DesktopIntegrationTests(unittest.TestCase):
     def test_normal_conversation_is_not_classified_as_a_tool_task(self):
         self.assertFalse(self.integration.classify_task("Me conte uma curiosidade sobre o mar."))
 
+    def test_operational_schemas_match_registered_tools(self):
+        schemas = self.integration.operational_tool_schemas()
+        registered = set(self.integration.actions.names())
+        self.assertTrue(schemas)
+        self.assertTrue(all(item["function"]["name"] in registered for item in schemas))
+        self.assertEqual(len({item["function"]["name"] for item in schemas}), len(schemas))
+
     def test_download_request_previews_confirms_executes_and_can_be_undone(self):
         import aurova_ai.actions.file_manager as file_module
 

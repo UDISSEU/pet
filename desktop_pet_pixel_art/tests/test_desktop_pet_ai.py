@@ -1,5 +1,6 @@
 import queue
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -45,6 +46,67 @@ class TestDesktopPetAI(unittest.TestCase):
             pet._ask_worker(pet.history)
 
         self.assertEqual(request.call_args.args[0], pet.history)
+
+    def test_query_worker_uses_structured_operational_loop(self):
+        from providers.tool_contract import ProviderTurn, ToolCall
+        from aurova_ai.actions import ActionResult, Tool, ToolDispatcher, ToolRegistry
+
+        class Clock(Tool):
+            name = "system.clock"
+            description = "Consulta horário do sistema"
+
+            def execute(self, _arguments):
+                return ActionResult(True, "Horário consultado", {"time": "12:30"})
+
+        class Permissions:
+            def allowed(self, _plugin, _permission):
+                return True
+
+            def require(self, _plugin, _permission, *, confirmed=False):
+                return True
+
+        pet = _Pet({})
+        router = mock.Mock()
+        router.generate_turn.side_effect = [
+            ProviderTurn(tool_calls=(ToolCall("clock-1", "system.clock", {}),)),
+            ProviderTurn(text="São 12:30."),
+        ]
+        core = mock.Mock()
+        core.prepare_request.return_value = ([{"role":"user","content":"Que horas são?"}], "prompt")
+        core.router = router
+        registry = ToolRegistry()
+        registry.register_tool(Clock(), permission="system.read", read_only=True)
+        dispatcher = ToolDispatcher(registry, Permissions())
+        integration = mock.Mock()
+        integration.cognition.dispatcher = dispatcher
+        integration.operational_tool_schemas.return_value = [{"type": "function", "function": {
+            "name": "system.clock", "description": "Consulta horário do sistema",
+            "parameters": {"type": "object", "properties": {}, "required": [],
+                           "additionalProperties": False},
+        }}]
+        pet.aurova_integration = integration
+        with mock.patch("ai.ai_core.AICore", return_value=core):
+            pet._ask_worker([{"role":"user", "content":"Que horas são?"}])
+
+        self.assertEqual(pet._ai_results.get_nowait(), "São 12:30.")
+        self.assertEqual(router.generate_turn.call_count, 2)
+        self.assertEqual(len(router.generate_turn.call_args_list[0].kwargs["tools"]), 1)
+        self.assertEqual(router.generate_turn.call_args_list[1].kwargs["tools"], [])
+
+    def test_cancelled_worker_skips_provider_and_returns_clean_result(self):
+        pet = _Pet({})
+        cancellation = threading.Event(); cancellation.set()
+        with mock.patch("desktop_pet_ai.answer_request") as request:
+            pet._ask_worker(pet.history, cancel_event=cancellation)
+        request.assert_not_called()
+        self.assertIn("cancelada", pet._ai_results.get_nowait().casefold())
+
+    def test_text_worker_propagates_request_cancellation(self):
+        pet = _Pet({})
+        cancellation = threading.Event()
+        with mock.patch("desktop_pet_ai.answer_request", return_value="resposta") as request:
+            pet._ask_worker(pet.history, cancel_event=cancellation)
+        self.assertIs(request.call_args.kwargs["cancel_event"], cancellation)
 
     def test_answer_is_not_persisted_by_default(self):
         pet = _Pet({})

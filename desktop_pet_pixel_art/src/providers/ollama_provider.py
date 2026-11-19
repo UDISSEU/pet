@@ -8,7 +8,8 @@ import urllib.error
 import urllib.request
 
 from config import OLLAMA_MODEL, OLLAMA_URL
-from providers.base_provider import BaseProvider, ProviderError
+from providers.base_provider import BaseProvider, ProviderCancelled, ProviderError
+from providers.tool_contract import parse_ollama_turn
 
 _LOCAL_INFERENCE_LOCK = threading.Lock()
 _MODEL_NAME = re.compile(
@@ -117,7 +118,9 @@ class OllamaProvider(BaseProvider):
             raise ProviderError("O Ollama encerrou o download antes de confirmar a conclusão.")
         return f"Modelo {model} instalado."
 
-    def generate(self, messages, system_prompt, timeout=None):
+    def generate(self, messages, system_prompt, timeout=None, cancel_event=None):
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProviderCancelled("Solicitação cancelada.")
         if not _LOCAL_INFERENCE_LOCK.acquire(blocking=False):
             raise ProviderError("Já existe uma inferência local em andamento.")
         try:
@@ -136,8 +139,12 @@ class OllamaProvider(BaseProvider):
                 self.url, data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}, method="POST",
             )
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderCancelled("Solicitação cancelada.")
             with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
                 data = json.loads(response.read().decode("utf-8"))
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderCancelled("Solicitação cancelada.")
             message = data.get("message") if isinstance(data, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
             if not isinstance(content, str) or not content.strip():
@@ -150,5 +157,41 @@ class OllamaProvider(BaseProvider):
             ) from exc
         except (urllib.error.URLError, TimeoutError, OSError, ValueError, AttributeError) as exc:
             raise ProviderError("Não foi possível obter uma resposta válida do Ollama.") from exc
+        finally:
+            _LOCAL_INFERENCE_LOCK.release()
+
+    def generate_turn(self, messages, system_prompt, *, tools=(), timeout=None, cancel_event=None):
+        """Ask Ollama for structured tool proposals; never executes them here."""
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProviderCancelled("Solicitação cancelada.")
+        if not isinstance(tools, (list, tuple)) or len(tools) > 32:
+            raise ProviderError("Lista de ferramentas inválida.")
+        if not _LOCAL_INFERENCE_LOCK.acquire(blocking=False):
+            raise ProviderError("Já existe uma inferência local em andamento.")
+        try:
+            payload = {
+                "model": self.model,
+                "messages": [{"role":"system", "content":system_prompt}, *messages],
+                "tools": list(tools), "stream": False, "keep_alive": self.keep_alive,
+                "options": {"num_ctx":self.num_ctx,"num_predict":self.num_predict,"num_thread":self.num_threads},
+            }
+            request=urllib.request.Request(self.url,data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type":"application/json"},method="POST")
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderCancelled("Solicitação cancelada.")
+            with urllib.request.urlopen(request,timeout=timeout or self.timeout) as response:
+                data=json.loads(response.read().decode("utf-8"))
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderCancelled("Solicitação cancelada.")
+            try:
+                return parse_ollama_turn(data)
+            except ValueError as exc:
+                raise ProviderError("O Ollama retornou uma chamada estruturada inválida.") from exc
+        except ProviderError:
+            raise
+        except urllib.error.HTTPError as exc:
+            raise ProviderError(f"Ollama respondeu com HTTP {exc.code}.") from exc
+        except (urllib.error.URLError,TimeoutError,OSError,ValueError,AttributeError) as exc:
+            raise ProviderError("Não foi possível obter uma resposta estruturada do Ollama.") from exc
         finally:
             _LOCAL_INFERENCE_LOCK.release()

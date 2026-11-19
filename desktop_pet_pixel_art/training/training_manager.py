@@ -9,6 +9,7 @@ from aurova_ai.model import ByteTokenizer, CheckpointStore, ModelHistory, ModelM
 
 from .evaluation import evaluate
 from .training_config import TrainingConfig
+from .operational.storage import StorageManager
 
 
 def _iter_records(path, *, max_line_bytes=4096):
@@ -32,6 +33,7 @@ class TrainingManager:
     def __init__(self, config: TrainingConfig, *, model=None):
         self.config = config
         self.model = model
+        self.storage = StorageManager(config.storage_root)
 
     def _memory_preflight(self):
         result = self.config.model.memory_preflight(reserve_bytes=self.config.reserve_memory_bytes)
@@ -86,7 +88,8 @@ class TrainingManager:
         experiment_dir.mkdir(parents=True, exist_ok=False)
         checkpoint_dir.mkdir(parents=True, exist_ok=False)
         events_path = experiment_dir / "metrics.jsonl"
-        history = ModelHistory(experiment_dir / "history.sqlite3")
+        history_path = experiment_dir / "history.sqlite3"
+        history = ModelHistory(history_path, storage=self.storage)
         stream = iter(_iter_records(train_path))
         last_loss = None
         last_validation = None
@@ -95,7 +98,8 @@ class TrainingManager:
             # Uma thread atende o limite de CPU da máquina alvo.
             if original_thread_count != cfg.cpu_threads:
                 torch.set_num_threads(cfg.cpu_threads)
-            with events_path.open("x", encoding="utf-8") as events:
+            with self.storage.open_text(self.storage.relative_path(events_path),
+                                        max_bytes=cfg.max_steps * 2048 + 16_384) as events:
                 for step in range(1, cfg.max_steps + 1):
                     try:
                         input_values, target_values = next(stream)
@@ -132,7 +136,7 @@ class TrainingManager:
                             vocabulary=vocabulary.to_dict(),
                         )
                         checkpoint_path = checkpoint_dir / f"step-{step:08d}.pt"
-                        CheckpointStore.save(checkpoint_path, model, metadata)
+                        CheckpointStore.save(checkpoint_path, model, metadata, storage=self.storage)
                         history.record(cfg.model, metadata, final_loss=last_loss)
                         checkpoints.append(str(checkpoint_path))
                     events.write(json.dumps(event, ensure_ascii=False) + "\n")

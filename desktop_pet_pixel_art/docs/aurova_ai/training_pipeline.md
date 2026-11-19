@@ -48,3 +48,41 @@ em `experiments/`.
 
 Não há dataset de exemplo incluído, download de corpus ou treino automático.
 Para um primeiro experimento, use apenas texto pequeno, autorizado e revisado.
+
+## Controle de armazenamento
+
+Todas as saídas gerenciadas do builder, TrainingManager, histórico SQLite e
+checkpoints passam pelo `training.operational.storage.StorageManager` sob
+`training/`. A API serializa gravações com lock de arquivo, verifica bytes
+existentes e reserva o tamanho máximo antes da escrita, mantém temporários no
+mesmo diretório gerenciado, faz publicação atômica e remove apenas o temporário
+da chamada quando ela falha. A quota máxima é 50 GiB; configuração acima desse
+valor é rejeitada. O relatório/inventário pode ser consultado com:
+
+```bash
+PYTHONPATH=src:. python3 -m training.operational.cli storage
+```
+
+O inventário usa tamanho real do filesystem e lista arquivo, categoria, tamanho,
+origem conhecida ou indeterminada, versão quando presente e finalidade. Os
+limites por categoria (modelos, datasets, checkpoints/adaptadores, avaliação,
+cache e reserva) são planejamento; a proteção rígida aplicada é o teto total.
+Não há remoção automática de checkpoints.
+
+O controle cobre escritas encaminhadas ao manager. Um processo externo que
+grave diretamente em `training/`, inclusive a inclusão manual de fontes em
+`datasets/raw`, não é interceptado; esses arquivos são contabilizados em
+inventários subsequentes. Para importar fontes com pré-verificação, use
+`StorageManager.copy_file()`. Arquivos já existentes nunca são apagados.
+
+## Avaliação do dispatcher
+
+O comando `PYTHONPATH=src:. python3 -m training.operational.cli benchmark`
+continua verificando o harness de referência. O modo
+`PYTHONPATH=src:. python3 -m training.operational.cli dispatcher` troca os
+executores por fakes e usa ActionRegistry, ActionValidator, PermissionManager,
+ToolDispatcher e, no subconjunto de Downloads, CognitiveEngine. Fakes de
+documentos/planilhas atuam em memória; fakes de arquivos usam diretórios
+temporários; nenhum aplicativo abre. Os dois relatórios não representam uma
+inferência de modelo. A UI ainda não dirige automaticamente o loop de tool
+calling.

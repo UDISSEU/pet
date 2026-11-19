@@ -1,0 +1,288 @@
+{
+  "root": "/home/ulisses/Downloads/pet/desktop_pet_pixel_art/training",
+  "limit_bytes": 53687091200,
+  "used_bytes": 255973,
+  "remaining_bytes": 53686835227,
+  "budgets_gb": {
+    "models": 10,
+    "datasets": 8,
+    "checkpoints": 8,
+    "evaluation": 4,
+    "cache": 5,
+    "reserve": 15
+  },
+  "files": [
+    {
+      "file": "__init__.py",
+      "category": "other",
+      "size_bytes": 553,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "__pycache__/__init__.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 741,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "__pycache__/dataset_builder.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 15815,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "__pycache__/evaluation.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 3518,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "__pycache__/train.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 1224,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "__pycache__/training_config.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 8712,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "__pycache__/training_manager.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 10171,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "dataset_builder.py",
+      "category": "other",
+      "size_bytes": 12184,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "evaluation.py",
+      "category": "other",
+      "size_bytes": 2386,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__init__.py",
+      "category": "other",
+      "size_bytes": 100,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__pycache__/__init__.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 296,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__pycache__/benchmark.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 2845,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__pycache__/build_initial_data.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 9357,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__pycache__/catalog.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 3672,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__pycache__/cli.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 1667,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__pycache__/dispatcher_benchmark.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 21134,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__pycache__/schema.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 1771,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/__pycache__/storage.cpython-312.pyc",
+      "category": "other",
+      "size_bytes": 20382,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/benchmark.py",
+      "category": "other",
+      "size_bytes": 1588,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/build_initial_data.py",
+      "category": "other",
+      "size_bytes": 7024,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/catalog.py",
+      "category": "other",
+      "size_bytes": 3226,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/cli.py",
+      "category": "other",
+      "size_bytes": 816,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/data/benchmark.jsonl",
+      "category": "evaluation",
+      "size_bytes": 54466,
+      "origin": "generated-or-preexisting",
+      "version": "1.0.0",
+      "purpose": "benchmark/metrics/history"
+    },
+    {
+      "file": "operational/data/catalog.json",
+      "category": "datasets",
+      "size_bytes": 6544,
+      "origin": "generated-or-preexisting",
+      "version": null,
+      "purpose": "training/validation dataset or corpus"
+    },
+    {
+      "file": "operational/data/train.jsonl",
+      "category": "datasets",
+      "size_bytes": 15274,
+      "origin": "generated-or-preexisting",
+      "version": "1.0.0",
+      "purpose": "training/validation dataset or corpus"
+    },
+    {
+      "file": "operational/dispatcher_benchmark.py",
+      "category": "other",
+      "size_bytes": 14015,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/schema.py",
+      "category": "other",
+      "size_bytes": 1223,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational/storage.py",
+      "category": "other",
+      "size_bytes": 12261,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "operational-material/storage_usage.json",
+      "category": "cache",
+      "size_bytes": 316,
+      "origin": "generated-or-preexisting",
+      "version": null,
+      "purpose": "inference/training cache"
+    },
+    {
+      "file": "storage_usage.json",
+      "category": "other",
+      "size_bytes": 8258,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "train.py",
+      "category": "other",
+      "size_bytes": 636,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "training_config.json",
+      "category": "other",
+      "size_bytes": 722,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "training_config.py",
+      "category": "other",
+      "size_bytes": 5372,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    },
+    {
+      "file": "training_manager.py",
+      "category": "other",
+      "size_bytes": 7704,
+      "origin": "repository-or-preexisting",
+      "version": null,
+      "purpose": "training source/configuration"
+    }
+  ]
+}

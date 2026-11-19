@@ -1,0 +1,14 @@
+{
+  "root": "/home/ulisses/Downloads/pet/desktop_pet_pixel_art/training/operational-material",
+  "limit_bytes": 53687091200,
+  "used_bytes": 0,
+  "remaining_bytes": 53687091200,
+  "budgets_gb": {
+    "models": 10,
+    "datasets": 8,
+    "checkpoints": 8,
+    "evaluation": 4,
+    "cache": 5,
+    "reserve": 15
+  }
+}

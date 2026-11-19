@@ -54,7 +54,13 @@ class ModelConfig:
         return {name: getattr(self, name) for name in self.__dataclass_fields__}
 
     def save_json(self, path):
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
+        target = Path(path)
+        from training.operational.storage import manager_for_training_path
+        storage = manager_for_training_path(target)
+        if storage is None:
+            target.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
+        else:
+            storage.write_text(storage.relative_path(target), json.dumps(self.to_dict(), indent=2) + "\n")
 
     @classmethod
     def from_json(cls, path):

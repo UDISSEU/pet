@@ -32,12 +32,15 @@ def conversation_history_is_enabled(settings):
     )
 
 
-def answer_request(history, memories=None, settings=None, user_name="", core_factory=AICore):
+def answer_request(history, memories=None, settings=None, user_name="", core_factory=AICore,
+                   cancel_event=None):
     """Return a displayable answer while keeping Tkinter out of the worker."""
     try:
-        return core_factory(settings=settings or {}).process_message(
-            history, memories=memories, user_name=user_name,
-        )
+        core = core_factory(settings=settings or {})
+        if cancel_event is None:
+            return core.process_message(history, memories=memories, user_name=user_name)
+        return core.process_message(history, memories=memories, user_name=user_name,
+                                    cancel_event=cancel_event)
     except ProviderError as exc:
         logger.info("Consulta de IA não concluída (%s)", type(exc).__name__)
         return PROVIDER_FAILURE_MESSAGE

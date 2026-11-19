@@ -14,6 +14,7 @@ class TrainingConfig:
     dataset_root: Path = Path("training/datasets")
     experiments_root: Path = Path("training/experiments")
     checkpoints_root: Path = Path("training/checkpoints")
+    storage_root: Path = Path("training")
     run_name: str = "aurova_model_0_1"
     validation_percent: int = 10
     max_examples: int = 5000
@@ -53,6 +54,11 @@ class TrainingConfig:
             raise ValueError("reserva de RAM deve ficar entre 64 MiB e 1 GiB")
         if not 128 * 1024**2 <= self.minimum_available_bytes <= self.reserve_memory_bytes:
             raise ValueError("limite mínimo de RAM deve ficar entre 128 MiB e a reserva")
+        root = Path(self.storage_root).absolute()
+        for output in (self.dataset_root, self.experiments_root, self.checkpoints_root):
+            resolved = Path(output).absolute()
+            if resolved != root and root not in resolved.parents:
+                raise ValueError("diretórios de treinamento devem permanecer sob storage_root")
 
     @property
     def raw_dir(self):
@@ -80,6 +86,7 @@ class TrainingConfig:
             "dataset_root": str(self.dataset_root),
             "experiments_root": str(self.experiments_root),
             "checkpoints_root": str(self.checkpoints_root),
+            "storage_root": str(self.storage_root),
             "run_name": self.run_name,
             "validation_percent": self.validation_percent,
             "max_examples": self.max_examples,
@@ -102,10 +109,12 @@ class TrainingConfig:
         if not isinstance(value, dict) or set(value) - allowed:
             raise ValueError("arquivo de treinamento contém campos inválidos")
         value["model"] = ModelConfig(**value.get("model", {}))
-        for key in ("dataset_root", "experiments_root", "checkpoints_root"):
+        for key in ("dataset_root", "experiments_root", "checkpoints_root", "storage_root"):
             if key in value:
                 value[key] = Path(value[key])
         return cls(**value)
 
     def save_json(self, path):
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
+        from .operational.storage import StorageManager
+        manager = StorageManager(self.storage_root)
+        manager.write_text(manager.relative_path(path), json.dumps(self.to_dict(), indent=2) + "\n")
